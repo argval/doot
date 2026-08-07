@@ -10,18 +10,20 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
         "title": "Doot",
-        "width": 780,
-        "height": 760,
+        "width": 576,
+        "height": 160,
         "minWidth": 360,
-        "minHeight": 520,
-        "decorations": true,
+        "minHeight": 120,
+        "decorations": false,
         "resizable": true,
-        "alwaysOnTop": false,
-        "transparent": false
+        "alwaysOnTop": true,
+        "transparent": true,
+        "shadow": false
       }
     ],
     "security": {
