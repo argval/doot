@@ -1,0 +1,30 @@
+{
+  "name": "doot",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Doot: cross-platform live translated captions for desktop audio.",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "services/*"
+  ],
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "dev": "concurrently -k \"npm:dev:gateway\" \"npm:dev:tauri\"",
+    "dev:web": "npm run dev --workspace @doot/desktop",
+    "dev:tauri": "npm run tauri:dev --workspace @doot/desktop",
+    "dev:gateway": "npm run dev --workspace @doot/gateway",
+    "build": "npm run build --workspaces --if-present",
+    "build:tauri": "npm run tauri:build --workspace @doot/desktop",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "db:generate": "npm run db:generate --workspace @doot/db",
+    "db:migrate": "npm run db:migrate --workspace @doot/db"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
