@@ -1,20 +1,31 @@
-export type SupportedLanguage =
-  | "auto"
-  | "en"
-  | "hi"
-  | "ta"
-  | "te"
-  | "bn"
-  | "mr"
-  | "es"
-  | "fr"
-  | "de"
-  | "pt"
-  | "ja"
-  | "ko"
-  | "zh";
+export const SUPPORTED_LANGUAGES = [
+  "auto", "en", "hi", "ta", "te", "bn", "mr", "es", "fr", "de", "pt", "ja", "ko", "zh",
+] as const;
 
-export type ProviderId = "sarvam" | "international-stt" | "mock";
+export const PROVIDER_IDS = ["sarvam", "international-stt", "mock"] as const;
+export const AUDIO_SAMPLE_RATES = [16_000, 24_000, 48_000] as const;
+export const CHANNEL_COUNTS = [1, 2] as const;
+
+export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
+export type ProviderId = (typeof PROVIDER_IDS)[number];
+export type AudioSampleRate = (typeof AUDIO_SAMPLE_RATES)[number];
+export type ChannelCount = (typeof CHANNEL_COUNTS)[number];
+
+export function isSupportedLanguage(value: unknown): value is SupportedLanguage {
+  return typeof value === "string" && SUPPORTED_LANGUAGES.some((language) => language === value);
+}
+
+export function isProviderId(value: unknown): value is ProviderId {
+  return typeof value === "string" && PROVIDER_IDS.some((providerId) => providerId === value);
+}
+
+export function isAudioSampleRate(value: unknown): value is AudioSampleRate {
+  return typeof value === "number" && AUDIO_SAMPLE_RATES.some((sampleRate) => sampleRate === value);
+}
+
+export function isChannelCount(value: unknown): value is ChannelCount {
+  return typeof value === "number" && CHANNEL_COUNTS.some((channels) => channels === value);
+}
 
 export interface StartSessionRequest {
   type: "start_session";
@@ -22,8 +33,8 @@ export interface StartSessionRequest {
   sourceLanguage: SupportedLanguage;
   targetLanguage: SupportedLanguage;
   provider?: ProviderId;
-  sampleRate: 16000 | 24000 | 48000;
-  channels: 1 | 2;
+  sampleRate: AudioSampleRate;
+  channels: ChannelCount;
 }
 
 export interface AudioChunkMessage {
@@ -78,4 +89,3 @@ export interface ErrorEvent {
 export type ServerMessage = SessionStartedEvent | CaptionEvent | SessionStoppedEvent | ErrorEvent;
 
 export const PROTOCOL_VERSION = 1;
-

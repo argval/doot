@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test
+      - run: npm run build
+      - run: npm audit --omit=dev --audit-level=high
+      - run: docker build --file services/gateway/Dockerfile --tag doot-gateway:ci .
+      - run: docker run --detach --rm --name doot-gateway-ci --publish 8787:8787 doot-gateway:ci
+      - run: |
+          for attempt in {1..10}; do
+            curl --fail --silent --show-error http://127.0.0.1:8787/health && exit 0
+            sleep 1
+          done
+          docker logs doot-gateway-ci
+          exit 1
+      - if: always()
+        run: docker stop doot-gateway-ci || true
+
+  native-check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build:tauri

@@ -78,6 +78,7 @@ The `Start Capturing` action exercises the Tauri command boundary. On macOS and 
 ```bash
 npm run typecheck
 npm run build
+npm run test
 npm run lint --workspace @doot/desktop
 npm run db:generate
 npm run build:tauri

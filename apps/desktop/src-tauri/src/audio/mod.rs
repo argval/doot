@@ -17,6 +17,10 @@ pub enum Language {
     Es,
     Fr,
     De,
+    Pt,
+    Ja,
+    Ko,
+    Zh,
 }
 
 impl Language {
@@ -26,6 +30,7 @@ impl Language {
             "en" => Ok(Self::En), "hi" => Ok(Self::Hi), "ta" => Ok(Self::Ta),
             "te" => Ok(Self::Te), "bn" => Ok(Self::Bn), "mr" => Ok(Self::Mr),
             "es" => Ok(Self::Es), "fr" => Ok(Self::Fr), "de" => Ok(Self::De),
+            "pt" => Ok(Self::Pt), "ja" => Ok(Self::Ja), "ko" => Ok(Self::Ko), "zh" => Ok(Self::Zh),
             other => Err(format!("unsupported language: {other}")),
         }
     }
@@ -33,7 +38,7 @@ impl Language {
 
 impl std::fmt::Display for Language {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let value = match self { Self::Auto => "auto", Self::En => "en", Self::Hi => "hi", Self::Ta => "ta", Self::Te => "te", Self::Bn => "bn", Self::Mr => "mr", Self::Es => "es", Self::Fr => "fr", Self::De => "de" };
+        let value = match self { Self::Auto => "auto", Self::En => "en", Self::Hi => "hi", Self::Ta => "ta", Self::Te => "te", Self::Bn => "bn", Self::Mr => "mr", Self::Es => "es", Self::Fr => "fr", Self::De => "de", Self::Pt => "pt", Self::Ja => "ja", Self::Ko => "ko", Self::Zh => "zh" };
         formatter.write_str(value)
     }
 }
