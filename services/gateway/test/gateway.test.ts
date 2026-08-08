@@ -1,38 +1,61 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {
+  SARVAM_SUPPORTED_LANGUAGES,
+  type ServerMessage,
+} from "@doot/protocol";
 import WebSocket from "ws";
 import { parseClientMessage } from "../src/gateway.js";
+import { ProviderRouter } from "../src/providers.js";
+import {
+  hasSpeechEnergy,
+  pcmS16leRms,
+  toSarvamLanguageCode,
+} from "../src/sarvam.js";
 import { buildServer } from "../src/server.js";
+import { SarvamTextTranslator } from "../src/translate.js";
 
-test("accepts a valid session-start message", () => {
-  const result = parseClientMessage(JSON.stringify({
-    type: "start_session",
-    sessionId: "session-1",
-    sourceLanguage: "en",
-    targetLanguage: "es",
-    sampleRate: 16_000,
-    channels: 1,
-  }));
-
-  assert.deepEqual(result, {
-    ok: true,
-    message: {
+test("accepts canonical language IDs in session-start messages", () => {
+  for (const sourceLanguage of SARVAM_SUPPORTED_LANGUAGES) {
+    const result = parseClientMessage(JSON.stringify({
       type: "start_session",
-      sessionId: "session-1",
-      sourceLanguage: "en",
-      targetLanguage: "es",
+      sessionId: `session-${sourceLanguage}`,
+      sourceLanguage,
+      targetLanguage: "en",
       sampleRate: 16_000,
       channels: 1,
-    },
-  });
+    }));
+    assert.equal(result.ok, true, `expected ${sourceLanguage} to be supported`);
+  }
 });
 
 test("rejects malformed, unsupported, and oversized audio messages", () => {
   for (const payload of [
     "not json",
-    JSON.stringify({ type: "start_session", sessionId: "s", sourceLanguage: "invalid", targetLanguage: "en", sampleRate: 16_000, channels: 1 }),
-    JSON.stringify({ type: "audio_chunk", sessionId: "s", sequence: 1, timestampMs: 0, encoding: "pcm_s16le", dataBase64: "not base64!" }),
-    JSON.stringify({ type: "audio_chunk", sessionId: "s", sequence: 1, timestampMs: 0, encoding: "pcm_s16le", dataBase64: "A".repeat(349_528) }),
+    JSON.stringify({
+      type: "start_session",
+      sessionId: "s",
+      sourceLanguage: "invalid",
+      targetLanguage: "en",
+      sampleRate: 16_000,
+      channels: 1,
+    }),
+    JSON.stringify({
+      type: "audio_chunk",
+      sessionId: "s",
+      sequence: 1,
+      timestampMs: 0,
+      encoding: "pcm_s16le",
+      dataBase64: "not base64!",
+    }),
+    JSON.stringify({
+      type: "audio_chunk",
+      sessionId: "s",
+      sequence: 1,
+      timestampMs: 0,
+      encoding: "pcm_s16le",
+      dataBase64: "A".repeat(349_528),
+    }),
   ]) {
     assert.deepEqual(parseClientMessage(payload), { ok: false });
   }
@@ -43,7 +66,10 @@ test("returns a protocol error for an invalid realtime WebSocket payload", async
   context.after(() => app.close());
   const address = await app.listen({ host: "127.0.0.1", port: 0 });
 
-  const response = await receiveMessage(address.replace("http", "ws") + "/v1/realtime", "not json");
+  const response = await receiveMessage(
+    address.replace("http", "ws") + "/v1/realtime",
+    "not json",
+  );
   assert.deepEqual(response, {
     type: "error",
     code: "INVALID_MESSAGE",
@@ -52,18 +78,27 @@ test("returns a protocol error for an invalid realtime WebSocket payload", async
   });
 });
 
-test("streams mock captions after receiving a bounded PCM batch", async (context) => {
-  const app = await buildServer();
+test("streams revisioned mock captions after receiving PCM", async (context) => {
+  const translator = new SarvamTextTranslator();
+  const app = await buildServer(
+    new ProviderRouter(),
+    (request) => translator.translate(request),
+    { utteranceGraceMs: 10 },
+  );
   context.after(() => app.close());
   const address = await app.listen({ host: "127.0.0.1", port: 0 });
-  const caption = await receiveMockCaption(address.replace("http", "ws") + "/v1/realtime");
+  const caption = await receiveMockFinalCaption(
+    address.replace("http", "ws") + "/v1/realtime",
+  );
 
   assert.deepEqual(caption, {
     type: "caption",
     sessionId: "mock-session",
     sequence: 0,
+    utteranceId: "mock-session:0:0",
+    revision: 2,
     sourceText: "Received 1500 ms of system audio.",
-    translatedText: "The live caption pipeline is connected.",
+    translatedText: "Received 1500 ms of system audio.",
     isFinal: true,
     startMs: 0,
     endMs: 0,
@@ -71,22 +106,29 @@ test("streams mock captions after receiving a bounded PCM batch", async (context
   });
 });
 
-test("selects Sarvam when configured for Indian language routes", async () => {
-  const { ProviderRouter } = await import("../src/providers.js");
+test("routes every Saaras language through Sarvam when configured", () => {
   const router = new ProviderRouter("test-sarvam-key");
-  assert.equal(router.select("hi", "en").id, "sarvam");
-  assert.equal(router.select("auto", "en").id, "sarvam");
-  assert.equal(router.select("en", "es").id, "mock");
+  for (const language of SARVAM_SUPPORTED_LANGUAGES) {
+    assert.equal(
+      router.select(language, "en").id,
+      "sarvam",
+      `expected Sarvam route for ${language}`,
+    );
+  }
+  assert.equal(router.select("kn", "hi").id, "sarvam");
+  assert.equal(router.select("en", "auto").id, "mock");
 });
 
-test("falls back to mock when Sarvam is not configured", async () => {
-  const { ProviderRouter } = await import("../src/providers.js");
+test("falls back to mock when Sarvam is not configured", () => {
   const router = new ProviderRouter();
-  assert.equal(router.select("hi", "en").id, "mock");
+  assert.equal(router.select("kn", "en").id, "mock");
 });
 
-test("skips near-silent PCM before calling Sarvam helpers", async () => {
-  const { hasSpeechEnergy, pcmS16leRms } = await import("../src/sarvam.js");
+test("maps all Saaras languages and retains PCM diagnostics", () => {
+  assert.equal(toSarvamLanguageCode("auto"), "unknown");
+  assert.equal(toSarvamLanguageCode("kn"), "kn-IN");
+  assert.equal(toSarvamLanguageCode("doi"), "doi-IN");
+
   const silence = new Uint8Array(32_000);
   assert.equal(pcmS16leRms(silence), 0);
   assert.equal(hasSpeechEnergy(silence), false);
@@ -96,14 +138,6 @@ test("skips near-silent PCM before calling Sarvam helpers", async () => {
     tone.writeInt16LE(8_000, index);
   }
   assert.equal(hasSpeechEnergy(tone), true);
-});
-
-test("resolves Sarvam translate mode for Indic → English", async () => {
-  const { resolveSarvamMode, toSarvamLanguageCode } = await import("../src/sarvam.js");
-  assert.equal(resolveSarvamMode("hi", "en"), "translate");
-  assert.equal(resolveSarvamMode("en", "en"), "transcribe");
-  assert.equal(toSarvamLanguageCode("auto"), "unknown");
-  assert.equal(toSarvamLanguageCode("hi"), "hi-IN");
 });
 
 function receiveMessage(url: string, payload: string): Promise<unknown> {
@@ -124,12 +158,12 @@ function receiveMessage(url: string, payload: string): Promise<unknown> {
   });
 }
 
-function receiveMockCaption(url: string): Promise<unknown> {
+function receiveMockFinalCaption(url: string): Promise<ServerMessage> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url);
     const timeout = setTimeout(() => {
       socket.close();
-      reject(new Error("Timed out waiting for mock caption"));
+      reject(new Error("Timed out waiting for final mock caption"));
     }, 3_000);
 
     socket.once("error", reject);
@@ -138,20 +172,15 @@ function receiveMockCaption(url: string): Promise<unknown> {
         type: "start_session",
         sessionId: "mock-session",
         sourceLanguage: "en",
-        targetLanguage: "es",
+        targetLanguage: "hi",
         provider: "mock",
         sampleRate: 16_000,
         channels: 1,
       }));
     });
     socket.on("message", (raw) => {
-      const message: unknown = JSON.parse(raw.toString());
-      if (
-        typeof message === "object"
-        && message !== null
-        && "type" in message
-        && message.type === "session_started"
-      ) {
+      const message = JSON.parse(raw.toString()) as ServerMessage;
+      if (message.type === "session_started") {
         socket.send(JSON.stringify({
           type: "audio_chunk",
           sessionId: "mock-session",
@@ -161,12 +190,7 @@ function receiveMockCaption(url: string): Promise<unknown> {
           dataBase64: Buffer.alloc(48_000).toString("base64"),
         }));
       }
-      if (
-        typeof message === "object"
-        && message !== null
-        && "type" in message
-        && message.type === "caption"
-      ) {
+      if (message.type === "caption" && message.isFinal) {
         clearTimeout(timeout);
         socket.close();
         resolve(message);

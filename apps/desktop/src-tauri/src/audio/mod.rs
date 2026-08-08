@@ -1,6 +1,5 @@
 pub mod capture;
 
-use crate::providers::ProviderRouter;
 use crate::stream::{StreamManager, StreamSession};
 use serde::Serialize;
 use tauri::AppHandle;
@@ -12,17 +11,27 @@ pub enum Language {
     Auto,
     En,
     Hi,
+    Bn,
+    Gu,
+    Kn,
+    Ml,
+    Mr,
+    Od,
+    Pa,
     Ta,
     Te,
-    Bn,
-    Mr,
-    Es,
-    Fr,
-    De,
-    Pt,
-    Ja,
-    Ko,
-    Zh,
+    As,
+    Ur,
+    Ne,
+    Kok,
+    Ks,
+    Sd,
+    Sa,
+    Sat,
+    Mni,
+    Brx,
+    Mai,
+    Doi,
 }
 
 impl Language {
@@ -31,17 +40,27 @@ impl Language {
             "auto" => Ok(Self::Auto),
             "en" => Ok(Self::En),
             "hi" => Ok(Self::Hi),
+            "bn" => Ok(Self::Bn),
+            "gu" => Ok(Self::Gu),
+            "kn" => Ok(Self::Kn),
+            "ml" => Ok(Self::Ml),
+            "mr" => Ok(Self::Mr),
+            "od" => Ok(Self::Od),
+            "pa" => Ok(Self::Pa),
             "ta" => Ok(Self::Ta),
             "te" => Ok(Self::Te),
-            "bn" => Ok(Self::Bn),
-            "mr" => Ok(Self::Mr),
-            "es" => Ok(Self::Es),
-            "fr" => Ok(Self::Fr),
-            "de" => Ok(Self::De),
-            "pt" => Ok(Self::Pt),
-            "ja" => Ok(Self::Ja),
-            "ko" => Ok(Self::Ko),
-            "zh" => Ok(Self::Zh),
+            "as" => Ok(Self::As),
+            "ur" => Ok(Self::Ur),
+            "ne" => Ok(Self::Ne),
+            "kok" => Ok(Self::Kok),
+            "ks" => Ok(Self::Ks),
+            "sd" => Ok(Self::Sd),
+            "sa" => Ok(Self::Sa),
+            "sat" => Ok(Self::Sat),
+            "mni" => Ok(Self::Mni),
+            "brx" => Ok(Self::Brx),
+            "mai" => Ok(Self::Mai),
+            "doi" => Ok(Self::Doi),
             other => Err(format!("unsupported language: {other}")),
         }
     }
@@ -53,17 +72,27 @@ impl std::fmt::Display for Language {
             Self::Auto => "auto",
             Self::En => "en",
             Self::Hi => "hi",
+            Self::Bn => "bn",
+            Self::Gu => "gu",
+            Self::Kn => "kn",
+            Self::Ml => "ml",
+            Self::Mr => "mr",
+            Self::Od => "od",
+            Self::Pa => "pa",
             Self::Ta => "ta",
             Self::Te => "te",
-            Self::Bn => "bn",
-            Self::Mr => "mr",
-            Self::Es => "es",
-            Self::Fr => "fr",
-            Self::De => "de",
-            Self::Pt => "pt",
-            Self::Ja => "ja",
-            Self::Ko => "ko",
-            Self::Zh => "zh",
+            Self::As => "as",
+            Self::Ur => "ur",
+            Self::Ne => "ne",
+            Self::Kok => "kok",
+            Self::Ks => "ks",
+            Self::Sd => "sd",
+            Self::Sa => "sa",
+            Self::Sat => "sat",
+            Self::Mni => "mni",
+            Self::Brx => "brx",
+            Self::Mai => "mai",
+            Self::Doi => "doi",
         };
         formatter.write_str(value)
     }
@@ -105,7 +134,6 @@ pub struct AudioCaptureStatus {
 
 pub struct AudioEngine {
     capture: capture::AudioCapture,
-    provider_router: ProviderRouter,
     stream_manager: StreamManager,
     active_session: Option<CaptionSession>,
 }
@@ -114,7 +142,6 @@ impl AudioEngine {
     pub fn new() -> Self {
         Self {
             capture: capture::AudioCapture::new(),
-            provider_router: ProviderRouter::default(),
             stream_manager: StreamManager::new(),
             active_session: None,
         }
@@ -125,14 +152,12 @@ impl AudioEngine {
         app: AppHandle,
         config: SessionConfig,
     ) -> Result<&CaptionSession, String> {
-        if self.active_session.is_some() {
+        if self.active_session.is_some() || self.stream_manager.is_active() {
             return Err("a caption session is already running".into());
         }
         let session_id = Uuid::new_v4();
-        let provider = self
-            .provider_router
-            .select(&config.source_language, &config.target_language);
-        let provider_name = provider.name().to_string();
+        // Desktop always asks the gateway for Sarvam; gateway falls back to mock.
+        let provider_name = "sarvam".to_string();
         let source_language = config.source_language.to_string();
         let target_language = config.target_language.to_string();
 
@@ -164,19 +189,51 @@ impl AudioEngine {
             .expect("session was just created"))
     }
 
-    pub fn stop(&mut self, session_id: &str) -> Result<(), String> {
+    pub fn prepare_stop(
+        &mut self,
+        session_id: &str,
+    ) -> Result<Option<tokio::sync::oneshot::Receiver<()>>, String> {
         match &self.active_session {
             Some(session) if session.id().to_string() == session_id => {}
             Some(_) => return Err("session id does not match the active session".into()),
             None => return Err("no active caption session".into()),
         }
+        // Stop capture first so no new frames arrive, then ask the stream task to
+        // drain residual PCM, flush the provider, and wait for session_stopped.
         let capture_result = self.capture.stop();
-        self.stream_manager.stop();
-        self.active_session = None;
-        capture_result
+        let done_rx = self.stream_manager.request_stop();
+        capture_result?;
+        Ok(done_rx)
+    }
+
+    pub fn finish_stop(&mut self, session_id: &str) -> Result<(), String> {
+        match &self.active_session {
+            Some(session) if session.id().to_string() == session_id => {
+                self.active_session = None;
+                Ok(())
+            }
+            Some(_) => Err("session id does not match the active session".into()),
+            None => Ok(()),
+        }
     }
 
     pub fn capture_status(&self) -> AudioCaptureStatus {
         self.capture.status()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Language;
+
+    #[test]
+    fn parses_and_serializes_every_supported_language() {
+        for code in [
+            "auto", "en", "hi", "bn", "gu", "kn", "ml", "mr", "od", "pa", "ta", "te", "as", "ur",
+            "ne", "kok", "ks", "sd", "sa", "sat", "mni", "brx", "mai", "doi",
+        ] {
+            let language = Language::parse(code).expect("language should parse");
+            assert_eq!(language.to_string(), code);
+        }
     }
 }

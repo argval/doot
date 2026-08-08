@@ -11,58 +11,112 @@ import {
   type StartSessionRequest,
 } from "@doot/protocol";
 import { WebSocket } from "ws";
-import { ProviderRouter } from "./providers.js";
+import {
+  ProviderRouter,
+  type ProviderStreamEvent,
+  type ProviderStreamSession,
+} from "./providers.js";
+import type { TranslateText } from "./translate.js";
+import { isRecord } from "./util.js";
 
 const maxAudioChunkBytes = 256 * 1024;
 const maxBase64Length = Math.ceil(maxAudioChunkBytes / 3) * 4;
-const providerBatchBytes = 48_000; // 1.5s @ 16 kHz mono S16LE
-const maxBufferedAudioBytes = 192_000; // 6s @ 16 kHz mono S16LE
+
+export interface RealtimeGatewayOptions {
+  utteranceGraceMs?: number;
+  maxUtteranceMs?: number;
+}
+
+interface ActiveUtterance {
+  id: string;
+  sequence: number;
+  revision: number;
+  sourceText: string;
+  startMs: number;
+  endMs: number;
+  graceTimer: NodeJS.Timeout | null;
+  safetyTimer: NodeJS.Timeout | null;
+}
 
 interface SessionState {
   request: StartSessionRequest;
   providerId: ProviderId;
-  audioBytes: number;
-  audioChunks: Buffer[];
-  captionSequence: number;
-  segmentStartMs: number;
-  providerPending: boolean;
+  providerSession: ProviderStreamSession | null;
+  activeUtterance: ActiveUtterance | null;
+  nextSequence: number;
+  speechActive: boolean;
+  pendingSpeechStartMs: number | null;
   lastAudioTimestampMs: number;
-  stopRequested: boolean;
+  lastAudioSequence: number;
+  pendingFinalizations: Promise<void>;
+  closing: boolean;
+  closed: boolean;
 }
 
-export function registerRealtimeGateway(app: FastifyInstance, router: ProviderRouter) {
+interface RequiredGatewayOptions {
+  utteranceGraceMs: number;
+  maxUtteranceMs: number;
+}
+
+export function registerRealtimeGateway(
+  app: FastifyInstance,
+  router: ProviderRouter,
+  translator: TranslateText,
+  options: RealtimeGatewayOptions = {},
+): void {
+  const gatewayOptions: RequiredGatewayOptions = {
+    utteranceGraceMs: options.utteranceGraceMs ?? 600,
+    maxUtteranceMs: options.maxUtteranceMs ?? 60_000,
+  };
+
   app.get("/v1/realtime", { websocket: true }, (socket: WebSocket, request) => {
     const sessions = new Map<string, SessionState>();
+    let messageChain = Promise.resolve();
     app.log.info({ ip: request.ip }, "realtime client connected");
 
     socket.on("message", (raw) => {
-      try {
-        handleMessage(router, socket, sessions, raw.toString());
-      } catch (error) {
-        app.log.error({ err: error }, "realtime message handler failed");
-        send(socket, {
-          type: "error",
-          code: "INTERNAL_ERROR",
-          message: error instanceof Error ? error.message : "Realtime handler failed",
-          retryable: true,
+      messageChain = messageChain
+        .then(() => handleMessage(
+          router,
+          translator,
+          gatewayOptions,
+          socket,
+          sessions,
+          raw.toString(),
+        ))
+        .catch((error: unknown) => {
+          app.log.error({ err: error }, "realtime message handler failed");
+          send(socket, {
+            type: "error",
+            code: "INTERNAL_ERROR",
+            message: error instanceof Error ? error.message : "Realtime handler failed",
+            retryable: true,
+          });
         });
-      }
     });
 
     socket.on("error", (error) => {
       app.log.warn({ err: error }, "realtime socket error");
     });
 
-    socket.on("close", () => app.log.info("realtime client disconnected"));
+    socket.on("close", () => {
+      for (const session of sessions.values()) {
+        disposeSession(session);
+      }
+      sessions.clear();
+      app.log.info("realtime client disconnected");
+    });
   });
 }
 
-function handleMessage(
+async function handleMessage(
   router: ProviderRouter,
+  translator: TranslateText,
+  options: RequiredGatewayOptions,
   socket: WebSocket,
   sessions: Map<string, SessionState>,
   raw: string,
-): void {
+): Promise<void> {
   const parsed = parseClientMessage(raw);
   if (!parsed.ok) {
     send(socket, {
@@ -76,36 +130,7 @@ function handleMessage(
   const message = parsed.message;
 
   if (message.type === "start_session") {
-    try {
-      const provider = router.select(message.sourceLanguage, message.targetLanguage, message.provider);
-      sessions.set(message.sessionId, {
-        request: message,
-        providerId: provider.id,
-        audioBytes: 0,
-        audioChunks: [],
-        captionSequence: 0,
-        segmentStartMs: 0,
-        providerPending: false,
-        lastAudioTimestampMs: 0,
-        stopRequested: false,
-      });
-      send(socket, {
-        type: "session_started",
-        sessionId: message.sessionId,
-        provider: provider.id,
-        sourceLanguage: message.sourceLanguage,
-        targetLanguage: message.targetLanguage,
-      });
-    } catch (error) {
-      send(socket, {
-        type: "error",
-        sessionId: message.sessionId,
-        code: "PROVIDER_UNAVAILABLE",
-        message: error instanceof Error ? error.message : "Requested provider is unavailable",
-        retryable: false,
-      });
-      return;
-    }
+    await startSession(router, translator, options, socket, sessions, message);
     return;
   }
 
@@ -122,151 +147,381 @@ function handleMessage(
   }
 
   if (message.type === "audio_chunk") {
-    enqueueAudio(session, message);
-    scheduleProvider(router, socket, session, message.sessionId, false);
+    if (session.closing || message.sequence <= session.lastAudioSequence) return;
+    session.lastAudioSequence = message.sequence;
+    session.lastAudioTimestampMs = message.timestampMs;
+    session.providerSession?.pushAudio(
+      Buffer.from(message.dataBase64, "base64"),
+      message.timestampMs,
+    );
     return;
   }
 
-  if (message.type === "stop_session") {
-    session.stopRequested = true;
-    scheduleProvider(router, socket, session, message.sessionId, true);
-    sessions.delete(message.sessionId);
-    send(socket, { type: "session_stopped", sessionId: message.sessionId });
-  }
+  await stopSession(translator, socket, session);
+  sessions.delete(message.sessionId);
+  send(socket, { type: "session_stopped", sessionId: message.sessionId });
 }
 
-function enqueueAudio(
-  session: SessionState,
-  message: Extract<ClientMessage, { type: "audio_chunk" }>,
-): void {
-  const audio = Buffer.from(message.dataBase64, "base64");
-  if (session.audioBytes === 0) session.segmentStartMs = message.timestampMs;
-  session.audioChunks.push(audio);
-  session.audioBytes += audio.byteLength;
-  session.lastAudioTimestampMs = message.timestampMs;
-
-  const droppedBytes = trimBufferedAudio(session);
-  if (droppedBytes > 0) {
-    session.segmentStartMs = message.timestampMs;
-  }
-}
-
-function scheduleProvider(
+async function startSession(
   router: ProviderRouter,
+  translator: TranslateText,
+  options: RequiredGatewayOptions,
   socket: WebSocket,
-  session: SessionState,
-  sessionId: string,
-  flush: boolean,
-): void {
-  if (session.providerPending || session.audioBytes === 0) return;
-  if (!flush && session.audioBytes < providerBatchBytes) return;
-
-  const byteCount = flush ? session.audioBytes : providerBatchBytes;
-  const startMs = session.segmentStartMs;
-  const providerAudio = takeAudio(session, byteCount);
-  session.providerPending = true;
-
-  void emitProviderCaption(
-    router,
-    socket,
-    session,
-    sessionId,
-    providerAudio,
-    startMs,
-    session.lastAudioTimestampMs,
-    flush,
-  ).finally(() => {
-    session.providerPending = false;
-    if (session.audioBytes > 0) {
-      session.segmentStartMs = session.lastAudioTimestampMs;
-    }
-    if (!session.stopRequested) {
-      scheduleProvider(router, socket, session, sessionId, false);
-    }
-  });
-}
-
-async function emitProviderCaption(
-  router: ProviderRouter,
-  socket: WebSocket,
-  session: SessionState,
-  sessionId: string,
-  providerAudio: Buffer,
-  startMs: number,
-  endMs: number,
-  isFinal: boolean,
+  sessions: Map<string, SessionState>,
+  request: StartSessionRequest,
 ): Promise<void> {
+  const previous = sessions.get(request.sessionId);
+  if (previous) {
+    disposeSession(previous);
+    sessions.delete(request.sessionId);
+  }
+
   try {
     const provider = router.select(
-      session.request.sourceLanguage,
-      session.request.targetLanguage,
-      session.providerId,
+      request.sourceLanguage,
+      request.targetLanguage,
+      request.provider,
     );
-    const result = await provider.transcribeAndTranslate(
-      providerAudio,
-      session.request.sourceLanguage,
-      session.request.targetLanguage,
-    );
-    if (!result || (!result.sourceText && !result.translatedText)) return;
-
-    const sequence = session.captionSequence;
-    session.captionSequence += 1;
-    send(socket, {
-      type: "caption",
-      sessionId,
-      sequence,
-      sourceText: result.sourceText,
-      translatedText: result.translatedText,
-      isFinal: isFinal || endsSentence(result.translatedText || result.sourceText),
-      startMs,
-      endMs,
-      provider: session.providerId,
+    const session: SessionState = {
+      request,
+      providerId: provider.id,
+      providerSession: null,
+      activeUtterance: null,
+      nextSequence: 0,
+      speechActive: false,
+      pendingSpeechStartMs: null,
+      lastAudioTimestampMs: 0,
+      lastAudioSequence: -1,
+      pendingFinalizations: Promise.resolve(),
+      closing: false,
+      closed: false,
+    };
+    sessions.set(request.sessionId, session);
+    const providerSession = await provider.openSession({
+      sessionId: request.sessionId,
+      source: request.sourceLanguage,
+      sampleRate: request.sampleRate,
+      channels: request.channels,
+      onEvent: (event) => {
+        handleProviderEvent(translator, options, socket, session, event);
+      },
     });
+    if (
+      session.closed
+      || sessions.get(request.sessionId) !== session
+      || socket.readyState !== WebSocket.OPEN
+    ) {
+      await providerSession.close();
+      return;
+    }
+    session.providerSession = providerSession;
+    send(socket, {
+      type: "session_started",
+      sessionId: request.sessionId,
+      provider: provider.id,
+      sourceLanguage: request.sourceLanguage,
+      targetLanguage: request.targetLanguage,
+    });
+  } catch (error) {
+    const session = sessions.get(request.sessionId);
+    if (session) disposeSession(session);
+    sessions.delete(request.sessionId);
+    send(socket, {
+      type: "error",
+      sessionId: request.sessionId,
+      code: "PROVIDER_UNAVAILABLE",
+      message: error instanceof Error ? error.message : "Requested provider is unavailable",
+      retryable: false,
+    });
+  }
+}
+
+function handleProviderEvent(
+  translator: TranslateText,
+  options: RequiredGatewayOptions,
+  socket: WebSocket,
+  session: SessionState,
+  event: ProviderStreamEvent,
+): void {
+  if (session.closed) return;
+
+  switch (event.type) {
+    case "speech_start": {
+      session.speechActive = true;
+      session.pendingSpeechStartMs = event.timestampMs;
+      cancelGraceTimer(session.activeUtterance);
+      return;
+    }
+    case "speech_end": {
+      session.speechActive = false;
+      if (session.activeUtterance) {
+        session.activeUtterance.endMs = Math.max(
+          session.activeUtterance.endMs,
+          event.timestampMs,
+        );
+        scheduleGraceFinalization(translator, options, socket, session);
+      } else {
+        session.pendingSpeechStartMs = null;
+      }
+      return;
+    }
+    case "transcript": {
+      updateActiveUtterance(translator, options, socket, session, event);
+      return;
+    }
+    case "warning": {
+      send(socket, {
+        type: "error",
+        sessionId: session.request.sessionId,
+        code: "PROVIDER_WARNING",
+        message: event.message,
+        retryable: true,
+      });
+      return;
+    }
+    case "error": {
+      send(socket, {
+        type: "error",
+        sessionId: session.request.sessionId,
+        code: "PROVIDER_ERROR",
+        message: event.message,
+        retryable: event.retryable,
+      });
+      return;
+    }
+    case "state":
+      return;
+    default: {
+      const exhaustive: never = event;
+      return exhaustive;
+    }
+  }
+}
+
+function updateActiveUtterance(
+  translator: TranslateText,
+  options: RequiredGatewayOptions,
+  socket: WebSocket,
+  session: SessionState,
+  event: Extract<ProviderStreamEvent, { type: "transcript" }>,
+): void {
+  const transcript = normalizeTranscript(event.text);
+  if (!transcript) return;
+
+  let utterance = session.activeUtterance;
+  if (!utterance) {
+    const sequence = session.nextSequence;
+    session.nextSequence += 1;
+    utterance = {
+      id: `${session.request.sessionId}:${event.timestampMs}:${sequence}`,
+      sequence,
+      revision: 0,
+      sourceText: "",
+      startMs: session.pendingSpeechStartMs ?? event.timestampMs,
+      endMs: event.timestampMs,
+      graceTimer: null,
+      safetyTimer: null,
+    };
+    session.activeUtterance = utterance;
+    session.pendingSpeechStartMs = null;
+    utterance.safetyTimer = setTimeout(() => {
+      void finalizeActiveUtterance(translator, socket, session);
+    }, options.maxUtteranceMs);
+  }
+
+  const mergedText = mergeProviderTranscript(utterance.sourceText, transcript);
+  utterance.endMs = Math.max(utterance.endMs, event.timestampMs);
+  if (mergedText === utterance.sourceText) return;
+
+  utterance.sourceText = mergedText;
+  utterance.revision += 1;
+  sendCaption(socket, session, utterance, "", false, utterance.revision);
+
+  if (!session.speechActive) {
+    scheduleGraceFinalization(translator, options, socket, session);
+  }
+}
+
+function scheduleGraceFinalization(
+  translator: TranslateText,
+  options: RequiredGatewayOptions,
+  socket: WebSocket,
+  session: SessionState,
+): void {
+  const utterance = session.activeUtterance;
+  if (!utterance || session.closing) return;
+  cancelGraceTimer(utterance);
+  utterance.graceTimer = setTimeout(() => {
+    utterance.graceTimer = null;
+    void finalizeActiveUtterance(translator, socket, session);
+  }, options.utteranceGraceMs);
+}
+
+function finalizeActiveUtterance(
+  translator: TranslateText,
+  socket: WebSocket,
+  session: SessionState,
+): Promise<void> {
+  const utterance = session.activeUtterance;
+  if (!utterance || !utterance.sourceText) return session.pendingFinalizations;
+
+  session.activeUtterance = null;
+  clearUtteranceTimers(utterance);
+  session.providerSession?.commitAudioThrough(utterance.endMs);
+  const request = session.request;
+  const finalize = async () => {
+    let translatedText = utterance.sourceText;
+    try {
+      translatedText = await translator({
+        text: utterance.sourceText,
+        source: request.sourceLanguage,
+        target: request.targetLanguage,
+      });
+    } catch (error) {
+      if (!session.closed) {
+        send(socket, {
+          type: "error",
+          sessionId: request.sessionId,
+          code: "TRANSLATION_ERROR",
+          message: error instanceof Error ? error.message : "Caption translation failed",
+          retryable: true,
+        });
+      }
+    }
+    if (session.closed) return;
+    sendCaption(
+      socket,
+      session,
+      utterance,
+      translatedText || utterance.sourceText,
+      true,
+      utterance.revision + 1,
+    );
+  };
+
+  session.pendingFinalizations = session.pendingFinalizations.then(finalize, finalize);
+  return session.pendingFinalizations;
+}
+
+async function stopSession(
+  translator: TranslateText,
+  socket: WebSocket,
+  session: SessionState,
+): Promise<void> {
+  if (session.closing) {
+    await session.pendingFinalizations;
+    return;
+  }
+  session.closing = true;
+  cancelGraceTimer(session.activeUtterance);
+
+  try {
+    await session.providerSession?.flush();
   } catch (error) {
     send(socket, {
       type: "error",
-      sessionId,
-      code: "PROVIDER_ERROR",
-      message: error instanceof Error ? error.message : "Speech provider failed",
-      retryable: true,
+      sessionId: session.request.sessionId,
+      code: "PROVIDER_FLUSH_ERROR",
+      message: error instanceof Error ? error.message : "Speech provider flush failed",
+        retryable: false,
     });
+  } finally {
+    try {
+      await session.providerSession?.close();
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        sessionId: session.request.sessionId,
+        code: "PROVIDER_CLOSE_ERROR",
+        message: error instanceof Error ? error.message : "Speech provider close failed",
+        retryable: true,
+      });
+    }
+    session.providerSession = null;
   }
+  await finalizeActiveUtterance(translator, socket, session);
+  await session.pendingFinalizations;
+  session.closed = true;
+  clearUtteranceTimers(session.activeUtterance);
+  session.activeUtterance = null;
 }
 
-function endsSentence(text: string): boolean {
-  return /[.!?।]$/u.test(text.trim());
+function sendCaption(
+  socket: WebSocket,
+  session: SessionState,
+  utterance: ActiveUtterance,
+  translatedText: string,
+  isFinal: boolean,
+  revision: number,
+): void {
+  send(socket, {
+    type: "caption",
+    sessionId: session.request.sessionId,
+    sequence: utterance.sequence,
+    utteranceId: utterance.id,
+    revision,
+    sourceText: utterance.sourceText,
+    translatedText,
+    isFinal,
+    startMs: utterance.startMs,
+    endMs: utterance.endMs,
+    provider: session.providerId,
+  });
 }
 
-function takeAudio(session: SessionState, byteCount: number): Buffer {
-  const out = Buffer.allocUnsafe(byteCount);
-  let offset = 0;
-  while (offset < byteCount && session.audioChunks.length > 0) {
-    const chunk = session.audioChunks[0]!;
-    const copy = Math.min(chunk.byteLength, byteCount - offset);
-    chunk.copy(out, offset, 0, copy);
-    offset += copy;
-    if (copy === chunk.byteLength) {
-      session.audioChunks.shift();
-    } else {
-      session.audioChunks[0] = chunk.subarray(copy);
+function mergeProviderTranscript(existing: string, incoming: string): string {
+  if (!existing) return incoming;
+  if (existing === incoming || incoming.startsWith(existing)) return incoming;
+  if (existing.startsWith(incoming)) return existing;
+
+  const existingWords = existing.split(/\s+/);
+  const incomingWords = incoming.split(/\s+/);
+  for (
+    let overlap = Math.min(existingWords.length, incomingWords.length);
+    overlap > 0;
+    overlap -= 1
+  ) {
+    if (
+      existingWords.slice(-overlap).join(" ")
+        === incomingWords.slice(0, overlap).join(" ")
+    ) {
+      return [...existingWords, ...incomingWords.slice(overlap)].join(" ");
     }
   }
-  session.audioBytes = Math.max(0, session.audioBytes - offset);
-  return offset === byteCount ? out : out.subarray(0, offset);
+  return `${existing} ${incoming}`;
 }
 
-function trimBufferedAudio(session: SessionState): number {
-  let droppedBytes = 0;
-  while (session.audioBytes > maxBufferedAudioBytes && session.audioChunks.length > 0) {
-    const dropped = session.audioChunks.shift()!;
-    session.audioBytes -= dropped.byteLength;
-    droppedBytes += dropped.byteLength;
-  }
-  session.audioBytes = Math.max(0, session.audioBytes);
-  return droppedBytes;
+function normalizeTranscript(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
 }
 
-export function parseClientMessage(raw: string): { ok: true; message: ClientMessage } | { ok: false } {
+function cancelGraceTimer(utterance: ActiveUtterance | null): void {
+  if (!utterance?.graceTimer) return;
+  clearTimeout(utterance.graceTimer);
+  utterance.graceTimer = null;
+}
+
+function clearUtteranceTimers(utterance: ActiveUtterance | null): void {
+  if (!utterance) return;
+  if (utterance.graceTimer) clearTimeout(utterance.graceTimer);
+  if (utterance.safetyTimer) clearTimeout(utterance.safetyTimer);
+  utterance.graceTimer = null;
+  utterance.safetyTimer = null;
+}
+
+function disposeSession(session: SessionState): void {
+  session.closed = true;
+  session.closing = true;
+  clearUtteranceTimers(session.activeUtterance);
+  session.activeUtterance = null;
+  const providerSession = session.providerSession;
+  session.providerSession = null;
+  if (providerSession) void providerSession.close();
+}
+
+export function parseClientMessage(
+  raw: string,
+): { ok: true; message: ClientMessage } | { ok: false } {
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -323,14 +578,13 @@ export function parseClientMessage(raw: string): { ok: true; message: ClientMess
   }
 
   if (value.type === "stop_session" && isSessionId(value.sessionId)) {
-    return { ok: true, message: { type: "stop_session", sessionId: value.sessionId } };
+    return {
+      ok: true,
+      message: { type: "stop_session", sessionId: value.sessionId },
+    };
   }
 
   return { ok: false };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isSessionId(value: unknown): value is string {
@@ -350,7 +604,7 @@ function isBase64Chunk(value: unknown): value is string {
     && Buffer.byteLength(value, "base64") <= maxAudioChunkBytes;
 }
 
-function send(socket: WebSocket, event: ServerMessage) {
+function send(socket: WebSocket, event: ServerMessage): void {
   if (socket.readyState !== WebSocket.OPEN) return;
   try {
     socket.send(JSON.stringify(event));

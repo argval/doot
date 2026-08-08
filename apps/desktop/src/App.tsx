@@ -1,7 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, Circle, Languages, Square } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { CaptionEvent, SupportedLanguage } from "@doot/protocol";
+import {
+  LANGUAGE_LABELS,
+  SUPPORTED_LANGUAGES,
+  type SupportedLanguage,
+} from "@doot/protocol";
+import {
+  EMPTY_CAPTION_STATE,
+  reduceCaptionEvent,
+  selectVisibleCaptions,
+} from "./captions";
 import {
   startCaptionSession,
   stopCaptionSession,
@@ -11,35 +20,20 @@ import {
   type DesktopSession,
 } from "./lib/tauri";
 
-const languages: Array<{ id: SupportedLanguage; label: string }> = [
-  { id: "en", label: "English" },
-  { id: "hi", label: "Hindi" },
-  { id: "ta", label: "Tamil" },
-  { id: "es", label: "Spanish" },
-  { id: "fr", label: "French" },
-  { id: "de", label: "German" },
-];
-
-const MAX_TRANSCRIPT_CHARACTERS = 520;
-const MAX_OVERLAP_WORDS = 12;
-const EMPTY_TRANSCRIPT: CaptionTranscript = {
-  translatedText: "",
-  sourceText: "",
-};
-
-interface CaptionTranscript {
-  translatedText: string;
-  sourceText: string;
-}
+const selectableLanguages = SUPPORTED_LANGUAGES.filter(
+  (language) => language !== "auto",
+);
 
 export function App() {
   const [sourceLanguage, setSourceLanguage] = useState<SupportedLanguage>("auto");
   const [targetLanguage, setTargetLanguage] = useState<SupportedLanguage>("en");
-  const [transcript, setTranscript] = useState<CaptionTranscript>(EMPTY_TRANSCRIPT);
+  const [captions, setCaptions] = useState(EMPTY_CAPTION_STATE);
   const [session, setSession] = useState<DesktopSession | null>(null);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
+  const acceptedSessionIdRef = useRef<string | null>(null);
+  const visibleCaptions = selectVisibleCaptions(captions);
 
   const toggleCapture = useCallback(async () => {
     if (isTransitioning) return;
@@ -49,12 +43,18 @@ export function App() {
     setStatusNotice(null);
     try {
       if (session) {
-        await stopCaptionSession(session.sessionId);
+        const stoppingId = session.sessionId;
+        acceptedSessionIdRef.current = stoppingId;
+        await stopCaptionSession(stoppingId);
+        if (acceptedSessionIdRef.current === stoppingId) {
+          acceptedSessionIdRef.current = null;
+        }
         setSession(null);
-        setTranscript(EMPTY_TRANSCRIPT);
       } else {
-        setTranscript(EMPTY_TRANSCRIPT);
-        setSession(await startCaptionSession(sourceLanguage, targetLanguage));
+        setCaptions(EMPTY_CAPTION_STATE);
+        const next = await startCaptionSession(sourceLanguage, targetLanguage);
+        acceptedSessionIdRef.current = next.sessionId;
+        setSession(next);
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -68,7 +68,13 @@ export function App() {
     const cleanups: Array<() => void> = [];
     const subscriptions = [
       subscribeToCaptions((event) => {
-        setTranscript((current) => appendCaptionEvent(current, event));
+        if (
+          acceptedSessionIdRef.current
+          && event.sessionId !== acceptedSessionIdRef.current
+        ) {
+          return;
+        }
+        setCaptions((current) => reduceCaptionEvent(current, event));
         setError(null);
         setStatusNotice(null);
       }),
@@ -76,9 +82,16 @@ export function App() {
         void toggleCapture();
       }),
       subscribeToSessionStatus((status) => {
+        if (
+          status.sessionId
+          && acceptedSessionIdRef.current
+          && status.sessionId !== acceptedSessionIdRef.current
+          && status.state !== "idle"
+        ) {
+          return;
+        }
         if (status.state === "idle") {
           setSession(null);
-          setTranscript(EMPTY_TRANSCRIPT);
           setError(null);
           setStatusNotice(null);
         }
@@ -115,6 +128,15 @@ export function App() {
     };
   }, [toggleCapture]);
 
+  const displayedText = error
+    || visibleCaptions.translatedText
+    || (session
+      ? "Listening to system audio…"
+      : "Your live captions will appear here.");
+  const showSource = !error
+    && visibleCaptions.sourceText
+    && visibleCaptions.sourceText !== visibleCaptions.translatedText;
+
   return (
     <main className="overlay-shell">
       <div className="caption-overlay">
@@ -142,7 +164,9 @@ export function App() {
             onMouseDown={(event) => event.stopPropagation()}
             onClick={() => void toggleCapture()}
           >
-            {session ? <Square size={10} fill="currentColor" /> : <Circle size={11} fill="currentColor" />}
+            {session
+              ? <Square size={10} fill="currentColor" />
+              : <Circle size={11} fill="currentColor" />}
           </button>
         </div>
 
@@ -157,75 +181,24 @@ export function App() {
         >
           <div className="caption-copy">
             <p
-              className={error ? "caption-text error-text" : transcript.translatedText ? "caption-text" : "caption-text placeholder"}
+              className={error
+                ? "caption-text error-text"
+                : visibleCaptions.translatedText
+                  ? "caption-text"
+                  : "caption-text placeholder"}
               aria-live="polite"
             >
-              {error ?? transcript.translatedText ?? (session ? "Listening to system audio…" : "Your live captions will appear here.")}
+              {displayedText}
             </p>
-            {!error
-              && transcript.sourceText
-              && transcript.sourceText !== transcript.translatedText
-              && <p className="source-text">{transcript.sourceText}</p>}
+            {showSource && <p className="source-text">{visibleCaptions.sourceText}</p>}
           </div>
-          {!error && statusNotice && <p className="caption-notice" role="status">{statusNotice}</p>}
+          {!error && statusNotice && (
+            <p className="caption-notice" role="status">{statusNotice}</p>
+          )}
         </section>
       </div>
     </main>
   );
-}
-
-function appendCaptionEvent(current: CaptionTranscript, event: CaptionEvent): CaptionTranscript {
-  return {
-    translatedText: mergeCaptionText(current.translatedText, event.translatedText),
-    sourceText: event.sourceText
-      ? mergeCaptionText(current.sourceText, event.sourceText)
-      : current.sourceText,
-  };
-}
-
-function mergeCaptionText(existing: string, incoming: string): string {
-  const cleanIncoming = normalizeCaptionText(incoming);
-  if (!cleanIncoming) return existing;
-  if (!existing) return trimTranscript(cleanIncoming);
-
-  const cleanExisting = normalizeCaptionText(existing);
-  if (
-    cleanExisting === cleanIncoming
-    || cleanExisting.endsWith(cleanIncoming)
-  ) {
-    return existing;
-  }
-
-  const existingWords = existing.split(/\s+/);
-  const incomingWords = cleanIncoming.split(/\s+/);
-  const overlapLimit = Math.min(MAX_OVERLAP_WORDS, existingWords.length, incomingWords.length);
-
-  for (let overlap = overlapLimit; overlap > 0; overlap -= 1) {
-    const matches = incomingWords
-      .slice(0, overlap)
-      .every((word, index) => normalizeCaptionWord(word) === normalizeCaptionWord(existingWords[existingWords.length - overlap + index] ?? ""));
-    if (matches) {
-      const continuation = incomingWords.slice(overlap).join(" ");
-      return continuation ? trimTranscript(`${existing} ${continuation}`) : existing;
-    }
-  }
-
-  return trimTranscript(`${existing} ${cleanIncoming}`);
-}
-
-function normalizeCaptionText(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-function normalizeCaptionWord(value: string): string {
-  return value.toLocaleLowerCase().replace(/[.,!?;:()[\]{}"'“”‘’…।]/g, "");
-}
-
-function trimTranscript(value: string): string {
-  if (value.length <= MAX_TRANSCRIPT_CHARACTERS) return value;
-
-  const firstVisibleCharacter = value.indexOf(" ", value.length - MAX_TRANSCRIPT_CHARACTERS);
-  return `…${value.slice(firstVisibleCharacter >= 0 ? firstVisibleCharacter + 1 : -MAX_TRANSCRIPT_CHARACTERS)}`;
 }
 
 function LanguageSelect({
@@ -250,9 +223,11 @@ function LanguageSelect({
         onChange={(event) => onChange(event.target.value as SupportedLanguage)}
         onMouseDown={(event) => event.stopPropagation()}
       >
-        {allowAuto && <option value="auto">Auto</option>}
-        {languages.map((language) => (
-          <option key={language.id} value={language.id}>{language.label}</option>
+        {allowAuto && <option value="auto">{LANGUAGE_LABELS.auto}</option>}
+        {selectableLanguages.map((language) => (
+          <option key={language} value={language}>
+            {LANGUAGE_LABELS[language]}
+          </option>
         ))}
       </select>
       <ChevronDown className="select-chevron" size={12} aria-hidden="true" />

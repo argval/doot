@@ -1,10 +1,18 @@
 import Fastify from "fastify";
 import websocket from "@fastify/websocket";
 import { config } from "./config.js";
-import { registerRealtimeGateway } from "./gateway.js";
+import {
+  registerRealtimeGateway,
+  type RealtimeGatewayOptions,
+} from "./gateway.js";
 import { ProviderRouter } from "./providers.js";
+import { SarvamTextTranslator, type TranslateText } from "./translate.js";
 
-export async function buildServer(router = new ProviderRouter(config.sarvamApiKey, config.internationalSttApiKey)) {
+export async function buildServer(
+  router = new ProviderRouter(config.sarvamApiKey),
+  translate: TranslateText = createDefaultTranslator(),
+  gatewayOptions: RealtimeGatewayOptions = {},
+) {
   const app = Fastify({ logger: { transport: { target: "pino-pretty" } } });
   await app.register(websocket, { options: { maxPayload: 512 * 1024 } });
 
@@ -13,9 +21,13 @@ export async function buildServer(router = new ProviderRouter(config.sarvamApiKe
     service: "doot-gateway",
     providers: {
       sarvam: Boolean(config.sarvamApiKey),
-      internationalStt: Boolean(config.internationalSttApiKey),
     },
   }));
-  registerRealtimeGateway(app, router);
+  registerRealtimeGateway(app, router, translate, gatewayOptions);
   return app;
+}
+
+function createDefaultTranslator(): TranslateText {
+  const translator = new SarvamTextTranslator(config.sarvamApiKey);
+  return (request) => translator.translate(request);
 }

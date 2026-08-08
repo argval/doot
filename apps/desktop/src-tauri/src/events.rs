@@ -56,6 +56,10 @@ pub struct CaptionEvent {
     pub event_type: String,
     pub session_id: String,
     pub sequence: u64,
+    #[serde(default)]
+    pub utterance_id: String,
+    #[serde(default)]
+    pub revision: u64,
     pub source_text: String,
     pub translated_text: String,
     pub is_final: bool,
