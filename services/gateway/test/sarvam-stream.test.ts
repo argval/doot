@@ -4,7 +4,7 @@ import type { ProviderStreamEvent } from "../src/providers.js";
 import { SarvamStreamingSession } from "../src/sarvam-stream.js";
 import { FakeSarvamServer } from "./fake-sarvam.js";
 
-test("keeps one codemix/VAD Sarvam connection and forwards continuous PCM", async () => {
+test("keeps one translate/VAD Sarvam connection and forwards continuous PCM", async () => {
   const server = new FakeSarvamServer();
   const endpoint = await server.endpoint();
   const events: ProviderStreamEvent[] = [];
@@ -13,11 +13,12 @@ test("keeps one codemix/VAD Sarvam connection and forwards continuous PCM", asyn
     {
       sessionId: "stream-1",
       source: "kn",
+      target: "en",
       sampleRate: 16_000,
       channels: 1,
       onEvent: (event) => events.push(event),
     },
-    { endpoint, flushTimeoutMs: 200 },
+    { endpoint, flushTimeoutMs: 200, softFlushMs: 0 },
   );
 
   try {
@@ -30,10 +31,12 @@ test("keeps one codemix/VAD Sarvam connection and forwards continuous PCM", asyn
     const request = server.connections[0]?.request;
     assert.ok(request);
     const url = new URL(request.url ?? "", endpoint);
-    assert.equal(url.searchParams.get("mode"), "codemix");
+    assert.equal(url.searchParams.get("mode"), "translate");
     assert.equal(url.searchParams.get("language-code"), "kn-IN");
     assert.equal(url.searchParams.get("vad_signals"), "true");
-    assert.equal(url.searchParams.get("high_vad_sensitivity"), "false");
+    assert.equal(url.searchParams.get("high_vad_sensitivity"), "true");
+    assert.equal(url.searchParams.get("negative_frames_count"), null);
+    assert.equal(url.searchParams.get("negative_frames_window"), null);
     assert.equal(request.headers["api-subscription-key"], "test-key");
 
     server.send(0, {
@@ -42,7 +45,7 @@ test("keeps one codemix/VAD Sarvam connection and forwards continuous PCM", asyn
     });
     server.send(0, {
       type: "data",
-      data: { transcript: "ನಾನು Cursor use ಮಾಡುತ್ತೇನೆ", language_code: "kn-IN" },
+      data: { transcript: "I use Cursor", language_code: "en-IN" },
     });
     server.send(0, {
       type: "events",
@@ -53,15 +56,16 @@ test("keeps one codemix/VAD Sarvam connection and forwards continuous PCM", asyn
     assert.ok(events.some((event) => event.type === "speech_start"));
     assert.ok(events.some((event) => (
       event.type === "transcript"
-      && event.text === "ನಾನು Cursor use ಮಾಡುತ್ತೇನೆ"
-      && event.languageCode === "kn-IN"
+      && event.text === "I use Cursor"
+      && event.languageCode === "en-IN"
+      && event.translated === true
     )));
 
     const flush = session.flush();
     await server.waitForFlush(0);
     server.send(0, {
       type: "data",
-      data: { transcript: "flushed transcript", language_code: "kn-IN" },
+      data: { transcript: "flushed transcript", language_code: "en-IN" },
     });
     server.send(0, {
       type: "events",
@@ -69,6 +73,73 @@ test("keeps one codemix/VAD Sarvam connection and forwards continuous PCM", asyn
     });
     await flush;
     assert.equal(server.connections.length, 1);
+  } finally {
+    await session.close();
+    await server.close();
+  }
+});
+
+test("uses codemix mode when the caption target is not English", async () => {
+  const server = new FakeSarvamServer();
+  const endpoint = await server.endpoint();
+  const session = new SarvamStreamingSession(
+    "test-key",
+    {
+      sessionId: "stream-codemix",
+      source: "kn",
+      target: "hi",
+      sampleRate: 16_000,
+      channels: 1,
+      onEvent: () => undefined,
+    },
+    { endpoint, softFlushMs: 0 },
+  );
+
+  try {
+    await session.open();
+    const request = server.connections[0]?.request;
+    assert.ok(request);
+    const url = new URL(request.url ?? "", endpoint);
+    assert.equal(url.searchParams.get("mode"), "codemix");
+  } finally {
+    await session.close();
+    await server.close();
+  }
+});
+
+test("soft-flushes mid-speech so Sarvam emits interim transcripts", async () => {
+  const server = new FakeSarvamServer();
+  const endpoint = await server.endpoint();
+  const events: ProviderStreamEvent[] = [];
+  const session = new SarvamStreamingSession(
+    "test-key",
+    {
+      sessionId: "stream-soft-flush",
+      source: "kn",
+      target: "en",
+      sampleRate: 16_000,
+      channels: 1,
+      onEvent: (event) => events.push(event),
+    },
+    { endpoint, softFlushMs: 40 },
+  );
+
+  try {
+    await session.open();
+    server.send(0, {
+      type: "events",
+      data: { signal_type: "START_SPEECH" },
+    });
+    await waitFor(() => flushCount(server, 0) >= 2);
+    server.send(0, {
+      type: "data",
+      data: { transcript: "Live English caption", language_code: "en-IN" },
+    });
+    await waitFor(() => events.some((event) => (
+      event.type === "transcript"
+      && event.text === "Live English caption"
+      && event.translated === true
+    )));
   } finally {
     await session.close();
     await server.close();
@@ -84,6 +155,7 @@ test("replays a bounded audio tail and queued frames after reconnecting", async 
     {
       sessionId: "stream-reconnect",
       source: "hi",
+      target: "en",
       sampleRate: 16_000,
       channels: 1,
       onEvent: (event) => events.push(event),
@@ -93,6 +165,7 @@ test("replays a bounded audio tail and queued frames after reconnecting", async 
       reconnectBaseDelayMs: 10,
       maxReconnectDelayMs: 20,
       connectTimeoutMs: 500,
+      softFlushMs: 0,
     },
   );
 
@@ -132,6 +205,7 @@ test("does not replay audio committed by a finalized utterance", async () => {
     {
       sessionId: "stream-committed",
       source: "kn",
+      target: "en",
       sampleRate: 16_000,
       channels: 1,
       onEvent: (event) => events.push(event),
@@ -140,6 +214,7 @@ test("does not replay audio committed by a finalized utterance", async () => {
       endpoint,
       reconnectBaseDelayMs: 10,
       maxReconnectDelayMs: 20,
+      softFlushMs: 0,
     },
   );
 
@@ -176,6 +251,7 @@ test("reports unsent buffered audio instead of silently flushing it", async () =
     {
       sessionId: "stream-undrained",
       source: "hi",
+      target: "en",
       sampleRate: 16_000,
       channels: 1,
       onEvent: (event) => events.push(event),
@@ -184,6 +260,7 @@ test("reports unsent buffered audio instead of silently flushing it", async () =
       endpoint,
       drainTimeoutMs: 30,
       maxReconnectAttempts: 0,
+      softFlushMs: 0,
     },
   );
 
@@ -212,11 +289,12 @@ test("requires a post-flush transcript before completing speech flush", async ()
     {
       sessionId: "stream-flush-barrier",
       source: "hi",
+      target: "en",
       sampleRate: 16_000,
       channels: 1,
       onEvent: (event) => events.push(event),
     },
-    { endpoint, flushTimeoutMs: 60 },
+    { endpoint, flushTimeoutMs: 60, softFlushMs: 0 },
   );
 
   try {
@@ -253,8 +331,9 @@ test("requires a post-flush transcript before completing speech flush", async ()
       type: "events",
       data: { signal_type: "START_SPEECH" },
     });
+    const flushesBefore = flushCount(server, 0);
     const completeFlush = session.flush();
-    await server.waitForFlush(0);
+    await waitFor(() => flushCount(server, 0) > flushesBefore);
     server.send(0, {
       type: "data",
       data: { transcript: "final after flush" },
@@ -278,11 +357,12 @@ test("rejects a speech flush when no final provider event arrives", async () => 
     {
       sessionId: "stream-flush-timeout",
       source: "hi",
+      target: "en",
       sampleRate: 16_000,
       channels: 1,
       onEvent: () => undefined,
     },
-    { endpoint, flushTimeoutMs: 30 },
+    { endpoint, flushTimeoutMs: 30, softFlushMs: 0 },
   );
 
   try {
@@ -303,6 +383,17 @@ test("rejects a speech flush when no final provider event arrives", async () => 
     await server.close();
   }
 });
+
+function flushCount(server: FakeSarvamServer, connectionIndex: number): number {
+  const connection = server.connections[connectionIndex];
+  if (!connection) return 0;
+  return connection.messages.filter((message) => (
+    typeof message === "object"
+    && message !== null
+    && "type" in message
+    && message.type === "flush"
+  )).length;
+}
 
 function readAudioData(value: unknown): Buffer | null {
   if (

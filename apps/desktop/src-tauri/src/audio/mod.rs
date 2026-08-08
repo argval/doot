@@ -152,8 +152,15 @@ impl AudioEngine {
         app: AppHandle,
         config: SessionConfig,
     ) -> Result<&CaptionSession, String> {
-        if self.active_session.is_some() || self.stream_manager.is_active() {
+        // A prior stream task may have exited while leaving session bookkeeping
+        // behind; clear that before accepting a new capture.
+        self.stream_manager.clear_if_finished();
+        if self.stream_manager.is_active() {
             return Err("a caption session is already running".into());
+        }
+        if self.active_session.is_some() {
+            let _ = self.capture.stop();
+            self.active_session = None;
         }
         let session_id = Uuid::new_v4();
         // Desktop always asks the gateway for Sarvam; gateway falls back to mock.

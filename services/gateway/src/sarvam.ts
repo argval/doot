@@ -5,7 +5,13 @@ import {
 } from "@doot/protocol";
 
 export const SARVAM_STT_WS = "wss://api.sarvam.ai/speech-to-text/ws";
-export const SARVAM_STREAM_MODE = "codemix" as const;
+
+export type SarvamStreamMode = "codemix" | "translate" | "transcribe";
+
+/** Prefer Saaras translate→English when the overlay target is English. */
+export function sarvamStreamMode(target: SupportedLanguage): SarvamStreamMode {
+  return target === "en" ? "translate" : "codemix";
+}
 
 const languageCodes: Record<SarvamSupportedLanguage, string> = {
   auto: "unknown",

@@ -100,6 +100,7 @@ export function App() {
         }
         if (status.state === "error") {
           setError(status.message ?? "Caption session failed");
+          setSession(null);
           setStatusNotice(null);
         }
         if (status.state === "capturing") {
@@ -133,9 +134,6 @@ export function App() {
     || (session
       ? "Listening to system audio…"
       : "Your live captions will appear here.");
-  const showSource = !error
-    && visibleCaptions.sourceText
-    && visibleCaptions.sourceText !== visibleCaptions.translatedText;
 
   return (
     <main className="overlay-shell">
@@ -190,7 +188,6 @@ export function App() {
             >
               {displayedText}
             </p>
-            {showSource && <p className="source-text">{visibleCaptions.sourceText}</p>}
           </div>
           {!error && statusNotice && (
             <p className="caption-notice" role="status">{statusNotice}</p>

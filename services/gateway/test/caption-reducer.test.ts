@@ -30,6 +30,9 @@ test("replaces active revisions and commits only the final revision", () => {
   const replaced = reduceCaptionEvent(active, revised);
   assert.equal(replaced.active?.sourceText, revised.sourceText);
   assert.equal(replaced.finalized.length, 0);
+  assert.deepEqual(selectVisibleCaptions(replaced), {
+    translatedText: "",
+  });
 
   const stale = reduceCaptionEvent(replaced, first);
   assert.equal(stale, replaced);
@@ -39,7 +42,26 @@ test("replaces active revisions and commits only the final revision", () => {
   assert.deepEqual(committed.finalized, [finalized]);
   assert.deepEqual(selectVisibleCaptions(committed), {
     translatedText: "I use Cursor",
-    sourceText: "ನಾನು Cursor use ಮಾಡುತ್ತೇನೆ",
+  });
+});
+
+test("keeps the overlay focused on the newest couple of utterances", () => {
+  let state = EMPTY_CAPTION_STATE;
+  for (let index = 0; index < 4; index += 1) {
+    state = reduceCaptionEvent(state, caption({
+      sequence: index,
+      utteranceId: `session:${index}:0`,
+      revision: 1,
+      sourceText: `source ${index}`,
+      translatedText: `english ${index}`,
+      isFinal: true,
+      startMs: index * 1_000,
+      endMs: index * 1_000 + 500,
+    }));
+  }
+
+  assert.deepEqual(selectVisibleCaptions(state), {
+    translatedText: "english 2 english 3",
   });
 });
 

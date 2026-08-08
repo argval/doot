@@ -60,8 +60,16 @@ impl StreamManager {
             let result = run_stream(app.clone(), session, frames, stop_rx).await;
             running.store(false, Ordering::SeqCst);
             let _ = done_tx.send(());
-            if let Err(message) = result {
-                emit_status(&app, SessionStatusEvent::error(Some(session_id), message));
+            match result {
+                Ok(()) => {
+                    // Stream ended without an explicit UI stop (disconnect after
+                    // reconnect budget, cancel during reconnect, etc.). Reset the
+                    // overlay so we do not stick on "Listening…" with no socket.
+                    emit_status(&app, SessionStatusEvent::idle());
+                }
+                Err(message) => {
+                    emit_status(&app, SessionStatusEvent::error(Some(session_id), message));
+                }
             }
         });
         Ok(())
@@ -74,13 +82,26 @@ impl StreamManager {
         self.done_rx.take()
     }
 
+    /// Drop local stream handles after the async task finishes so a dead stream
+    /// cannot block the next `start_caption_session` call.
+    pub fn clear_if_finished(&mut self) {
+        let finished = self
+            .running
+            .as_ref()
+            .is_some_and(|flag| !flag.load(Ordering::SeqCst));
+        if !finished {
+            return;
+        }
+        self.stop_tx = None;
+        self.done_rx = None;
+        self.running = None;
+    }
+
     pub fn is_active(&self) -> bool {
-        self.stop_tx.is_some()
-            || self.done_rx.is_some()
-            || self
-                .running
-                .as_ref()
-                .is_some_and(|flag| flag.load(Ordering::SeqCst))
+        self
+            .running
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::SeqCst))
     }
 }
 

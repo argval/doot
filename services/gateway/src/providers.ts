@@ -10,7 +10,14 @@ export type ProviderStreamState = "connecting" | "open" | "reconnecting" | "clos
 export type ProviderStreamEvent =
   | { type: "speech_start"; timestampMs: number }
   | { type: "speech_end"; timestampMs: number }
-  | { type: "transcript"; text: string; timestampMs: number; languageCode?: string }
+  | {
+    type: "transcript";
+    text: string;
+    timestampMs: number;
+    languageCode?: string;
+    /** True when the provider already returned target-language text (e.g. Saaras translate). */
+    translated?: boolean;
+  }
   | { type: "warning"; message: string }
   | { type: "error"; message: string; retryable: boolean }
   | { type: "state"; state: ProviderStreamState };
@@ -18,6 +25,7 @@ export type ProviderStreamEvent =
 export interface OpenProviderSessionOptions {
   sessionId: string;
   source: SupportedLanguage;
+  target: SupportedLanguage;
   sampleRate: number;
   channels: number;
   onEvent(event: ProviderStreamEvent): void;
