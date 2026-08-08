@@ -1,7 +1,6 @@
 mod audio;
 mod commands;
 mod events;
-mod providers;
 mod stream;
 
 use std::sync::Mutex;

@@ -1,19 +1,74 @@
 export const SUPPORTED_LANGUAGES = [
-  "auto", "en", "hi", "ta", "te", "bn", "mr", "es", "fr", "de", "pt", "ja", "ko", "zh",
+  "auto",
+  "en",
+  "hi",
+  "bn",
+  "gu",
+  "kn",
+  "ml",
+  "mr",
+  "od",
+  "pa",
+  "ta",
+  "te",
+  "as",
+  "ur",
+  "ne",
+  "kok",
+  "ks",
+  "sd",
+  "sa",
+  "sat",
+  "mni",
+  "brx",
+  "mai",
+  "doi",
 ] as const;
 
-export const PROVIDER_IDS = ["sarvam", "international-stt", "mock"] as const;
+export const SARVAM_SUPPORTED_LANGUAGES = SUPPORTED_LANGUAGES;
+
+export const PROVIDER_IDS = ["sarvam", "mock"] as const;
 export const AUDIO_SAMPLE_RATES = [16_000, 24_000, 48_000] as const;
 export const CHANNEL_COUNTS = [1, 2] as const;
 
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
+export type SarvamSupportedLanguage = SupportedLanguage;
 export type ProviderId = (typeof PROVIDER_IDS)[number];
 export type AudioSampleRate = (typeof AUDIO_SAMPLE_RATES)[number];
 export type ChannelCount = (typeof CHANNEL_COUNTS)[number];
 
+export const LANGUAGE_LABELS: Readonly<Record<SupportedLanguage, string>> = {
+  auto: "Auto detect",
+  en: "English",
+  hi: "Hindi",
+  bn: "Bengali",
+  gu: "Gujarati",
+  kn: "Kannada",
+  ml: "Malayalam",
+  mr: "Marathi",
+  od: "Odia",
+  pa: "Punjabi",
+  ta: "Tamil",
+  te: "Telugu",
+  as: "Assamese",
+  ur: "Urdu",
+  ne: "Nepali",
+  kok: "Konkani",
+  ks: "Kashmiri",
+  sd: "Sindhi",
+  sa: "Sanskrit",
+  sat: "Santali",
+  mni: "Manipuri",
+  brx: "Bodo",
+  mai: "Maithili",
+  doi: "Dogri",
+};
+
 export function isSupportedLanguage(value: unknown): value is SupportedLanguage {
   return typeof value === "string" && SUPPORTED_LANGUAGES.some((language) => language === value);
 }
+
+export const isSarvamSupportedLanguage = isSupportedLanguage;
 
 export function isProviderId(value: unknown): value is ProviderId {
   return typeof value === "string" && PROVIDER_IDS.some((providerId) => providerId === value);
@@ -65,6 +120,8 @@ export interface CaptionEvent {
   type: "caption";
   sessionId: string;
   sequence: number;
+  utteranceId: string;
+  revision: number;
   sourceText: string;
   translatedText: string;
   isFinal: boolean;
@@ -87,5 +144,3 @@ export interface ErrorEvent {
 }
 
 export type ServerMessage = SessionStartedEvent | CaptionEvent | SessionStoppedEvent | ErrorEvent;
-
-export const PROTOCOL_VERSION = 1;

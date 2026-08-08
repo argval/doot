@@ -2,7 +2,7 @@ import { config } from "./config.js";
 import { ProviderRouter } from "./providers.js";
 import { buildServer } from "./server.js";
 
-const app = await buildServer(new ProviderRouter(config.sarvamApiKey, config.internationalSttApiKey));
+const app = await buildServer(new ProviderRouter(config.sarvamApiKey));
 
 try {
   await app.listen({ host: config.host, port: config.port });

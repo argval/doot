@@ -93,7 +93,11 @@ button {
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-end;
+  overflow: hidden;
+  /* Fade older text at the top so the latest line stays fully readable. */
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 1.4rem);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 1.4rem);
 }
 
 .caption-overlay:hover .caption-window::after,
@@ -313,10 +317,12 @@ button {
   color: #f5f4f7;
   font-size: clamp(1.35rem, min(5.6vw, 12vh), 3.75rem);
   font-weight: 510;
-  line-height: 1.15;
+  line-height: 1.2;
   letter-spacing: -0.035em;
   overflow-wrap: anywhere;
   text-wrap: pretty;
+  /* Keep the newest lines pinned to the bottom of the visible area. */
+  margin-top: auto;
 }
 
 .caption-text.placeholder {

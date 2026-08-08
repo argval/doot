@@ -46,16 +46,31 @@ pub fn start_caption_session(
 }
 
 #[tauri::command]
-pub fn stop_caption_session(
+pub async fn stop_caption_session(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    let mut engine = state
-        .audio_engine
-        .lock()
-        .map_err(|_| "audio engine lock poisoned")?;
-    engine.stop(&session_id)?;
+    let done_rx = {
+        let mut engine = state
+            .audio_engine
+            .lock()
+            .map_err(|_| "audio engine lock poisoned")?;
+        engine.prepare_stop(&session_id)?
+    };
+
+    if let Some(done_rx) = done_rx {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(45), done_rx).await;
+    }
+
+    {
+        let mut engine = state
+            .audio_engine
+            .lock()
+            .map_err(|_| "audio engine lock poisoned")?;
+        engine.finish_stop(&session_id)?;
+    }
+
     emit_status(&app, SessionStatusEvent::idle());
     Ok(())
 }
