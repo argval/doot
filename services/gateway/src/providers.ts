@@ -3,7 +3,7 @@ import {
   type ProviderId,
   type SupportedLanguage,
 } from "@doot/protocol";
-import { SarvamStreamingSession } from "./sarvam-stream.js";
+import { SarvamFailoverSession } from "./sarvam-failover.js";
 
 export type ProviderStreamState = "connecting" | "open" | "reconnecting" | "closed";
 
@@ -15,6 +15,8 @@ export type ProviderStreamEvent =
     text: string;
     timestampMs: number;
     languageCode?: string;
+    /** True only when the provider emitted a complete utterance transcript. */
+    isFinal?: boolean;
     /** True when the provider already returned target-language text (e.g. Saaras translate). */
     translated?: boolean;
   }
@@ -68,7 +70,7 @@ export class SarvamProvider implements SpeechProvider {
   }
   async openSession(options: OpenProviderSessionOptions): Promise<ProviderStreamSession> {
     if (!this.apiKey) throw new Error("SARVAM_API_KEY is not configured");
-    const session = new SarvamStreamingSession(this.apiKey, options);
+    const session = new SarvamFailoverSession(this.apiKey, options);
     await session.open();
     return session;
   }

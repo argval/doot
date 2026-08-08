@@ -18,7 +18,7 @@
 - doot is a macOS-first floating live-captions product: system audio → realtime speech/translation → always-on-top overlay.
 - Active stack is a monorepo with Tauri 2 + Rust desktop (`apps/desktop`), React + TypeScript + Vite UI, Fastify/TypeScript WebSocket gateway, shared protocol package, and Drizzle/PostgreSQL-oriented persistence.
 - System audio capture uses ScreenCaptureKit-style paths and requires macOS Screen Recording permission for testing.
-- Sarvam streaming STT is integrated through the gateway; captions need the gateway and desktop app running together.
+- Sarvam Realtime STT is the primary gateway transport; the legacy streaming client remains an automatic fallback for initial and terminal Realtime failures.
 - Local runs often use bun workspace scripts for the desktop/Tauri app and gateway; `scripts/dev.sh` starts gateway and desktop together.
 - Caption pipeline aims for persistent Sarvam streaming with VAD-driven utterance boundaries and code-switch-tolerant Indic translation (including Kannada).
 
