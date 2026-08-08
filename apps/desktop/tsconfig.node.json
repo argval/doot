@@ -4,7 +4,11 @@
     "skipLibCheck": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "noUncheckedSideEffectImports": true,
+    "libReplacement": false,
+    "types": ["node"]
   },
   "include": ["vite.config.ts"]
 }
