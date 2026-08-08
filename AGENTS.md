@@ -6,9 +6,12 @@
 - Captions window should be draggable and resizable; resizing the window must not scale caption text size.
 - Prefer a single idle/hover opacity model with a smooth fade (more transparent when idle, more opaque on hover); avoid multi-level or flickering transparency.
 - When asked for approach or design, discuss first and do not start implementing until explicitly told to.
-- Prefer Sarvam speech models for captioning/translation, especially for Indian languages.
+- Prefer Sarvam speech models for captioning/translation, especially for Indian languages and code-switched speech (e.g. Hinglish, Kannada–English).
 - Prefer TypeScript 7 configured consistently across the monorepo.
 - When committing agent work, include `AGENTS.md` updates in the same commit (do not leave them unstaged as unrelated).
+- Prefer translated-only captions; do not show source/original transcription under the translation.
+- Translated captions should update progressively in realtime (word-by-word feel) while staying sentence-aware—not only after pause or finalization.
+- When the captions area fills, keep the latest caption visible (do not clip at the bottom); prefer continuous sentence flow over fragmented short phrases.
 
 ## Learned Workspace Facts
 
@@ -16,7 +19,8 @@
 - Active stack is a monorepo with Tauri 2 + Rust desktop (`apps/desktop`), React + TypeScript + Vite UI, Fastify/TypeScript WebSocket gateway, shared protocol package, and Drizzle/PostgreSQL-oriented persistence.
 - System audio capture uses ScreenCaptureKit-style paths and requires macOS Screen Recording permission for testing.
 - Sarvam streaming STT is integrated through the gateway; captions need the gateway and desktop app running together.
-- Local runs often use bun workspace scripts for the desktop/Tauri app and gateway.
+- Local runs often use bun workspace scripts for the desktop/Tauri app and gateway; `scripts/dev.sh` starts gateway and desktop together.
+- Caption pipeline aims for persistent Sarvam streaming with VAD-driven utterance boundaries and code-switch-tolerant Indic translation (including Kannada).
 
 ## graphify
 

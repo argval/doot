@@ -192,6 +192,63 @@ test("finalizes separate utterances after a long VAD pause", async () => {
   }
 });
 
+test("publishes draft translations during continuous speech without a pause", async () => {
+  const harness = await createHarness(2_000);
+  try {
+    const stream = harness.provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 100 });
+    stream.emit({ type: "transcript", text: "first", timestampMs: 150 });
+    await delay(80);
+    stream.emit({ type: "transcript", text: "first second", timestampMs: 250 });
+    await delay(80);
+    stream.emit({ type: "transcript", text: "first second third", timestampMs: 350 });
+
+    const draft = await harness.client.waitForMessage(
+      (message) => (
+        message.type === "caption"
+        && !message.isFinal
+        && message.translatedText.startsWith("English:")
+      ),
+    );
+    assert.equal(draft.type, "caption");
+    assert.match(draft.translatedText, /^English:/);
+    assert.ok(harness.translator.requests.length >= 1);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("publishes a draft translation before the utterance finalizes", async () => {
+  const harness = await createHarness(400);
+  try {
+    const stream = harness.provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 100 });
+    stream.emit({
+      type: "transcript",
+      text: "draft me soon",
+      timestampMs: 150,
+    });
+
+    const draft = await harness.client.waitForMessage(
+      (message) => (
+        message.type === "caption"
+        && !message.isFinal
+        && message.translatedText.startsWith("English:")
+      ),
+    );
+    assert.equal(draft.type, "caption");
+    assert.equal(draft.sourceText, "draft me soon");
+    assert.equal(draft.translatedText, "English: draft me soon");
+    assert.ok(harness.translator.requests.length >= 1);
+
+    stream.emit({ type: "speech_end", timestampMs: 180 });
+    const finals = await harness.client.waitForFinalCount(1);
+    assert.equal(finals[0]?.translatedText, "English: draft me soon");
+  } finally {
+    await harness.close();
+  }
+});
+
 test("merges overlapping transcript text across a provider reconnect", async () => {
   const harness = await createHarness(20);
   try {

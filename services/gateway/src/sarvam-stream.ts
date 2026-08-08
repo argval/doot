@@ -5,8 +5,8 @@ import type {
 } from "./providers.js";
 import {
   SARVAM_STT_WS,
-  SARVAM_STREAM_MODE,
   hasSpeechEnergy,
+  sarvamStreamMode,
   toSarvamLanguageCode,
 } from "./sarvam.js";
 import { isRecord } from "./util.js";
@@ -18,6 +18,7 @@ const MAX_RECONNECT_DELAY_MS = 4_000;
 const MAX_QUEUE_BYTES = 192_000; // Six seconds of mono PCM S16LE at 16 kHz.
 const REPLAY_TAIL_BYTES = 16_000; // Replay the most recent 500 ms after reconnecting.
 const MAX_SOCKET_BUFFER_BYTES = 256_000;
+const DEFAULT_SOFT_FLUSH_MS = 700;
 
 /** Test-only overrides for timeouts and endpoint. */
 type SarvamStreamingRuntime = {
@@ -28,6 +29,8 @@ type SarvamStreamingRuntime = {
   reconnectBaseDelayMs?: number;
   maxReconnectDelayMs?: number;
   maxReconnectAttempts?: number;
+  /** Periodic mid-speech flush interval; 0 disables. */
+  softFlushMs?: number;
 };
 
 interface AudioFrame {
@@ -46,6 +49,7 @@ export class SarvamStreamingSession implements ProviderStreamSession {
   private socket: WebSocket | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private drainTimer: NodeJS.Timeout | null = null;
+  private softFlushTimer: NodeJS.Timeout | null = null;
   private readonly queuedFrames: AudioFrame[] = [];
   private queueBytes = 0;
   private readonly replayTail: AudioFrame[] = [];
@@ -65,12 +69,14 @@ export class SarvamStreamingSession implements ProviderStreamSession {
   private flushPending = false;
   private flushSawPostBarrierTranscript = false;
   private readonly flushWaiters = new Set<FlushWaiter>();
+  private readonly streamMode;
 
   constructor(
     private readonly apiKey: string,
     private readonly options: OpenProviderSessionOptions,
     private readonly runtime: SarvamStreamingRuntime = {},
   ) {
+    this.streamMode = sarvamStreamMode(options.target);
     if (options.channels !== 1) {
       throw new Error("Sarvam streaming requires mono audio");
     }
@@ -245,13 +251,16 @@ export class SarvamStreamingSession implements ProviderStreamSession {
 
     const url = new URL(this.runtime.endpoint ?? SARVAM_STT_WS);
     url.searchParams.set("model", "saaras:v3");
-    url.searchParams.set("mode", SARVAM_STREAM_MODE);
+    url.searchParams.set("mode", this.streamMode);
     url.searchParams.set("language-code", toSarvamLanguageCode(this.options.source));
     url.searchParams.set("sample_rate", String(this.options.sampleRate));
     url.searchParams.set("input_audio_codec", "pcm_s16le");
     url.searchParams.set("vad_signals", "true");
     url.searchParams.set("flush_signal", "true");
-    url.searchParams.set("high_vad_sensitivity", "false");
+    // The high-sensitivity preset provides a compatible two-frame end-of-speech
+    // window. Do not override just the required-silence count: it can otherwise
+    // exceed that window and make END_SPEECH unreachable.
+    url.searchParams.set("high_vad_sensitivity", "true");
 
     const socket = new WebSocket(url, {
       headers: { "Api-Subscription-Key": this.apiKey },
@@ -360,12 +369,14 @@ export class SarvamStreamingSession implements ProviderStreamSession {
       this.lastVadTimestampMs = timestampMs;
       if (signal === "START_SPEECH") {
         this.speechActive = true;
+        this.startSoftFlush();
         this.options.onEvent({
           type: "speech_start",
           timestampMs,
         });
       } else if (signal === "END_SPEECH") {
         this.speechActive = false;
+        this.stopSoftFlush();
         this.options.onEvent({
           type: "speech_end",
           timestampMs,
@@ -394,10 +405,41 @@ export class SarvamStreamingSession implements ProviderStreamSession {
       text: transcript,
       timestampMs,
       ...(languageCode ? { languageCode } : {}),
+      ...(this.streamMode === "translate" ? { translated: true } : {}),
     });
     this.recentSpeechTimestampMs = null;
     this.lastVadTimestampMs = null;
     this.maybeResolveFlushWaiters("transcript");
+  }
+
+  private softFlushIntervalMs(): number {
+    return this.runtime.softFlushMs ?? DEFAULT_SOFT_FLUSH_MS;
+  }
+
+  private startSoftFlush(): void {
+    const intervalMs = this.softFlushIntervalMs();
+    if (intervalMs <= 0 || this.softFlushTimer) return;
+    this.softFlushTimer = setInterval(() => {
+      this.sendSoftFlush();
+    }, intervalMs);
+  }
+
+  private stopSoftFlush(): void {
+    if (!this.softFlushTimer) return;
+    clearInterval(this.softFlushTimer);
+    this.softFlushTimer = null;
+  }
+
+  /** Force Sarvam to emit a partial transcript without waiting for silence. */
+  private sendSoftFlush(): void {
+    if (this.closed || !this.speechActive || this.flushPending) return;
+    const socket = this.socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    try {
+      socket.send(JSON.stringify({ type: "flush" }));
+    } catch {
+      // Soft flush is best-effort; hard flush / reconnect handle real failures.
+    }
   }
 
   private maybeResolveFlushWaiters(reason: "transcript" | "end_speech"): void {
@@ -561,6 +603,7 @@ export class SarvamStreamingSession implements ProviderStreamSession {
   private clearTimers(): void {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     if (this.drainTimer) clearTimeout(this.drainTimer);
+    this.stopSoftFlush();
     this.reconnectTimer = null;
     this.drainTimer = null;
   }

@@ -56,7 +56,7 @@ button {
   flex-direction: column;
   align-items: stretch;
   justify-content: space-between;
-  padding: clamp(1rem, min(3.5vw, 6vh), 3rem);
+  padding: 20px 22px 18px;
   border: 1px solid rgb(255 255 255 / 16%);
   border-radius: 18px;
   background-color: rgb(25 24 31 / 42%);
@@ -94,6 +94,7 @@ button {
   flex: 1 1 auto;
   flex-direction: column;
   justify-content: flex-end;
+  gap: 10px;
   overflow: hidden;
   /* Fade older text at the top so the latest line stays fully readable. */
   mask-image: linear-gradient(to bottom, transparent 0%, #000 1.4rem);
@@ -315,10 +316,11 @@ button {
   width: 100%;
   margin: 0;
   color: #f5f4f7;
-  font-size: clamp(1.35rem, min(5.6vw, 12vh), 3.75rem);
+  font-size: 28px;
   font-weight: 510;
-  line-height: 1.2;
+  line-height: 1.25;
   letter-spacing: -0.035em;
+  overflow: hidden;
   overflow-wrap: anywhere;
   text-wrap: pretty;
   /* Keep the newest lines pinned to the bottom of the visible area. */
@@ -333,14 +335,6 @@ button {
   color: #ffaaa1;
   font-size: 15px;
   letter-spacing: -0.015em;
-}
-
-.source-text {
-  margin: 8px 0 0;
-  color: rgb(225 221 230 / 52%);
-  font-size: clamp(0.75rem, min(2vw, 3vh), 1.1rem);
-  line-height: 1.35;
-  text-wrap: pretty;
 }
 
 .caption-notice {
@@ -514,10 +508,6 @@ button {
   .caption-stage {
     min-height: 150px;
     padding: 19px;
-  }
-
-  .caption-text {
-    font-size: clamp(1.25rem, min(6vw, 12vh), 2.25rem);
   }
 
   .caption-toolbar {

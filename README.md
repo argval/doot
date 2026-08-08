@@ -67,12 +67,15 @@ To work on the browser UI without Tauri:
 npm run dev:web
 ```
 
-To run the services individually:
+To run the gateway separately:
 
 ```bash
 npm run dev:gateway
-npm run dev:tauri
 ```
+
+`npm run dev:tauri` starts both the native desktop app and its local gateway. If
+you launch the native desktop process by another route, start
+`npm run dev:gateway` alongside it.
 
 On macOS, start and stop capture from the overlay, the tray menu, or with `Cmd+Shift+D`. The first capture prompts for **Screen & System Audio Recording** permission. With `SARVAM_API_KEY` set in the repo-root `.env`, Indian-language routes (including Auto → English) use Sarvam’s streaming STT; otherwise the gateway falls back to deterministic mock captions.
 

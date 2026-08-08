@@ -36,6 +36,12 @@ interface ActiveUtterance {
   endMs: number;
   graceTimer: NodeJS.Timeout | null;
   safetyTimer: NodeJS.Timeout | null;
+  draftTimer: NodeJS.Timeout | null;
+  draftMaxWaitTimer: NodeJS.Timeout | null;
+  draftSourceText: string | null;
+  draftTranslatedText: string | null;
+  /** Provider already returned target-language text (skip Mayura). */
+  providerTranslated: boolean;
 }
 
 interface SessionState {
@@ -65,7 +71,7 @@ export function registerRealtimeGateway(
   options: RealtimeGatewayOptions = {},
 ): void {
   const gatewayOptions: RequiredGatewayOptions = {
-    utteranceGraceMs: options.utteranceGraceMs ?? 600,
+    utteranceGraceMs: options.utteranceGraceMs ?? 350,
     maxUtteranceMs: options.maxUtteranceMs ?? 60_000,
   };
 
@@ -200,6 +206,7 @@ async function startSession(
     const providerSession = await provider.openSession({
       sessionId: request.sessionId,
       source: request.sourceLanguage,
+      target: request.targetLanguage,
       sampleRate: request.sampleRate,
       channels: request.channels,
       onEvent: (event) => {
@@ -321,6 +328,11 @@ function updateActiveUtterance(
       endMs: event.timestampMs,
       graceTimer: null,
       safetyTimer: null,
+      draftTimer: null,
+      draftMaxWaitTimer: null,
+      draftSourceText: null,
+      draftTranslatedText: null,
+      providerTranslated: false,
     };
     session.activeUtterance = utterance;
     session.pendingSpeechStartMs = null;
@@ -335,11 +347,120 @@ function updateActiveUtterance(
 
   utterance.sourceText = mergedText;
   utterance.revision += 1;
-  sendCaption(socket, session, utterance, "", false, utterance.revision);
+  if (event.translated) {
+    utterance.providerTranslated = true;
+    utterance.draftSourceText = mergedText;
+    utterance.draftTranslatedText = mergedText;
+    sendCaption(socket, session, utterance, mergedText, false, utterance.revision);
+  } else {
+    // Keep the last good draft on-screen while a newer translation is in flight.
+    const provisionalTranslated = utterance.draftTranslatedText
+      && utterance.draftSourceText
+      && mergedText.startsWith(utterance.draftSourceText)
+      ? utterance.draftTranslatedText
+      : "";
+    sendCaption(
+      socket,
+      session,
+      utterance,
+      provisionalTranslated,
+      false,
+      utterance.revision,
+    );
+    scheduleDraftTranslation(translator, socket, session, utterance);
+  }
 
   if (!session.speechActive) {
     scheduleGraceFinalization(translator, options, socket, session);
   }
+}
+
+const DRAFT_TRANSLATE_MS = 120;
+const DRAFT_MAX_WAIT_MS = 450;
+
+function scheduleDraftTranslation(
+  translator: TranslateText,
+  socket: WebSocket,
+  session: SessionState,
+  utterance: ActiveUtterance,
+): void {
+  if (utterance.providerTranslated) return;
+  if (utterance.draftTimer) clearTimeout(utterance.draftTimer);
+  utterance.draftTimer = setTimeout(() => {
+    utterance.draftTimer = null;
+    clearDraftMaxWait(utterance);
+    void runDraftTranslation(translator, socket, session, utterance);
+  }, DRAFT_TRANSLATE_MS);
+
+  // Continuous speech keeps resetting the trailing timer; force a draft at least
+  // this often so English updates without waiting for a pause.
+  if (!utterance.draftMaxWaitTimer) {
+    utterance.draftMaxWaitTimer = setTimeout(() => {
+      utterance.draftMaxWaitTimer = null;
+      if (utterance.draftTimer) {
+        clearTimeout(utterance.draftTimer);
+        utterance.draftTimer = null;
+      }
+      void runDraftTranslation(translator, socket, session, utterance);
+    }, DRAFT_MAX_WAIT_MS);
+  }
+}
+
+function clearDraftMaxWait(utterance: ActiveUtterance): void {
+  if (!utterance.draftMaxWaitTimer) return;
+  clearTimeout(utterance.draftMaxWaitTimer);
+  utterance.draftMaxWaitTimer = null;
+}
+
+async function runDraftTranslation(
+  translator: TranslateText,
+  socket: WebSocket,
+  session: SessionState,
+  utterance: ActiveUtterance,
+): Promise<void> {
+  if (
+    session.closed
+    || session.closing
+    || session.activeUtterance !== utterance
+    || !utterance.sourceText
+    || utterance.providerTranslated
+  ) {
+    return;
+  }
+
+  const sourceText = utterance.sourceText;
+  const request = session.request;
+  let translatedText = sourceText;
+  try {
+    translatedText = await translator({
+      text: sourceText,
+      source: request.sourceLanguage,
+      target: request.targetLanguage,
+    });
+  } catch {
+    // Draft misses are fine; the final pass still reports translation errors.
+    return;
+  }
+
+  if (
+    session.closed
+    || session.activeUtterance !== utterance
+    || utterance.sourceText !== sourceText
+  ) {
+    return;
+  }
+
+  utterance.revision += 1;
+  utterance.draftSourceText = sourceText;
+  utterance.draftTranslatedText = translatedText || sourceText;
+  sendCaption(
+    socket,
+    session,
+    utterance,
+    utterance.draftTranslatedText,
+    false,
+    utterance.revision,
+  );
 }
 
 function scheduleGraceFinalization(
@@ -371,21 +492,31 @@ function finalizeActiveUtterance(
   const request = session.request;
   const finalize = async () => {
     let translatedText = utterance.sourceText;
-    try {
-      translatedText = await translator({
-        text: utterance.sourceText,
-        source: request.sourceLanguage,
-        target: request.targetLanguage,
-      });
-    } catch (error) {
-      if (!session.closed) {
-        send(socket, {
-          type: "error",
-          sessionId: request.sessionId,
-          code: "TRANSLATION_ERROR",
-          message: error instanceof Error ? error.message : "Caption translation failed",
-          retryable: true,
+    const canReuseDraft = Boolean(
+      utterance.draftTranslatedText
+      && utterance.draftSourceText === utterance.sourceText,
+    );
+    if (utterance.providerTranslated) {
+      translatedText = utterance.sourceText;
+    } else if (canReuseDraft && utterance.draftTranslatedText) {
+      translatedText = utterance.draftTranslatedText;
+    } else {
+      try {
+        translatedText = await translator({
+          text: utterance.sourceText,
+          source: request.sourceLanguage,
+          target: request.targetLanguage,
         });
+      } catch (error) {
+        if (!session.closed) {
+          send(socket, {
+            type: "error",
+            sessionId: request.sessionId,
+            code: "TRANSLATION_ERROR",
+            message: error instanceof Error ? error.message : "Caption translation failed",
+            retryable: true,
+          });
+        }
       }
     }
     if (session.closed) return;
@@ -505,8 +636,12 @@ function clearUtteranceTimers(utterance: ActiveUtterance | null): void {
   if (!utterance) return;
   if (utterance.graceTimer) clearTimeout(utterance.graceTimer);
   if (utterance.safetyTimer) clearTimeout(utterance.safetyTimer);
+  if (utterance.draftTimer) clearTimeout(utterance.draftTimer);
+  if (utterance.draftMaxWaitTimer) clearTimeout(utterance.draftMaxWaitTimer);
   utterance.graceTimer = null;
   utterance.safetyTimer = null;
+  utterance.draftTimer = null;
+  utterance.draftMaxWaitTimer = null;
 }
 
 function disposeSession(session: SessionState): void {

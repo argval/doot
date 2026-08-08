@@ -1,6 +1,7 @@
 import type { CaptionEvent } from "@doot/protocol";
 
 const MAX_FINALIZED_UTTERANCES = 18;
+const MAX_VISIBLE_UTTERANCES = 2;
 
 export interface CaptionState {
   finalized: CaptionEvent[];
@@ -46,22 +47,19 @@ export function reduceCaptionEvent(
   };
 }
 
+/** Primary overlay line only — translations, never the source transcript. */
 export function selectVisibleCaptions(state: CaptionState): {
   translatedText: string;
-  sourceText: string;
 } {
   const utterances = state.active
     ? [...state.finalized, state.active]
     : state.finalized;
-  const translatedText = utterances
-    .map((utterance) => utterance.translatedText || utterance.sourceText)
+  const recent = utterances.slice(-MAX_VISIBLE_UTTERANCES);
+  const translatedText = recent
+    .map((utterance) => utterance.translatedText)
     .filter(Boolean)
     .join(" ");
-  const sourceText = utterances
-    .map((utterance) => utterance.sourceText)
-    .filter(Boolean)
-    .join(" ");
-  return { translatedText, sourceText };
+  return { translatedText };
 }
 
 function revisionFor(state: CaptionState, utteranceId: string): number {
