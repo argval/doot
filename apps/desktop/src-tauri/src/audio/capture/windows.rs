@@ -1,4 +1,4 @@
-use super::{AudioCaptureBackend, CaptureConfig};
+use super::{AudioCaptureBackend, AudioFrameQueue, CaptureConfig};
 
 /// WASAPI loopback seam for Windows system-audio capture.
 ///
@@ -11,13 +11,22 @@ pub struct WasapiBackend {
     running: bool,
 }
 
-impl WasapiBackend { pub fn new() -> Self { Self { running: false } } }
+impl WasapiBackend {
+    pub fn new() -> Self {
+        Self { running: false }
+    }
+}
 
 impl AudioCaptureBackend for WasapiBackend {
-    fn name(&self) -> &'static str { "wasapi-loopback" }
-    fn start(&mut self, _config: &CaptureConfig) -> Result<(), String> {
+    fn name(&self) -> &'static str {
+        "wasapi-loopback"
+    }
+    fn start(&mut self, _config: &CaptureConfig, _frames: AudioFrameQueue) -> Result<(), String> {
         self.running = true;
         Err("WASAPI loopback backend is scaffolded; implement COM endpoint wiring next".into())
     }
-    fn stop(&mut self) -> Result<(), String> { self.running = false; Ok(()) }
+    fn stop(&mut self) -> Result<(), String> {
+        self.running = false;
+        Ok(())
+    }
 }
