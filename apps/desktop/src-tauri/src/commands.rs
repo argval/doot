@@ -1,7 +1,8 @@
 use crate::audio::{AudioCaptureStatus, Language, SessionConfig};
+use crate::events::{emit_status, SessionStatusEvent};
 use crate::AppState;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State, WebviewWindow};
+use tauri::{AppHandle, State, WebviewWindow};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,31 +24,54 @@ pub fn start_caption_session(
         source_language: Language::parse(&source_language)?,
         target_language: Language::parse(&target_language)?,
     };
-    let mut engine = state.audio_engine.lock().map_err(|_| "audio engine lock poisoned")?;
-    let session = engine.start(config)?;
+    let mut engine = state
+        .audio_engine
+        .lock()
+        .map_err(|_| "audio engine lock poisoned")?;
+    let session = match engine.start(app.clone(), config) {
+        Ok(session) => session,
+        Err(error) => {
+            emit_status(&app, SessionStatusEvent::error(None, error.clone()));
+            return Err(error);
+        }
+    };
     let info = SessionInfo {
         session_id: session.id().to_string(),
         source_language: session.config().source_language.to_string(),
         target_language: session.config().target_language.to_string(),
         provider: session.provider_name().to_string(),
     };
-    let _ = app.emit("caption://status", &info);
+    emit_status(&app, SessionStatusEvent::capturing(info.session_id.clone()));
     Ok(info)
 }
 
 #[tauri::command]
-pub fn stop_caption_session(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
-    let mut engine = state.audio_engine.lock().map_err(|_| "audio engine lock poisoned")?;
-    engine.stop(&session_id)
+pub fn stop_caption_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    let mut engine = state
+        .audio_engine
+        .lock()
+        .map_err(|_| "audio engine lock poisoned")?;
+    engine.stop(&session_id)?;
+    emit_status(&app, SessionStatusEvent::idle());
+    Ok(())
 }
 
 #[tauri::command]
 pub fn set_overlay_always_on_top(window: WebviewWindow, enabled: bool) -> Result<(), String> {
-    window.set_always_on_top(enabled).map_err(|error| error.to_string())
+    window
+        .set_always_on_top(enabled)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub fn audio_capture_status(state: State<'_, AppState>) -> Result<AudioCaptureStatus, String> {
-    let engine = state.audio_engine.lock().map_err(|_| "audio engine lock poisoned")?;
+    let engine = state
+        .audio_engine
+        .lock()
+        .map_err(|_| "audio engine lock poisoned")?;
     Ok(engine.capture_status())
 }

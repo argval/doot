@@ -9,6 +9,12 @@ export interface DesktopSession {
   provider: string;
 }
 
+export interface SessionStatus {
+  state: "idle" | "capturing" | "warning" | "error";
+  sessionId?: string;
+  message?: string;
+}
+
 export async function startCaptionSession(
   sourceLanguage: SupportedLanguage,
   targetLanguage: SupportedLanguage,
@@ -22,4 +28,12 @@ export async function stopCaptionSession(sessionId: string): Promise<void> {
 
 export function subscribeToCaptions(handler: (event: CaptionEvent) => void): Promise<() => void> {
   return listen<CaptionEvent>("caption://segment", (event) => handler(event.payload));
+}
+
+export function subscribeToSessionStatus(handler: (status: SessionStatus) => void): Promise<() => void> {
+  return listen<SessionStatus>("caption://status", (event) => handler(event.payload));
+}
+
+export function subscribeToCaptureToggle(handler: () => void): Promise<() => void> {
+  return listen("caption://toggle-request", handler);
 }

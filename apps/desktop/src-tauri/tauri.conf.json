@@ -22,6 +22,7 @@
         "decorations": false,
         "resizable": true,
         "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": true,
         "transparent": true,
         "shadow": false
       }
@@ -34,6 +35,9 @@
     "active": true,
     "icon": ["icons/icon.icns", "icons/icon.ico", "icons/icon.png"],
     "targets": "all",
-    "createUpdaterArtifacts": false
+    "createUpdaterArtifacts": false,
+    "macOS": {
+      "minimumSystemVersion": "14.0"
+    }
   }
 }
