@@ -77,7 +77,7 @@ npm run dev:gateway
 you launch the native desktop process by another route, start
 `npm run dev:gateway` alongside it.
 
-On macOS, start and stop capture from the overlay, the tray menu, or with `Cmd+Shift+D`. The first capture prompts for **Screen & System Audio Recording** permission. With `SARVAM_API_KEY` set in the repo-root `.env`, Indian-language routes (including Auto → English) use Sarvam’s streaming STT; otherwise the gateway falls back to deterministic mock captions.
+On macOS, start and stop capture from the overlay, the tray menu, or with `Cmd+Shift+D`. The first capture prompts for **Screen & System Audio Recording** permission. With `SARVAM_API_KEY` set in the repo-root `.env`, Indian-language routes (including Auto → English) use Sarvam’s Realtime STT API. If Realtime cannot connect or reports a terminal provider failure, the gateway automatically continues with Sarvam’s legacy streaming API; without a key it uses deterministic mock captions.
 
 Windows still returns the explicit WASAPI scaffold error. Other platforms retain the stub backend for session-state development.
 
@@ -107,7 +107,7 @@ The shared protocol lives in `packages/protocol/src/index.ts`. A client first se
 }
 ```
 
-The gateway responds with `session_started`, followed by `caption` events. When no `provider` is set, the gateway picks Sarvam for supported Indian-language pairs if `SARVAM_API_KEY` is present, otherwise mock. Keep gateway orchestration separate from vendor SDK details in `services/gateway/src/providers.ts` and `services/gateway/src/sarvam.ts`.
+The gateway responds with `session_started`, followed by `caption` events. When no `provider` is set, the gateway picks Sarvam for supported Indian-language pairs if `SARVAM_API_KEY` is present, otherwise mock. The Sarvam provider uses `saaras:v3-realtime` first, retains source-language partials for progressive translation, and has an automatic legacy-streaming failover. Keep gateway orchestration separate from vendor SDK details in `services/gateway/src/providers.ts` and `services/gateway/src/sarvam.ts`.
 
 ## Where to implement the next pieces
 
@@ -127,7 +127,7 @@ The gateway responds with `session_started`, followed by `caption` events. When 
 ## Current limitations
 
 - Native system-audio capture is implemented on macOS only.
-- Sarvam streaming is wired for Indian-language routes; the international STT adapter remains a scaffold.
-- Sarvam `translate` mode outputs English only (Indic → English).
+- Sarvam Realtime STT is wired for Indian-language routes with legacy-streaming failover; the international STT adapter remains a scaffold.
+- Progressive translated captions use Sarvam's text-translation API because Realtime partial transcripts are source-language text by design.
 - Finalized captions are not persisted yet.
 - Authentication, rate limiting, billing, and production secrets management are intentionally out of scope for this skeleton.

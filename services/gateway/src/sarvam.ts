@@ -5,6 +5,7 @@ import {
 } from "@doot/protocol";
 
 export const SARVAM_STT_WS = "wss://api.sarvam.ai/speech-to-text/ws";
+export const SARVAM_REALTIME_STT_WS = "wss://api.sarvam.ai/speech-to-text-realtime/ws";
 
 export type SarvamStreamMode = "codemix" | "translate" | "transcribe";
 
@@ -13,7 +14,7 @@ export function sarvamStreamMode(target: SupportedLanguage): SarvamStreamMode {
   return target === "en" ? "translate" : "codemix";
 }
 
-const languageCodes: Record<SarvamSupportedLanguage, string> = {
+const legacyLanguageCodes: Record<SarvamSupportedLanguage, string> = {
   auto: "unknown",
   en: "en-IN",
   hi: "hi-IN",
@@ -44,7 +45,20 @@ export function toSarvamLanguageCode(language: SupportedLanguage): string {
   if (!isSarvamSupportedLanguage(language)) {
     throw new Error(`Sarvam does not support language: ${language}`);
   }
-  return languageCodes[language];
+  return legacyLanguageCodes[language];
+}
+
+/**
+ * Saaras Realtime accepts `auto` directly and renamed Odia from `od-IN` to
+ * `or-IN`; keep this mapping separate from the legacy Streaming API mapping.
+ */
+export function toSarvamRealtimeLanguageCode(language: SupportedLanguage): string {
+  if (!isSarvamSupportedLanguage(language)) {
+    throw new Error(`Sarvam does not support language: ${language}`);
+  }
+  if (language === "auto") return "auto";
+  if (language === "od") return "or-IN";
+  return legacyLanguageCodes[language];
 }
 
 export function toSarvamTranslationLanguageCode(language: SupportedLanguage): string {

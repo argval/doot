@@ -249,6 +249,35 @@ test("publishes a draft translation before the utterance finalizes", async () =>
   }
 });
 
+test("finalizes promptly when Realtime sends transcript.final before VAD speech_end", async () => {
+  const harness = await createHarness(2_000);
+  try {
+    const stream = harness.provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 100 });
+    stream.emit({
+      type: "transcript",
+      text: "Realtime partial",
+      timestampMs: 150,
+      isFinal: false,
+    });
+    stream.emit({
+      type: "transcript",
+      text: "Realtime final transcript",
+      timestampMs: 220,
+      isFinal: true,
+    });
+
+    const final = await harness.client.waitForMessage(
+      (message) => message.type === "caption" && message.isFinal,
+    );
+    assert.equal(final.type, "caption");
+    assert.equal(final.sourceText, "Realtime final transcript");
+    assert.equal(final.translatedText, "English: Realtime final transcript");
+  } finally {
+    await harness.close();
+  }
+});
+
 test("merges overlapping transcript text across a provider reconnect", async () => {
   const harness = await createHarness(20);
   try {
@@ -262,6 +291,37 @@ test("merges overlapping transcript text across a provider reconnect", async () 
 
     const finals = await harness.client.waitForFinalCount(1);
     assert.equal(finals[0]?.sourceText, "hello world again");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("merges Realtime partial overlap despite casing and punctuation changes", async () => {
+  const harness = await createHarness(2_000);
+  try {
+    const stream = harness.provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 100 });
+    stream.emit({
+      type: "transcript",
+      text: "Doot, captions",
+      timestampMs: 150,
+      isFinal: false,
+    });
+    stream.emit({
+      type: "transcript",
+      text: "Captions are working",
+      timestampMs: 220,
+      isFinal: false,
+    });
+
+    const latest = await harness.client.waitForMessage(
+      (message) => (
+        message.type === "caption"
+        && !message.isFinal
+        && message.sourceText === "Doot, captions are working"
+      ),
+    );
+    assert.equal(latest.type, "caption");
   } finally {
     await harness.close();
   }
