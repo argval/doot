@@ -5,6 +5,7 @@ import {
   isChannelCount,
   isProviderId,
   isSupportedLanguage,
+  isSupportedTargetLanguage,
   type ClientMessage,
   type ProviderId,
   type ServerMessage,
@@ -13,10 +14,15 @@ import {
 import { WebSocket } from "ws";
 import {
   ProviderRouter,
-  type ProviderStreamEvent,
-  type ProviderStreamSession,
-} from "./providers.js";
-import type { TranslateText } from "./translate.js";
+} from "./speech/router.js";
+import type {
+  ProviderStreamEvent,
+  ProviderStreamSession,
+} from "./speech/contract.js";
+import {
+  TranslationUnavailableError,
+  type TranslateText,
+} from "./translation/contract.js";
 import { isRecord } from "./util.js";
 
 const maxAudioChunkBytes = 256 * 1024;
@@ -40,8 +46,6 @@ interface ActiveUtterance {
   draftMaxWaitTimer: NodeJS.Timeout | null;
   draftSourceText: string | null;
   draftTranslatedText: string | null;
-  /** Provider already returned target-language text (skip Mayura). */
-  providerTranslated: boolean;
 }
 
 interface SessionState {
@@ -185,8 +189,9 @@ async function startSession(
   try {
     const provider = router.select(
       request.sourceLanguage,
-      request.targetLanguage,
       request.provider,
+      request.sampleRate,
+      request.channels,
     );
     const session: SessionState = {
       request,
@@ -206,7 +211,6 @@ async function startSession(
     const providerSession = await provider.openSession({
       sessionId: request.sessionId,
       source: request.sourceLanguage,
-      target: request.targetLanguage,
       sampleRate: request.sampleRate,
       channels: request.channels,
       onEvent: (event) => {
@@ -340,7 +344,6 @@ function updateActiveUtterance(
       draftMaxWaitTimer: null,
       draftSourceText: null,
       draftTranslatedText: null,
-      providerTranslated: false,
     };
     session.activeUtterance = utterance;
     session.pendingSpeechStartMs = null;
@@ -359,28 +362,21 @@ function updateActiveUtterance(
 
   utterance.sourceText = mergedText;
   utterance.revision += 1;
-  if (event.translated) {
-    utterance.providerTranslated = true;
-    utterance.draftSourceText = mergedText;
-    utterance.draftTranslatedText = mergedText;
-    sendCaption(socket, session, utterance, mergedText, false, utterance.revision);
-  } else {
-    // Keep the last good draft on-screen while a newer translation is in flight.
-    const provisionalTranslated = utterance.draftTranslatedText
-      && utterance.draftSourceText
-      && mergedText.startsWith(utterance.draftSourceText)
-      ? utterance.draftTranslatedText
-      : "";
-    sendCaption(
-      socket,
-      session,
-      utterance,
-      provisionalTranslated,
-      false,
-      utterance.revision,
-    );
-    scheduleDraftTranslation(translator, socket, session, utterance);
-  }
+  // Keep the last good draft on-screen while a newer translation is in flight.
+  const provisionalTranslated = utterance.draftTranslatedText
+    && utterance.draftSourceText
+    && mergedText.startsWith(utterance.draftSourceText)
+    ? utterance.draftTranslatedText
+    : "";
+  sendCaption(
+    socket,
+    session,
+    utterance,
+    provisionalTranslated,
+    false,
+    utterance.revision,
+  );
+  scheduleDraftTranslation(translator, socket, session, utterance);
 
   if (!session.speechActive) {
     scheduleGraceFinalization(translator, options, socket, session);
@@ -396,7 +392,6 @@ function scheduleDraftTranslation(
   session: SessionState,
   utterance: ActiveUtterance,
 ): void {
-  if (utterance.providerTranslated) return;
   if (utterance.draftTimer) clearTimeout(utterance.draftTimer);
   utterance.draftTimer = setTimeout(() => {
     utterance.draftTimer = null;
@@ -435,14 +430,13 @@ async function runDraftTranslation(
     || session.closing
     || session.activeUtterance !== utterance
     || !utterance.sourceText
-    || utterance.providerTranslated
   ) {
     return;
   }
 
   const sourceText = utterance.sourceText;
   const request = session.request;
-  let translatedText = sourceText;
+  let translatedText = "";
   try {
     translatedText = await translator({
       text: sourceText,
@@ -464,7 +458,7 @@ async function runDraftTranslation(
 
   utterance.revision += 1;
   utterance.draftSourceText = sourceText;
-  utterance.draftTranslatedText = translatedText || sourceText;
+  utterance.draftTranslatedText = translatedText;
   sendCaption(
     socket,
     session,
@@ -503,14 +497,12 @@ function finalizeActiveUtterance(
   session.providerSession?.commitAudioThrough(utterance.endMs);
   const request = session.request;
   const finalize = async () => {
-    let translatedText = utterance.sourceText;
+    let translatedText = utterance.draftTranslatedText ?? "";
     const canReuseDraft = Boolean(
       utterance.draftTranslatedText
       && utterance.draftSourceText === utterance.sourceText,
     );
-    if (utterance.providerTranslated) {
-      translatedText = utterance.sourceText;
-    } else if (canReuseDraft && utterance.draftTranslatedText) {
+    if (canReuseDraft && utterance.draftTranslatedText) {
       translatedText = utterance.draftTranslatedText;
     } else {
       try {
@@ -524,9 +516,11 @@ function finalizeActiveUtterance(
           send(socket, {
             type: "error",
             sessionId: request.sessionId,
-            code: "TRANSLATION_ERROR",
+            code: error instanceof TranslationUnavailableError
+              ? "TRANSLATION_UNAVAILABLE"
+              : "TRANSLATION_ERROR",
             message: error instanceof Error ? error.message : "Caption translation failed",
-            retryable: true,
+            retryable: !(error instanceof TranslationUnavailableError),
           });
         }
       }
@@ -536,7 +530,7 @@ function finalizeActiveUtterance(
       socket,
       session,
       utterance,
-      translatedText || utterance.sourceText,
+      translatedText,
       true,
       utterance.revision + 1,
     );
@@ -702,7 +696,7 @@ export function parseClientMessage(
     if (
       !isSessionId(value.sessionId)
       || !isSupportedLanguage(value.sourceLanguage)
-      || !isSupportedLanguage(value.targetLanguage)
+      || !isSupportedTargetLanguage(value.targetLanguage)
       || !isAudioSampleRate(value.sampleRate)
       || !isChannelCount(value.channels)
       || (value.provider !== undefined && !isProviderId(value.provider))

@@ -2,33 +2,36 @@ import { WebSocket, type RawData } from "ws";
 import type {
   OpenProviderSessionOptions,
   ProviderStreamSession,
-} from "./providers.js";
+} from "../contract.js";
 import {
-  SARVAM_REALTIME_STT_WS,
-  toSarvamRealtimeLanguageCode,
-} from "./sarvam.js";
-import { isRecord } from "./util.js";
+  SARVAM_STT_WS,
+  hasSpeechEnergy,
+  sarvamStreamMode,
+  toSarvamLanguageCode,
+} from "./languages.js";
+import { isRecord } from "../../util.js";
 
 const CONNECT_TIMEOUT_MS = 8_000;
-const END_TIMEOUT_MS = 2_000;
+const FLUSH_TIMEOUT_MS = 2_000;
 const MAX_RECONNECT_ATTEMPTS = 6;
 const MAX_RECONNECT_DELAY_MS = 4_000;
 const MAX_QUEUE_BYTES = 192_000; // Six seconds of mono PCM S16LE at 16 kHz.
 const REPLAY_TAIL_BYTES = 16_000; // Replay the most recent 500 ms after reconnecting.
 const MAX_SOCKET_BUFFER_BYTES = 256_000;
-const PING_INTERVAL_MS = 20_000;
+const DEFAULT_SOFT_FLUSH_MS = 700;
 
-/** Test-only overrides for endpoint and timing. */
-export interface SarvamRealtimeRuntime {
+/** Test-only overrides for timeouts and endpoint. */
+export type SarvamStreamingRuntime = {
   endpoint?: string;
   connectTimeoutMs?: number;
-  endTimeoutMs?: number;
+  flushTimeoutMs?: number;
   drainTimeoutMs?: number;
   reconnectBaseDelayMs?: number;
   maxReconnectDelayMs?: number;
   maxReconnectAttempts?: number;
-  pingIntervalMs?: number;
-}
+  /** Periodic mid-speech flush interval; 0 disables. */
+  softFlushMs?: number;
+};
 
 interface AudioFrame {
   id: number;
@@ -36,22 +39,17 @@ interface AudioFrame {
   timestampMs: number;
 }
 
-interface EndWaiter {
+interface FlushWaiter {
   timeout: NodeJS.Timeout;
   resolve(): void;
   reject(error: Error): void;
 }
 
-/**
- * Sarvam's current `saaras:v3-realtime` WebSocket transport. It intentionally
- * stays transcription-only: Realtime partials are always source text, and the
- * gateway's existing Sarvam text translator produces progressive target text.
- */
-export class SarvamRealtimeSession implements ProviderStreamSession {
+export class SarvamStreamingSession implements ProviderStreamSession {
   private socket: WebSocket | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private drainTimer: NodeJS.Timeout | null = null;
-  private pingTimer: NodeJS.Timeout | null = null;
+  private softFlushTimer: NodeJS.Timeout | null = null;
   private readonly queuedFrames: AudioFrame[] = [];
   private queueBytes = 0;
   private readonly replayTail: AudioFrame[] = [];
@@ -60,25 +58,30 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
   private reconnectAttempts = 0;
   private replayQueuedForOutage = false;
   private closed = false;
-  private terminal = false;
-  private ending = false;
+  private lastPushedTimestampMs = 0;
   private lastSentTimestampMs = 0;
   private lastVadTimestampMs: number | null = null;
+  private recentSpeechTimestampMs: number | null = null;
+  private speechActive = false;
   private committedThroughTimestampMs = -1;
-  private finalTranscriptCount = 0;
-  private endFinalBarrierCount = 0;
-  private readonly endWaiters = new Set<EndWaiter>();
+  private transcriptCount = 0;
+  private flushBarrierCount = 0;
+  private flushPending = false;
+  private flushSawPostBarrierTranscript = false;
+  private readonly flushWaiters = new Set<FlushWaiter>();
+  private readonly streamMode;
 
   constructor(
     private readonly apiKey: string,
     private readonly options: OpenProviderSessionOptions,
-    private readonly runtime: SarvamRealtimeRuntime = {},
+    private readonly runtime: SarvamStreamingRuntime = {},
   ) {
+    this.streamMode = sarvamStreamMode();
     if (options.channels !== 1) {
-      throw new Error("Sarvam Realtime requires mono audio");
+      throw new Error("Sarvam streaming requires mono audio");
     }
-    if (options.sampleRate !== 8_000 && options.sampleRate !== 16_000) {
-      throw new Error(`Sarvam Realtime does not support ${options.sampleRate} Hz audio`);
+    if (options.sampleRate !== 16_000) {
+      throw new Error(`Sarvam streaming does not support ${options.sampleRate} Hz audio`);
     }
   }
 
@@ -87,7 +90,7 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
   }
 
   pushAudio(audio: Uint8Array, timestampMs: number): void {
-    if (this.closed || this.terminal || this.ending || audio.byteLength === 0) return;
+    if (this.closed || audio.byteLength === 0) return;
 
     const frame: AudioFrame = {
       id: this.frameId,
@@ -95,13 +98,13 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
       timestampMs,
     };
     this.frameId += 1;
+    this.lastPushedTimestampMs = timestampMs;
+    if (hasSpeechEnergy(audio)) this.recentSpeechTimestampMs = timestampMs;
     this.rememberReplayTail(frame);
 
-    if (
-      this.socket?.readyState === WebSocket.OPEN
+    if (this.socket?.readyState === WebSocket.OPEN
       && this.socket.bufferedAmount < MAX_SOCKET_BUFFER_BYTES
-      && this.queuedFrames.length === 0
-    ) {
+      && this.queuedFrames.length === 0) {
       this.sendFrame(frame);
       return;
     }
@@ -134,40 +137,60 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
 
   async flush(): Promise<void> {
     if (this.closed) return;
+
     const drained = await this.waitForQueueDrain();
     if (!drained) {
       throw new Error(
-        `Sarvam Realtime end could not send ${this.queueBytes} buffered audio bytes`,
+        `Sarvam flush could not send ${this.queueBytes} buffered audio bytes`,
       );
     }
     const socket = this.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      throw new Error("Sarvam Realtime end could not reach an open provider connection");
+      throw new Error("Sarvam flush could not reach an open provider connection");
     }
-    if (this.ending) return this.waitForEnd();
 
-    this.ending = true;
-    this.endFinalBarrierCount = this.finalTranscriptCount;
+    // Let any already-queued provider messages settle before snapshotting the
+    // transcript barrier so in-flight revisions cannot complete this flush.
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+    const recentSpeech = this.recentSpeechTimestampMs !== null
+      && this.lastPushedTimestampMs - this.recentSpeechTimestampMs <= 2_000;
+    const requiresProviderCompletion = this.speechActive || recentSpeech;
+    this.flushBarrierCount = this.transcriptCount;
+    this.flushPending = requiresProviderCompletion;
+    this.flushSawPostBarrierTranscript = false;
+
     await new Promise<void>((resolve, reject) => {
-      const waiter: EndWaiter = {
+      const waiter: FlushWaiter = {
         timeout: setTimeout(() => {
-          this.endWaiters.delete(waiter);
-          reject(new Error("Sarvam Realtime end timed out waiting for completion"));
-        }, this.runtime.endTimeoutMs ?? END_TIMEOUT_MS),
+          this.flushWaiters.delete(waiter);
+          this.flushPending = false;
+          if (requiresProviderCompletion) {
+            reject(new Error("Sarvam flush timed out waiting for final speech"));
+          } else {
+            resolve();
+          }
+        }, this.runtime.flushTimeoutMs ?? FLUSH_TIMEOUT_MS),
         resolve: () => {
           clearTimeout(waiter.timeout);
-          this.endWaiters.delete(waiter);
+          this.flushWaiters.delete(waiter);
+          this.flushPending = false;
           resolve();
         },
         reject: (error) => {
           clearTimeout(waiter.timeout);
-          this.endWaiters.delete(waiter);
+          this.flushWaiters.delete(waiter);
+          this.flushPending = false;
           reject(error);
         },
       };
-      this.endWaiters.add(waiter);
+      this.flushWaiters.add(waiter);
       try {
-        socket.send(JSON.stringify({ event: "end" }));
+        socket.send(JSON.stringify({ type: "flush" }));
+        if (!requiresProviderCompletion) {
+          waiter.resolve();
+        }
       } catch (error) {
         waiter.reject(error instanceof Error ? error : new Error(String(error)));
       }
@@ -178,7 +201,7 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
     if (this.closed) return;
     this.closed = true;
     this.clearTimers();
-    this.rejectEndWaiters(new Error("Sarvam Realtime stream closed during end"));
+    this.rejectFlushWaiters(new Error("Sarvam stream closed during flush"));
 
     const socket = this.socket;
     this.socket = null;
@@ -220,25 +243,24 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
   }
 
   private connect(reconnecting: boolean): Promise<void> {
-    if (this.closed || this.terminal || this.ending) return Promise.resolve();
+    if (this.closed) return Promise.resolve();
     this.options.onEvent({
       type: "state",
       state: reconnecting ? "reconnecting" : "connecting",
     });
 
-    const url = new URL(this.runtime.endpoint ?? SARVAM_REALTIME_STT_WS);
-    url.searchParams.set("model", "saaras:v3-realtime");
-    url.searchParams.set("language_code", toSarvamRealtimeLanguageCode(this.options.source));
-    url.searchParams.set("stream_type", "balanced");
-    // Partials are source-language text in Realtime. Keep finals source text too
-    // so the existing progressive text translator handles every target uniformly.
-    url.searchParams.set("mode", "transcribe");
-    url.searchParams.set("endpointing", "vad");
-    url.searchParams.set("encoding", "linear16");
+    const url = new URL(this.runtime.endpoint ?? SARVAM_STT_WS);
+    url.searchParams.set("model", "saaras:v3");
+    url.searchParams.set("mode", this.streamMode);
+    url.searchParams.set("language-code", toSarvamLanguageCode(this.options.source));
     url.searchParams.set("sample_rate", String(this.options.sampleRate));
-    url.searchParams.set("threshold", "0.3");
-    url.searchParams.set("silence_duration_ms", "500");
-    url.searchParams.set("min_speech_duration_ms", "250");
+    url.searchParams.set("input_audio_codec", "pcm_s16le");
+    url.searchParams.set("vad_signals", "true");
+    url.searchParams.set("flush_signal", "true");
+    // The high-sensitivity preset provides a compatible two-frame end-of-speech
+    // window. Do not override just the required-silence count: it can otherwise
+    // exceed that window and make END_SPEECH unreachable.
+    url.searchParams.set("high_vad_sensitivity", "true");
 
     const socket = new WebSocket(url, {
       headers: { "Api-Subscription-Key": this.apiKey },
@@ -249,7 +271,7 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
       let opened = false;
       let settled = false;
       const timeout = setTimeout(() => {
-        failBeforeOpen(new Error("Sarvam Realtime connection timed out"));
+        failBeforeOpen(new Error("Sarvam streaming connection timed out"));
         socket.terminate();
       }, this.runtime.connectTimeoutMs ?? CONNECT_TIMEOUT_MS);
 
@@ -261,9 +283,9 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
       };
 
       socket.once("open", () => {
-        if (this.closed || this.terminal || this.ending || this.socket !== socket) {
+        if (this.closed || this.socket !== socket) {
           socket.close();
-          failBeforeOpen(new Error("Sarvam Realtime session was superseded"));
+          failBeforeOpen(new Error("Sarvam streaming session was superseded"));
           return;
         }
         opened = true;
@@ -272,7 +294,6 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
         this.reconnectAttempts = 0;
         this.replayQueuedForOutage = false;
         this.options.onEvent({ type: "state", state: "open" });
-        this.startPing();
         this.drainQueue();
         resolve();
       });
@@ -281,7 +302,7 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
 
       socket.once("unexpected-response", (_request, response) => {
         failBeforeOpen(new Error(
-          `Sarvam Realtime WebSocket rejected the connection (HTTP ${response.statusCode})`,
+          `Sarvam WebSocket rejected the connection (HTTP ${response.statusCode})`,
         ));
         socket.terminate();
       });
@@ -293,30 +314,22 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
         }
         this.options.onEvent({
           type: "warning",
-          message: `Sarvam Realtime stream error: ${error.message}`,
+          message: `Sarvam stream error: ${error.message}`,
         });
       });
 
       socket.once("close", (code, reason) => {
         clearTimeout(timeout);
         if (this.socket === socket) this.socket = null;
-        this.stopPing();
-        if (this.closed || this.terminal) return;
-        if (this.ending) {
-          this.resolveEndWaiters();
-          return;
-        }
+        this.rejectFlushWaiters(new Error("Sarvam stream disconnected during flush"));
+        if (this.closed) return;
 
         const detail = reason.length > 0 ? reason.toString() : `code ${code}`;
         if (!opened) {
-          failBeforeOpen(new Error(`Sarvam Realtime closed before opening (${detail})`));
+          failBeforeOpen(new Error(`Sarvam stream closed before opening (${detail})`));
           return;
         }
-        if (isTerminalCloseCode(code)) {
-          this.failTerminal(`Sarvam Realtime disconnected (${detail})`);
-          return;
-        }
-        this.scheduleReconnect(`Sarvam Realtime disconnected (${detail})`);
+        this.scheduleReconnect(`Sarvam stream disconnected (${detail})`);
       });
     });
   }
@@ -328,69 +341,113 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
     } catch {
       this.options.onEvent({
         type: "warning",
-        message: "Sarvam Realtime returned a non-JSON streaming message",
+        message: "Sarvam returned a non-JSON streaming message",
       });
       return;
     }
-    if (!isRecord(payload) || typeof payload.event !== "string") return;
+    if (!isRecord(payload) || typeof payload.type !== "string") return;
 
-    const event = payload.event;
-    if (event === "error") {
-      const message = readMessage(payload, "Sarvam Realtime failed");
-      if (payload.is_fatal === true) {
-        this.failTerminal(message);
-      } else {
-        this.options.onEvent({ type: "error", message, retryable: true });
-      }
+    const data = isRecord(payload.data) ? payload.data : {};
+    if (payload.type === "error") {
+      const message = typeof data.error === "string"
+        ? data.error
+        : typeof payload.message === "string"
+          ? payload.message
+          : "Sarvam streaming failed";
+      this.options.onEvent({ type: "error", message, retryable: true });
+      this.rejectFlushWaiters(new Error(message));
       return;
     }
 
-    if (event === "vad.speech_start") {
-      this.lastVadTimestampMs = this.lastSentTimestampMs;
-      this.options.onEvent({
-        type: "speech_start",
-        timestampMs: this.lastSentTimestampMs,
-      });
-      return;
-    }
-
-    if (event === "vad.speech_end") {
+    if (payload.type === "events" || payload.type === "event") {
+      const signal = typeof data.signal_type === "string"
+        ? data.signal_type
+        : typeof data.type === "string"
+          ? data.type
+          : "";
       const timestampMs = this.lastSentTimestampMs;
       this.lastVadTimestampMs = timestampMs;
-      this.options.onEvent({ type: "speech_end", timestampMs });
+      if (signal === "START_SPEECH") {
+        this.speechActive = true;
+        this.startSoftFlush();
+        this.options.onEvent({
+          type: "speech_start",
+          timestampMs,
+        });
+      } else if (signal === "END_SPEECH") {
+        this.speechActive = false;
+        this.stopSoftFlush();
+        this.options.onEvent({
+          type: "speech_end",
+          timestampMs,
+        });
+        this.maybeResolveFlushWaiters("end_speech");
+      }
       return;
     }
 
-    if (event === "transcript.partial" || event === "transcript.final") {
-      const text = typeof payload.text === "string" ? payload.text.trim() : "";
-      if (!text) return;
-      const languageCode = typeof payload.language === "string"
-        ? payload.language
+    if (payload.type !== "data" || typeof data.transcript !== "string") return;
+    const transcript = data.transcript.trim();
+    if (!transcript) return;
+
+    const languageCode = typeof data.language_code === "string"
+      ? data.language_code
+      : typeof data.language === "string"
+        ? data.language
         : undefined;
-      const isFinal = event === "transcript.final";
-      if (isFinal) {
-        this.finalTranscriptCount += 1;
-        if (this.ending && this.finalTranscriptCount > this.endFinalBarrierCount) {
-          this.resolveEndWaiters();
-        }
-      }
-      this.options.onEvent({
-        type: "transcript",
-        text,
-        timestampMs: this.lastVadTimestampMs ?? this.lastSentTimestampMs,
-        ...(languageCode ? { languageCode } : {}),
-        isFinal,
-      });
-      return;
+    const timestampMs = this.lastVadTimestampMs ?? this.lastSentTimestampMs;
+    this.transcriptCount += 1;
+    if (this.flushPending && this.transcriptCount > this.flushBarrierCount) {
+      this.flushSawPostBarrierTranscript = true;
     }
+    this.options.onEvent({
+      type: "transcript",
+      text: transcript,
+      timestampMs,
+      isFinal: false,
+      ...(languageCode ? { languageCode } : {}),
+    });
+    this.recentSpeechTimestampMs = null;
+    this.lastVadTimestampMs = null;
+    this.maybeResolveFlushWaiters("transcript");
+  }
 
-    if (event === "session.end") {
-      if (this.ending) {
-        this.resolveEndWaiters();
-      } else {
-        this.failTerminal("Sarvam Realtime ended the session unexpectedly");
-      }
+  private softFlushIntervalMs(): number {
+    return this.runtime.softFlushMs ?? DEFAULT_SOFT_FLUSH_MS;
+  }
+
+  private startSoftFlush(): void {
+    const intervalMs = this.softFlushIntervalMs();
+    if (intervalMs <= 0 || this.softFlushTimer) return;
+    this.softFlushTimer = setInterval(() => {
+      this.sendSoftFlush();
+    }, intervalMs);
+  }
+
+  private stopSoftFlush(): void {
+    if (!this.softFlushTimer) return;
+    clearInterval(this.softFlushTimer);
+    this.softFlushTimer = null;
+  }
+
+  /** Force Sarvam to emit a partial transcript without waiting for silence. */
+  private sendSoftFlush(): void {
+    if (this.closed || !this.speechActive || this.flushPending) return;
+    const socket = this.socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    try {
+      socket.send(JSON.stringify({ type: "flush" }));
+    } catch {
+      // Soft flush is best-effort; hard flush / reconnect handle real failures.
     }
+  }
+
+  private maybeResolveFlushWaiters(reason: "transcript" | "end_speech"): void {
+    if (!this.flushPending) return;
+    if (!this.flushSawPostBarrierTranscript) return;
+    // A mid-utterance revision must not complete flush while speech is still active.
+    if (reason === "transcript" && this.speechActive) return;
+    this.resolveFlushWaiters();
   }
 
   private sendFrame(frame: AudioFrame): void {
@@ -403,10 +460,13 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
     this.lastSentTimestampMs = frame.timestampMs;
     try {
       socket.send(JSON.stringify({
-        event: "audio_input",
-        audio: frame.audio.toString("base64"),
+        audio: {
+          data: frame.audio.toString("base64"),
+          sample_rate: String(this.options.sampleRate),
+          encoding: "audio/wav",
+        },
       }), (error) => {
-        if (!error || this.closed || this.terminal) return;
+        if (!error || this.closed) return;
         this.enqueueFrame(frame, true);
         socket.terminate();
       });
@@ -442,7 +502,7 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
     if (droppedBytes > 0) {
       this.options.onEvent({
         type: "warning",
-        message: "Sarvam Realtime reconnect buffer filled; oldest audio was dropped",
+        message: "Sarvam reconnect buffer filled; oldest audio was dropped",
       });
     }
   }
@@ -462,7 +522,7 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
       this.drainTimer = null;
     }
     const socket = this.socket;
-    if (!socket || socket.readyState !== WebSocket.OPEN || this.closed || this.terminal) return;
+    if (!socket || socket.readyState !== WebSocket.OPEN || this.closed) return;
 
     while (
       this.queuedFrames.length > 0
@@ -477,7 +537,7 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
   }
 
   private scheduleDrain(): void {
-    if (this.drainTimer || this.closed || this.terminal) return;
+    if (this.drainTimer || this.closed) return;
     this.drainTimer = setTimeout(() => {
       this.drainTimer = null;
       this.drainQueue();
@@ -491,42 +551,26 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
       && Date.now() - startedAt < (this.runtime.drainTimeoutMs ?? 8_000)
     ) {
       this.drainQueue();
-      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 20);
+      });
     }
     return this.queuedFrames.length === 0;
   }
 
-  private waitForEnd(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const waiter: EndWaiter = {
-        timeout: setTimeout(() => {
-          this.endWaiters.delete(waiter);
-          reject(new Error("Sarvam Realtime end timed out waiting for completion"));
-        }, this.runtime.endTimeoutMs ?? END_TIMEOUT_MS),
-        resolve: () => {
-          clearTimeout(waiter.timeout);
-          this.endWaiters.delete(waiter);
-          resolve();
-        },
-        reject: (error) => {
-          clearTimeout(waiter.timeout);
-          this.endWaiters.delete(waiter);
-          reject(error);
-        },
-      };
-      this.endWaiters.add(waiter);
-    });
-  }
-
   private scheduleReconnect(message: string): void {
-    if (this.closed || this.terminal || this.ending || this.reconnectTimer) return;
+    if (this.closed || this.reconnectTimer) return;
     this.queueReplayTail();
     this.reconnectAttempts += 1;
     if (
       this.reconnectAttempts
       > (this.runtime.maxReconnectAttempts ?? MAX_RECONNECT_ATTEMPTS)
     ) {
-      this.failTerminal(`${message}; reconnect limit reached`);
+      this.options.onEvent({
+        type: "error",
+        message: `${message}; reconnect limit reached`,
+        retryable: false,
+      });
       return;
     }
 
@@ -546,70 +590,21 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
     }, delayMs);
   }
 
-  private failTerminal(message: string): void {
-    if (this.closed || this.terminal) return;
-    this.terminal = true;
-    this.clearTimers();
-    this.rejectEndWaiters(new Error(message));
-    this.options.onEvent({ type: "error", message, retryable: false });
-    const socket = this.socket;
-    this.socket = null;
-    if (socket && socket.readyState !== WebSocket.CLOSED) socket.terminate();
+  private resolveFlushWaiters(): void {
+    for (const waiter of [...this.flushWaiters]) waiter.resolve();
+    this.flushWaiters.clear();
   }
 
-  private resolveEndWaiters(): void {
-    for (const waiter of [...this.endWaiters]) waiter.resolve();
-    this.endWaiters.clear();
-  }
-
-  private rejectEndWaiters(error: Error): void {
-    for (const waiter of [...this.endWaiters]) waiter.reject(error);
-    this.endWaiters.clear();
-  }
-
-  private startPing(): void {
-    this.stopPing();
-    const intervalMs = this.runtime.pingIntervalMs ?? PING_INTERVAL_MS;
-    if (intervalMs <= 0) return;
-    this.pingTimer = setInterval(() => {
-      const socket = this.socket;
-      if (!socket || socket.readyState !== WebSocket.OPEN || this.closed || this.ending) return;
-      try {
-        socket.send(JSON.stringify({ event: "ping" }));
-      } catch {
-        socket.terminate();
-      }
-    }, intervalMs);
-  }
-
-  private stopPing(): void {
-    if (!this.pingTimer) return;
-    clearInterval(this.pingTimer);
-    this.pingTimer = null;
+  private rejectFlushWaiters(error: Error): void {
+    for (const waiter of [...this.flushWaiters]) waiter.reject(error);
+    this.flushWaiters.clear();
   }
 
   private clearTimers(): void {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     if (this.drainTimer) clearTimeout(this.drainTimer);
-    this.stopPing();
+    this.stopSoftFlush();
     this.reconnectTimer = null;
     this.drainTimer = null;
   }
-}
-
-function readMessage(payload: Record<string, unknown>, fallback: string): string {
-  if (typeof payload.message === "string" && payload.message.trim()) {
-    return payload.message;
-  }
-  if (typeof payload.code === "string" && payload.code.trim()) {
-    return `Sarvam Realtime error: ${payload.code}`;
-  }
-  return fallback;
-}
-
-function isTerminalCloseCode(code: number): boolean {
-  // Sarvam documents 1003 (key/quota/rate limit) and 4000 (invalid Realtime
-  // configuration/account) as terminal. A normal close without our explicit
-  // `end` is also terminal; 1008/1011 and network-style closes retry first.
-  return code === 1_000 || code === 1_003 || code === 4_000;
 }

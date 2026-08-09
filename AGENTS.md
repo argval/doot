@@ -19,6 +19,10 @@
 - Active stack is a monorepo with Tauri 2 + Rust desktop (`apps/desktop`), React + TypeScript + Vite UI, Fastify/TypeScript WebSocket gateway, shared protocol package, and Drizzle/PostgreSQL-oriented persistence.
 - System audio capture uses ScreenCaptureKit-style paths and requires macOS Screen Recording permission for testing.
 - Sarvam Realtime STT is the primary gateway transport; the legacy streaming client remains an automatic fallback for initial and terminal Realtime failures.
+- Speech providers are modular gateway adapters under `services/gateway/src/speech/`; Sarvam owns the Indic lane and ElevenLabs Scribe v2 Realtime owns the initial international lane.
+- Speech adapter construction is centralized in `services/gateway/src/speech/registry.ts`; routing and health metadata derive from the registered adapters.
+- International launch languages are English, Spanish, French, German, Portuguese, and Italian; translation remains an independent provider seam.
+- Unsupported translation pairs emit an unavailable error with blank translated text; source text must never be substituted into translated-only captions.
 - Local runs often use bun workspace scripts for the desktop/Tauri app and gateway; `scripts/dev.sh` starts gateway and desktop together.
 - Caption pipeline aims for persistent Sarvam streaming with VAD-driven utterance boundaries and code-switch-tolerant Indic translation (including Kannada).
 

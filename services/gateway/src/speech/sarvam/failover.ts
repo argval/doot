@@ -2,15 +2,15 @@ import type {
   OpenProviderSessionOptions,
   ProviderStreamEvent,
   ProviderStreamSession,
-} from "./providers.js";
+} from "../contract.js";
 import {
   SarvamRealtimeSession,
   type SarvamRealtimeRuntime,
-} from "./sarvam-realtime.js";
+} from "./realtime.js";
 import {
   SarvamStreamingSession,
   type SarvamStreamingRuntime,
-} from "./sarvam-stream.js";
+} from "./legacy.js";
 
 const REPLAY_TAIL_BYTES = 16_000;
 const MAX_HANDOFF_QUEUE_BYTES = 192_000;

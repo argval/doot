@@ -3,7 +3,8 @@ import { ChevronDown, Circle, Languages, Square } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   LANGUAGE_LABELS,
-  SUPPORTED_LANGUAGES,
+  SUPPORTED_SOURCE_LANGUAGES,
+  SUPPORTED_TARGET_LANGUAGES,
   type SupportedLanguage,
 } from "@doot/protocol";
 import {
@@ -20,9 +21,10 @@ import {
   type DesktopSession,
 } from "./lib/tauri";
 
-const selectableLanguages = SUPPORTED_LANGUAGES.filter(
+const selectableSourceLanguages = SUPPORTED_SOURCE_LANGUAGES.filter(
   (language) => language !== "auto",
 );
+const selectableTargetLanguages = SUPPORTED_TARGET_LANGUAGES;
 
 export function App() {
   const [sourceLanguage, setSourceLanguage] = useState<SupportedLanguage>("auto");
@@ -151,6 +153,7 @@ export function App() {
             label="From"
             value={sourceLanguage}
             onChange={setSourceLanguage}
+            languages={selectableSourceLanguages}
             allowAuto
             disabled={session !== null || isTransitioning}
           />
@@ -159,6 +162,7 @@ export function App() {
             label="To"
             value={targetLanguage}
             onChange={setTargetLanguage}
+            languages={selectableTargetLanguages}
             disabled={session !== null || isTransitioning}
           />
           <button
@@ -210,12 +214,14 @@ function LanguageSelect({
   label,
   value,
   onChange,
+  languages,
   allowAuto = false,
   disabled = false,
 }: {
   label: string;
   value: SupportedLanguage;
   onChange: (value: SupportedLanguage) => void;
+  languages: readonly SupportedLanguage[];
   allowAuto?: boolean;
   disabled?: boolean;
 }) {
@@ -229,7 +235,7 @@ function LanguageSelect({
         onMouseDown={(event) => event.stopPropagation()}
       >
         {allowAuto && <option value="auto">{LANGUAGE_LABELS.auto}</option>}
-        {selectableLanguages.map((language) => (
+        {languages.map((language) => (
           <option key={language} value={language}>
             {LANGUAGE_LABELS[language]}
           </option>

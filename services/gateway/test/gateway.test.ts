@@ -1,22 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  SARVAM_SUPPORTED_LANGUAGES,
+  SUPPORTED_LANGUAGES,
   type ServerMessage,
 } from "@doot/protocol";
 import WebSocket from "ws";
 import { parseClientMessage } from "../src/gateway.js";
-import { ProviderRouter } from "../src/providers.js";
+import { createProviderRouter } from "../src/speech/registry.js";
+import { ELEVENLABS_SUPPORTED_LANGUAGES } from "../src/speech/elevenlabs/languages.js";
 import {
+  SARVAM_SUPPORTED_LANGUAGES,
   hasSpeechEnergy,
   pcmS16leRms,
   toSarvamLanguageCode,
-} from "../src/sarvam.js";
+} from "../src/speech/sarvam/languages.js";
 import { buildServer } from "../src/server.js";
-import { SarvamTextTranslator } from "../src/translate.js";
 
 test("accepts canonical language IDs in session-start messages", () => {
-  for (const sourceLanguage of SARVAM_SUPPORTED_LANGUAGES) {
+  for (const sourceLanguage of SUPPORTED_LANGUAGES) {
     const result = parseClientMessage(JSON.stringify({
       type: "start_session",
       sessionId: `session-${sourceLanguage}`,
@@ -27,6 +28,11 @@ test("accepts canonical language IDs in session-start messages", () => {
     }));
     assert.equal(result.ok, true, `expected ${sourceLanguage} to be supported`);
   }
+});
+
+test("keeps provider language sets independent", () => {
+  assert.ok(ELEVENLABS_SUPPORTED_LANGUAGES.includes("es"));
+  assert.equal(SARVAM_SUPPORTED_LANGUAGES.includes("es" as never), false);
 });
 
 test("rejects malformed, unsupported, and oversized audio messages", () => {
@@ -79,10 +85,9 @@ test("returns a protocol error for an invalid realtime WebSocket payload", async
 });
 
 test("streams revisioned mock captions after receiving PCM", async (context) => {
-  const translator = new SarvamTextTranslator();
   const app = await buildServer(
-    new ProviderRouter(),
-    (request) => translator.translate(request),
+    createProviderRouter(),
+    async (request) => request.text,
     { utteranceGraceMs: 10 },
   );
   context.after(() => app.close());
@@ -107,21 +112,37 @@ test("streams revisioned mock captions after receiving PCM", async (context) => 
 });
 
 test("routes every Saaras language through Sarvam when configured", () => {
-  const router = new ProviderRouter("test-sarvam-key");
+  const router = createProviderRouter({ sarvamApiKey: "test-sarvam-key" });
   for (const language of SARVAM_SUPPORTED_LANGUAGES) {
     assert.equal(
-      router.select(language, "en").id,
+      router.select(language).id,
       "sarvam",
       `expected Sarvam route for ${language}`,
     );
   }
-  assert.equal(router.select("kn", "hi").id, "sarvam");
-  assert.equal(router.select("en", "auto").id, "mock");
+  assert.equal(router.select("kn").id, "sarvam");
 });
 
 test("falls back to mock when Sarvam is not configured", () => {
-  const router = new ProviderRouter();
-  assert.equal(router.select("kn", "en").id, "mock");
+  const router = createProviderRouter();
+  assert.equal(router.select("kn").id, "mock");
+});
+
+test("routes international speech to ElevenLabs and Indic speech to Sarvam", () => {
+  const router = createProviderRouter({
+    sarvamApiKey: "test-sarvam-key",
+    elevenLabsApiKey: "test-elevenlabs-key",
+  });
+  assert.equal(router.select("es").id, "elevenlabs");
+  assert.equal(router.select("en").id, "elevenlabs");
+  assert.equal(router.select("kn").id, "sarvam");
+  assert.equal(router.select("auto").id, "sarvam");
+  assert.equal(router.select("auto", "elevenlabs").id, "elevenlabs");
+  assert.deepEqual(router.availability(), {
+    elevenlabs: true,
+    sarvam: true,
+    mock: true,
+  });
 });
 
 test("maps all Saaras languages and retains PCM diagnostics", () => {

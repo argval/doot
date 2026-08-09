@@ -1,17 +1,50 @@
 import {
-  isSarvamSupportedLanguage,
-  type SarvamSupportedLanguage,
   type SupportedLanguage,
 } from "@doot/protocol";
+
+export const SARVAM_SUPPORTED_LANGUAGES = [
+  "auto",
+  "en",
+  "hi",
+  "bn",
+  "gu",
+  "kn",
+  "ml",
+  "mr",
+  "od",
+  "pa",
+  "ta",
+  "te",
+  "as",
+  "ur",
+  "ne",
+  "kok",
+  "ks",
+  "sd",
+  "sa",
+  "sat",
+  "mni",
+  "brx",
+  "mai",
+  "doi",
+] as const satisfies readonly SupportedLanguage[];
+
+type SarvamSupportedLanguage = (typeof SARVAM_SUPPORTED_LANGUAGES)[number];
+
+export function isSarvamSupportedLanguage(
+  value: SupportedLanguage,
+): value is SarvamSupportedLanguage {
+  return SARVAM_SUPPORTED_LANGUAGES.some((language) => language === value);
+}
 
 export const SARVAM_STT_WS = "wss://api.sarvam.ai/speech-to-text/ws";
 export const SARVAM_REALTIME_STT_WS = "wss://api.sarvam.ai/speech-to-text-realtime/ws";
 
 export type SarvamStreamMode = "codemix" | "translate" | "transcribe";
 
-/** Prefer Saaras translate→English when the overlay target is English. */
-export function sarvamStreamMode(target: SupportedLanguage): SarvamStreamMode {
-  return target === "en" ? "translate" : "codemix";
+/** Keep speech recognition source-only; translation is a separate module. */
+export function sarvamStreamMode(): SarvamStreamMode {
+  return "codemix";
 }
 
 const legacyLanguageCodes: Record<SarvamSupportedLanguage, string> = {
@@ -59,14 +92,6 @@ export function toSarvamRealtimeLanguageCode(language: SupportedLanguage): strin
   if (language === "auto") return "auto";
   if (language === "od") return "or-IN";
   return legacyLanguageCodes[language];
-}
-
-export function toSarvamTranslationLanguageCode(language: SupportedLanguage): string {
-  const code = toSarvamLanguageCode(language);
-  if (code === "unknown") {
-    throw new Error("Translation target cannot use automatic language detection");
-  }
-  return code;
 }
 
 /** RMS of mono PCM S16LE, useful for diagnostics and tests. */

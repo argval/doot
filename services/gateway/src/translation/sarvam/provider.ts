@@ -1,29 +1,39 @@
-import type { SupportedLanguage } from "@doot/protocol";
-import { toSarvamTranslationLanguageCode } from "./sarvam.js";
-import { isRecord } from "./util.js";
+import type {
+  TextTranslationProvider,
+  TranslationRequest,
+} from "../contract.js";
+import { isRecord } from "../../util.js";
+import {
+  isSarvamTranslationSource,
+  isSarvamTranslationTarget,
+  toSarvamTranslationLanguageCode,
+} from "./languages.js";
 
 const SARVAM_TRANSLATE_URL = "https://api.sarvam.ai/translate";
 const TRANSLATION_TIMEOUT_MS = 12_000;
 
-export interface TranslationRequest {
-  text: string;
-  source: SupportedLanguage;
-  target: SupportedLanguage;
-}
+export class SarvamTextTranslator implements TextTranslationProvider {
+  id = "sarvam";
+  configured: boolean;
 
-export type TranslateText = (request: TranslationRequest) => Promise<string>;
-
-export class SarvamTextTranslator {
   constructor(
     private readonly apiKey?: string,
     private readonly fetcher: typeof fetch = fetch,
-  ) {}
+  ) {
+    this.configured = Boolean(apiKey);
+  }
+
+  supports(request: TranslationRequest): boolean {
+    return this.configured
+      && isSarvamTranslationSource(request.source)
+      && isSarvamTranslationTarget(request.target);
+  }
 
   async translate(request: TranslationRequest): Promise<string> {
     const text = request.text.trim();
     if (!text) return "";
     if (request.source !== "auto" && request.source === request.target) return text;
-    if (!this.apiKey) return text;
+    if (!this.apiKey) throw new Error("Sarvam translation is not configured");
 
     const targetLanguageCode = toSarvamTranslationLanguageCode(request.target);
     const primary = await this.requestTranslation({

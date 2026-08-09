@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { SarvamTextTranslator } from "../src/translate.js";
+import { SarvamTextTranslator } from "../src/translation/sarvam/provider.js";
+import { TranslationRouter } from "../src/translation/router.js";
+import { TranslationUnavailableError } from "../src/translation/contract.js";
 
 test("sends code-mixed text and numbers to Mayura with automatic detection", async () => {
   const requests: Array<Record<string, unknown>> = [];
@@ -71,6 +73,26 @@ test("skips API translation on explicit same-language routes", async () => {
       target: "kn",
     }),
     "ನಮಸ್ಕಾರ",
+  );
+  assert.equal(called, false);
+});
+
+test("rejects unsupported routes without leaking source text as translation", async () => {
+  let called = false;
+  const fetcher: typeof fetch = async () => {
+    called = true;
+    return Response.json({ translated_text: "unexpected" });
+  };
+  const sarvam = new SarvamTextTranslator("test-key", fetcher);
+  const router = new TranslationRouter([sarvam]);
+
+  await assert.rejects(
+    router.translate({
+      text: "Hallo Welt",
+      source: "de",
+      target: "es",
+    }),
+    TranslationUnavailableError,
   );
   assert.equal(called, false);
 });
