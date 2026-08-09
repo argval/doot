@@ -93,12 +93,18 @@ button {
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
-  justify-content: flex-end;
   gap: 10px;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
   /* Fade older text at the top so the latest line stays fully readable. */
   mask-image: linear-gradient(to bottom, transparent 0%, #000 1.4rem);
   -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 1.4rem);
+}
+
+.caption-copy::-webkit-scrollbar {
+  display: none;
 }
 
 .caption-overlay:hover .caption-window::after,
@@ -320,9 +326,9 @@ button {
   font-weight: 510;
   line-height: 1.25;
   letter-spacing: -0.035em;
-  overflow: hidden;
   overflow-wrap: anywhere;
   text-wrap: pretty;
+  flex: 0 0 auto;
   /* Keep the newest lines pinned to the bottom of the visible area. */
   margin-top: auto;
 }
