@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, Circle, Languages, Square } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -33,6 +33,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const acceptedSessionIdRef = useRef<string | null>(null);
+  const captionCopyRef = useRef<HTMLDivElement>(null);
   const visibleCaptions = selectVisibleCaptions(captions);
 
   const toggleCapture = useCallback(async () => {
@@ -135,6 +136,13 @@ export function App() {
       ? "Listening to system audio…"
       : "Your live captions will appear here.");
 
+  useLayoutEffect(() => {
+    const captionCopy = captionCopyRef.current;
+    if (captionCopy) {
+      captionCopy.scrollTop = captionCopy.scrollHeight;
+    }
+  }, [displayedText]);
+
   return (
     <main className="overlay-shell">
       <div className="caption-overlay">
@@ -177,7 +185,7 @@ export function App() {
             }
           }}
         >
-          <div className="caption-copy">
+          <div ref={captionCopyRef} className="caption-copy">
             <p
               className={error
                 ? "caption-text error-text"
