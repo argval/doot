@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ProviderStreamEvent } from "../src/providers.js";
-import { SarvamStreamingSession } from "../src/sarvam-stream.js";
+import type { ProviderStreamEvent } from "../src/speech/contract.js";
+import { SarvamStreamingSession } from "../src/speech/sarvam/legacy.js";
 import { FakeSarvamServer } from "./fake-sarvam.js";
 
-test("keeps one translate/VAD Sarvam connection and forwards continuous PCM", async () => {
+test("keeps one source-only/VAD Sarvam connection and forwards continuous PCM", async () => {
   const server = new FakeSarvamServer();
   const endpoint = await server.endpoint();
   const events: ProviderStreamEvent[] = [];
@@ -13,7 +13,6 @@ test("keeps one translate/VAD Sarvam connection and forwards continuous PCM", as
     {
       sessionId: "stream-1",
       source: "kn",
-      target: "en",
       sampleRate: 16_000,
       channels: 1,
       onEvent: (event) => events.push(event),
@@ -31,7 +30,7 @@ test("keeps one translate/VAD Sarvam connection and forwards continuous PCM", as
     const request = server.connections[0]?.request;
     assert.ok(request);
     const url = new URL(request.url ?? "", endpoint);
-    assert.equal(url.searchParams.get("mode"), "translate");
+    assert.equal(url.searchParams.get("mode"), "codemix");
     assert.equal(url.searchParams.get("language-code"), "kn-IN");
     assert.equal(url.searchParams.get("vad_signals"), "true");
     assert.equal(url.searchParams.get("high_vad_sensitivity"), "true");
@@ -58,7 +57,6 @@ test("keeps one translate/VAD Sarvam connection and forwards continuous PCM", as
       event.type === "transcript"
       && event.text === "I use Cursor"
       && event.languageCode === "en-IN"
-      && event.translated === true
     )));
 
     const flush = session.flush();
@@ -79,7 +77,7 @@ test("keeps one translate/VAD Sarvam connection and forwards continuous PCM", as
   }
 });
 
-test("uses codemix mode when the caption target is not English", async () => {
+test("uses codemix mode independently of the caption target", async () => {
   const server = new FakeSarvamServer();
   const endpoint = await server.endpoint();
   const session = new SarvamStreamingSession(
@@ -87,7 +85,6 @@ test("uses codemix mode when the caption target is not English", async () => {
     {
       sessionId: "stream-codemix",
       source: "kn",
-      target: "hi",
       sampleRate: 16_000,
       channels: 1,
       onEvent: () => undefined,
@@ -116,7 +113,6 @@ test("soft-flushes mid-speech so Sarvam emits interim transcripts", async () => 
     {
       sessionId: "stream-soft-flush",
       source: "kn",
-      target: "en",
       sampleRate: 16_000,
       channels: 1,
       onEvent: (event) => events.push(event),
@@ -138,7 +134,6 @@ test("soft-flushes mid-speech so Sarvam emits interim transcripts", async () => 
     await waitFor(() => events.some((event) => (
       event.type === "transcript"
       && event.text === "Live English caption"
-      && event.translated === true
     )));
   } finally {
     await session.close();
@@ -155,7 +150,6 @@ test("replays a bounded audio tail and queued frames after reconnecting", async 
     {
       sessionId: "stream-reconnect",
       source: "hi",
-      target: "en",
       sampleRate: 16_000,
       channels: 1,
       onEvent: (event) => events.push(event),
@@ -205,7 +199,6 @@ test("does not replay audio committed by a finalized utterance", async () => {
     {
       sessionId: "stream-committed",
       source: "kn",
-      target: "en",
       sampleRate: 16_000,
       channels: 1,
       onEvent: (event) => events.push(event),
@@ -251,7 +244,6 @@ test("reports unsent buffered audio instead of silently flushing it", async () =
     {
       sessionId: "stream-undrained",
       source: "hi",
-      target: "en",
       sampleRate: 16_000,
       channels: 1,
       onEvent: (event) => events.push(event),
@@ -289,7 +281,6 @@ test("requires a post-flush transcript before completing speech flush", async ()
     {
       sessionId: "stream-flush-barrier",
       source: "hi",
-      target: "en",
       sampleRate: 16_000,
       channels: 1,
       onEvent: (event) => events.push(event),
@@ -357,7 +348,6 @@ test("rejects a speech flush when no final provider event arrives", async () => 
     {
       sessionId: "stream-flush-timeout",
       source: "hi",
-      target: "en",
       sampleRate: 16_000,
       channels: 1,
       onEvent: () => undefined,

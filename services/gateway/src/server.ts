@@ -5,11 +5,16 @@ import {
   registerRealtimeGateway,
   type RealtimeGatewayOptions,
 } from "./gateway.js";
-import { ProviderRouter } from "./providers.js";
-import { SarvamTextTranslator, type TranslateText } from "./translate.js";
+import { createProviderRouter } from "./speech/registry.js";
+import type { ProviderRouter } from "./speech/router.js";
+import type { TranslateText } from "./translation/contract.js";
+import { createTranslationRouter } from "./translation/registry.js";
 
 export async function buildServer(
-  router = new ProviderRouter(config.sarvamApiKey),
+  router: ProviderRouter = createProviderRouter({
+    sarvamApiKey: config.sarvamApiKey,
+    elevenLabsApiKey: config.elevenLabsApiKey,
+  }),
   translate: TranslateText = createDefaultTranslator(),
   gatewayOptions: RealtimeGatewayOptions = {},
 ) {
@@ -19,15 +24,15 @@ export async function buildServer(
   app.get("/health", async () => ({
     status: "ok",
     service: "doot-gateway",
-    providers: {
-      sarvam: Boolean(config.sarvamApiKey),
-    },
+    providers: router.availability(),
   }));
   registerRealtimeGateway(app, router, translate, gatewayOptions);
   return app;
 }
 
 function createDefaultTranslator(): TranslateText {
-  const translator = new SarvamTextTranslator(config.sarvamApiKey);
+  const translator = createTranslationRouter({
+    sarvamApiKey: config.translationApiKey ?? config.sarvamApiKey,
+  });
   return (request) => translator.translate(request);
 }

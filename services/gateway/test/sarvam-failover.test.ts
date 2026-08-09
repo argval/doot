@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ProviderStreamEvent } from "../src/providers.js";
-import { SarvamFailoverSession } from "../src/sarvam-failover.js";
+import type {
+  OpenProviderSessionOptions,
+  ProviderStreamEvent,
+} from "../src/speech/contract.js";
+import { SarvamFailoverSession } from "../src/speech/sarvam/failover.js";
 import { FakeSarvamServer, waitForCondition } from "./fake-sarvam.js";
 
 test("falls back to legacy streaming when Realtime cannot open", async () => {
@@ -169,14 +172,15 @@ test("fails over when Realtime ends the session without a client end request", a
   }
 });
 
-function options(events: ProviderStreamEvent[]) {
+function options(events: ProviderStreamEvent[]): OpenProviderSessionOptions {
   return {
     sessionId: "failover-1",
     source: "kn" as const,
-    target: "en" as const,
     sampleRate: 16_000,
     channels: 1,
-    onEvent: (event: ProviderStreamEvent) => events.push(event),
+    onEvent: (event: ProviderStreamEvent) => {
+      events.push(event);
+    },
   };
 }
 

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ProviderStreamEvent } from "../src/providers.js";
-import { SarvamRealtimeSession } from "../src/sarvam-realtime.js";
-import { toSarvamRealtimeLanguageCode } from "../src/sarvam.js";
+import type { ProviderStreamEvent } from "../src/speech/contract.js";
+import { SarvamRealtimeSession } from "../src/speech/sarvam/realtime.js";
+import { toSarvamRealtimeLanguageCode } from "../src/speech/sarvam/languages.js";
 import { FakeSarvamServer, waitForCondition } from "./fake-sarvam.js";
 
 test("uses Realtime-specific auto and Odia language codes", () => {
@@ -19,7 +19,6 @@ test("uses the Realtime API protocol and forwards partial and final transcripts"
     {
       sessionId: "realtime-1",
       source: "od",
-      target: "en",
       sampleRate: 16_000,
       channels: 1,
       onEvent: (event) => events.push(event),
@@ -103,7 +102,6 @@ test("replays recent audio through Realtime after a transient disconnect", async
     {
       sessionId: "realtime-reconnect",
       source: "hi",
-      target: "en",
       sampleRate: 16_000,
       channels: 1,
       onEvent: (event) => events.push(event),
@@ -150,7 +148,6 @@ test("sends documented Realtime ping keepalives", async () => {
     {
       sessionId: "realtime-ping",
       source: "en",
-      target: "en",
       sampleRate: 16_000,
       channels: 1,
       onEvent: () => undefined,

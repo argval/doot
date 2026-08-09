@@ -1,22 +1,30 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ServerMessage, SupportedLanguage } from "@doot/protocol";
-import WebSocket from "ws";
 import {
-  ProviderRouter,
-  type OpenProviderSessionOptions,
-  type ProviderStreamEvent,
-  type ProviderStreamSession,
-  type SpeechProvider,
-} from "../src/providers.js";
+  AUDIO_SAMPLE_RATES,
+  CHANNEL_COUNTS,
+  SUPPORTED_LANGUAGES,
+  type ServerMessage,
+} from "@doot/protocol";
+import WebSocket from "ws";
+import { ProviderRouter } from "../src/speech/router.js";
+import type {
+  OpenProviderSessionOptions,
+  ProviderStreamEvent,
+  ProviderStreamSession,
+  SpeechProvider,
+} from "../src/speech/contract.js";
 import { buildServer } from "../src/server.js";
-import type { TranslationRequest } from "../src/translate.js";
+import {
+  TranslationUnavailableError,
+  type TranslationRequest,
+} from "../src/translation/contract.js";
 
 test("closes a provider session that opens after its client disconnected", async () => {
   const provider = new DelayedProvider();
   const translator = new RecordingTranslator();
   const app = await buildServer(
-    new ProviderRouter(undefined, [provider]),
+    new ProviderRouter([provider]),
     (request) => translator.translate(request),
   );
   const address = await app.listen({ host: "127.0.0.1", port: 0 });
@@ -53,7 +61,7 @@ test("suppresses delayed translations from a replaced session generation", async
   const provider = new ControlledProvider();
   const translator = new DeferredTranslator();
   const app = await buildServer(
-    new ProviderRouter(undefined, [provider]),
+    new ProviderRouter([provider]),
     (request) => translator.translate(request),
     { utteranceGraceMs: 5 },
   );
@@ -76,7 +84,12 @@ test("suppresses delayed translations from a replaced session generation", async
     await client.waitForMessage((message) => message.type === "session_started");
     const first = provider.sessions[0]!;
     first.emit({ type: "speech_start", timestampMs: 100 });
-    first.emit({ type: "transcript", text: "stale source", timestampMs: 150 });
+    first.emit({
+      type: "transcript",
+      text: "stale source",
+      timestampMs: 150,
+      isFinal: false,
+    });
     first.emit({ type: "speech_end", timestampMs: 180 });
     await waitFor(() => (
       translator.requests.length === 1 ? true : undefined
@@ -132,6 +145,7 @@ test("coalesces a short pause when START_SPEECH cancels the grace timer", async 
       text: "ನಾನು Cursor",
       timestampMs: 200,
       languageCode: "kn-IN",
+      isFinal: false,
     });
     stream.emit({ type: "speech_end", timestampMs: 220 });
     await delay(10);
@@ -141,6 +155,7 @@ test("coalesces a short pause when START_SPEECH cancels the grace timer", async 
       text: "use ಮಾಡುತ್ತೇನೆ 42",
       timestampMs: 300,
       languageCode: "kn-IN",
+      isFinal: false,
     });
     stream.emit({ type: "speech_end", timestampMs: 320 });
 
@@ -172,12 +187,22 @@ test("finalizes separate utterances after a long VAD pause", async () => {
   try {
     const stream = harness.provider.sessions[0]!;
     stream.emit({ type: "speech_start", timestampMs: 100 });
-    stream.emit({ type: "transcript", text: "ಮೊದಲ ವಾಕ್ಯ", timestampMs: 150 });
+    stream.emit({
+      type: "transcript",
+      text: "ಮೊದಲ ವಾಕ್ಯ",
+      timestampMs: 150,
+      isFinal: false,
+    });
     stream.emit({ type: "speech_end", timestampMs: 180 });
     await harness.client.waitForFinalCount(1);
 
     stream.emit({ type: "speech_start", timestampMs: 1_000 });
-    stream.emit({ type: "transcript", text: "second sentence", timestampMs: 1_100 });
+    stream.emit({
+      type: "transcript",
+      text: "second sentence",
+      timestampMs: 1_100,
+      isFinal: false,
+    });
     stream.emit({ type: "speech_end", timestampMs: 1_200 });
     const finals = await harness.client.waitForFinalCount(2);
 
@@ -197,11 +222,21 @@ test("publishes draft translations during continuous speech without a pause", as
   try {
     const stream = harness.provider.sessions[0]!;
     stream.emit({ type: "speech_start", timestampMs: 100 });
-    stream.emit({ type: "transcript", text: "first", timestampMs: 150 });
+    stream.emit({ type: "transcript", text: "first", timestampMs: 150, isFinal: false });
     await delay(80);
-    stream.emit({ type: "transcript", text: "first second", timestampMs: 250 });
+    stream.emit({
+      type: "transcript",
+      text: "first second",
+      timestampMs: 250,
+      isFinal: false,
+    });
     await delay(80);
-    stream.emit({ type: "transcript", text: "first second third", timestampMs: 350 });
+    stream.emit({
+      type: "transcript",
+      text: "first second third",
+      timestampMs: 350,
+      isFinal: false,
+    });
 
     const draft = await harness.client.waitForMessage(
       (message) => (
@@ -227,6 +262,7 @@ test("publishes a draft translation before the utterance finalizes", async () =>
       type: "transcript",
       text: "draft me soon",
       timestampMs: 150,
+      isFinal: false,
     });
 
     const draft = await harness.client.waitForMessage(
@@ -283,10 +319,20 @@ test("merges overlapping transcript text across a provider reconnect", async () 
   try {
     const stream = harness.provider.sessions[0]!;
     stream.emit({ type: "speech_start", timestampMs: 100 });
-    stream.emit({ type: "transcript", text: "hello world", timestampMs: 150 });
+    stream.emit({
+      type: "transcript",
+      text: "hello world",
+      timestampMs: 150,
+      isFinal: false,
+    });
     stream.emit({ type: "state", state: "reconnecting" });
     stream.emit({ type: "state", state: "open" });
-    stream.emit({ type: "transcript", text: "world again", timestampMs: 200 });
+    stream.emit({
+      type: "transcript",
+      text: "world again",
+      timestampMs: 200,
+      isFinal: false,
+    });
     stream.emit({ type: "speech_end", timestampMs: 220 });
 
     const finals = await harness.client.waitForFinalCount(1);
@@ -332,7 +378,12 @@ test("commits finalized audio so provider recovery does not replay it", async ()
   try {
     const stream = harness.provider.sessions[0]!;
     stream.emit({ type: "speech_start", timestampMs: 100 });
-    stream.emit({ type: "transcript", text: "replayed phrase", timestampMs: 150 });
+    stream.emit({
+      type: "transcript",
+      text: "replayed phrase",
+      timestampMs: 150,
+      isFinal: false,
+    });
     stream.emit({ type: "speech_end", timestampMs: 180 });
     await harness.client.waitForFinalCount(1);
 
@@ -352,6 +403,7 @@ test("flushes, translates, and emits the final caption before session_stopped", 
         type: "transcript",
         text: "stop time transcript",
         timestampMs: 600,
+        isFinal: false,
       });
       stream.emit({ type: "speech_end", timestampMs: 620 });
     };
@@ -379,6 +431,55 @@ test("flushes, translates, and emits the final caption before session_stopped", 
   }
 });
 
+test("never substitutes source text when translation is unavailable", async () => {
+  const provider = new ControlledProvider();
+  const app = await buildServer(
+    new ProviderRouter([provider]),
+    async (request) => {
+      throw new TranslationUnavailableError(request);
+    },
+    { utteranceGraceMs: 5 },
+  );
+  const address = await app.listen({ host: "127.0.0.1", port: 0 });
+  const client = await RealtimeClient.connect(
+    address.replace("http", "ws") + "/v1/realtime",
+  );
+
+  try {
+    client.send({
+      type: "start_session",
+      sessionId: "translation-unavailable",
+      sourceLanguage: "de",
+      targetLanguage: "en",
+      provider: "mock",
+      sampleRate: 16_000,
+      channels: 1,
+    });
+    await client.waitForMessage((message) => message.type === "session_started");
+    provider.sessions[0]?.emit({
+      type: "transcript",
+      text: "Hallo Welt",
+      timestampMs: 100,
+      isFinal: true,
+    });
+
+    const error = await client.waitForMessage((message) => (
+      message.type === "error" && message.code === "TRANSLATION_UNAVAILABLE"
+    ));
+    const caption = await client.waitForMessage((message) => (
+      message.type === "caption" && message.isFinal
+    ));
+    assert.equal(error.type, "error");
+    assert.equal(error.retryable, false);
+    assert.equal(caption.type, "caption");
+    assert.equal(caption.sourceText, "Hallo Welt");
+    assert.equal(caption.translatedText, "");
+  } finally {
+    await client.close();
+    await app.close();
+  }
+});
+
 interface Harness {
   sessionId: string;
   provider: ControlledProvider;
@@ -391,7 +492,7 @@ async function createHarness(utteranceGraceMs = 25): Promise<Harness> {
   const sessionId = `test-${Math.random().toString(16).slice(2)}`;
   const provider = new ControlledProvider();
   const translator = new RecordingTranslator();
-  const router = new ProviderRouter(undefined, [provider]);
+  const router = new ProviderRouter([provider]);
   const app = await buildServer(
     router,
     (request) => translator.translate(request),
@@ -427,11 +528,16 @@ async function createHarness(utteranceGraceMs = 25): Promise<Harness> {
 class ControlledProvider implements SpeechProvider {
   readonly id = "mock" as const;
   readonly configured = true;
+  readonly capabilities = {
+    sourceLanguages: SUPPORTED_LANGUAGES,
+    sampleRates: AUDIO_SAMPLE_RATES,
+    channels: CHANNEL_COUNTS,
+    automaticLanguageDetection: true,
+    partialTranscripts: true,
+    routingPriority: 100,
+    automaticDetectionPriority: 100,
+  } as const;
   readonly sessions: ControlledSession[] = [];
-
-  supports(_source: SupportedLanguage, _target: SupportedLanguage): boolean {
-    return true;
-  }
 
   async openSession(options: OpenProviderSessionOptions): Promise<ProviderStreamSession> {
     const session = new ControlledSession(options);
@@ -443,12 +549,17 @@ class ControlledProvider implements SpeechProvider {
 class DelayedProvider implements SpeechProvider {
   readonly id = "mock" as const;
   readonly configured = true;
+  readonly capabilities = {
+    sourceLanguages: SUPPORTED_LANGUAGES,
+    sampleRates: AUDIO_SAMPLE_RATES,
+    channels: CHANNEL_COUNTS,
+    automaticLanguageDetection: true,
+    partialTranscripts: true,
+    routingPriority: 100,
+    automaticDetectionPriority: 100,
+  } as const;
   readonly sessions: ControlledSession[] = [];
   private releaseOpen: (() => void) | null = null;
-
-  supports(_source: SupportedLanguage, _target: SupportedLanguage): boolean {
-    return true;
-  }
 
   openSession(options: OpenProviderSessionOptions): Promise<ProviderStreamSession> {
     const session = new ControlledSession(options);
