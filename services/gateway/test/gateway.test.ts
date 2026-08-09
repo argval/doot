@@ -139,10 +139,22 @@ test("routes international speech to ElevenLabs and Indic speech to Sarvam", () 
   assert.equal(router.select("auto").id, "sarvam");
   assert.equal(router.select("auto", "elevenlabs").id, "elevenlabs");
   assert.deepEqual(router.availability(), {
+    openai: false,
     elevenlabs: true,
     sarvam: true,
     mock: true,
   });
+});
+
+test("routes international translation pairs through OpenAI when configured", () => {
+  const router = createProviderRouter({
+    sarvamApiKey: "test-sarvam-key",
+    elevenLabsApiKey: "test-elevenlabs-key",
+    openAIApiKey: "test-openai-key",
+  });
+  assert.equal(router.select("es", undefined, 16_000, 1, "en").id, "openai");
+  assert.equal(router.select("es", undefined, 16_000, 1, "es").id, "elevenlabs");
+  assert.equal(router.select("kn", undefined, 16_000, 1, "en").id, "sarvam");
 });
 
 test("maps all Saaras languages and retains PCM diagnostics", () => {

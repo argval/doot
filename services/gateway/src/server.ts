@@ -14,6 +14,7 @@ export async function buildServer(
   router: ProviderRouter = createProviderRouter({
     sarvamApiKey: config.sarvamApiKey,
     elevenLabsApiKey: config.elevenLabsApiKey,
+    openAIApiKey: config.openAIApiKey,
   }),
   translate: TranslateText = createDefaultTranslator(),
   gatewayOptions: RealtimeGatewayOptions = {},

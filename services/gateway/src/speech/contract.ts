@@ -3,6 +3,7 @@ import type {
   ChannelCount,
   ProviderId,
   SupportedLanguage,
+  SupportedTargetLanguage,
 } from "@doot/protocol";
 
 export type ProviderStreamState = "connecting" | "open" | "reconnecting" | "closed";
@@ -15,6 +16,11 @@ export type ProviderStreamEvent =
     text: string;
     timestampMs: number;
     languageCode?: string;
+    /**
+     * When set, the provider already produced target-language text and the
+     * gateway should skip the separate translation hop for this transcript.
+     */
+    translatedText?: string;
     /** True only when the provider emitted a complete utterance transcript. */
     isFinal: boolean;
   }
@@ -30,11 +36,18 @@ export interface SpeechProviderCapabilities {
   partialTranscripts: boolean;
   routingPriority: number;
   automaticDetectionPriority: number;
+  /**
+   * When true, the provider can emit translated transcripts for supported
+   * source→target pairs without a separate text-translation adapter.
+   */
+  endToEndTranslation?: boolean;
+  translationTargets?: readonly SupportedTargetLanguage[];
 }
 
 export interface OpenProviderSessionOptions {
   sessionId: string;
   source: SupportedLanguage;
+  target?: SupportedTargetLanguage;
   sampleRate: AudioSampleRate;
   channels: ChannelCount;
   onEvent(event: ProviderStreamEvent): void;

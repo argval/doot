@@ -192,6 +192,7 @@ async function startSession(
       request.provider,
       request.sampleRate,
       request.channels,
+      request.targetLanguage,
     );
     const session: SessionState = {
       request,
@@ -211,6 +212,7 @@ async function startSession(
     const providerSession = await provider.openSession({
       sessionId: request.sessionId,
       source: request.sourceLanguage,
+      target: request.targetLanguage,
       sampleRate: request.sampleRate,
       channels: request.channels,
       onEvent: (event) => {
@@ -358,10 +360,32 @@ function updateActiveUtterance(
     ? transcript
     : mergeProviderTranscript(utterance.sourceText, transcript);
   utterance.endMs = Math.max(utterance.endMs, event.timestampMs);
-  if (mergedText === utterance.sourceText) return;
+  const providerTranslated = typeof event.translatedText === "string"
+    ? event.translatedText.trim()
+    : null;
+  const sourceUnchanged = mergedText === utterance.sourceText;
+  const translationUnchanged = providerTranslated === null
+    || providerTranslated === utterance.draftTranslatedText;
+  if (sourceUnchanged && translationUnchanged) return;
 
   utterance.sourceText = mergedText;
   utterance.revision += 1;
+
+  if (providerTranslated !== null) {
+    utterance.draftSourceText = mergedText;
+    utterance.draftTranslatedText = providerTranslated;
+    sendCaption(
+      socket,
+      session,
+      utterance,
+      providerTranslated,
+      false,
+      utterance.revision,
+    );
+    // End-to-end providers own utterance boundaries via isFinal.
+    return;
+  }
+
   // Keep the last good draft on-screen while a newer translation is in flight.
   const provisionalTranslated = utterance.draftTranslatedText
     && utterance.draftSourceText
@@ -504,6 +528,8 @@ function finalizeActiveUtterance(
     );
     if (canReuseDraft && utterance.draftTranslatedText) {
       translatedText = utterance.draftTranslatedText;
+    } else if (request.sourceLanguage === request.targetLanguage) {
+      translatedText = utterance.sourceText;
     } else {
       try {
         translatedText = await translator({

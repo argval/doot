@@ -3,6 +3,7 @@ import type {
   ChannelCount,
   ProviderId,
   SupportedLanguage,
+  SupportedTargetLanguage,
 } from "@doot/protocol";
 import {
   supportsSession,
@@ -25,6 +26,7 @@ export class ProviderRouter {
     requested?: ProviderId,
     sampleRate?: AudioSampleRate,
     channels?: ChannelCount,
+    target?: SupportedTargetLanguage,
   ): SpeechProvider {
     if (requested) {
       const explicit = this.providers.find((provider) => provider.id === requested);
@@ -33,11 +35,31 @@ export class ProviderRouter {
       if (!supportsSession(explicit, source, sampleRate, channels)) {
         throw new Error(`Provider ${requested} does not support this ${source} audio session`);
       }
+      if (
+        explicit.capabilities.endToEndTranslation
+        && target
+        && !supportsEndToEndRoute(explicit, source, target)
+      ) {
+        throw new Error(
+          `Provider ${requested} does not support end-to-end ${source} → ${target}`,
+        );
+      }
       return explicit;
     }
 
+    if (target && source !== target) {
+      const endToEnd = this.providers.find((provider) => (
+        provider.configured
+        && supportsEndToEndRoute(provider, source, target)
+        && supportsSession(provider, source, sampleRate, channels)
+      ));
+      if (endToEnd) return endToEnd;
+    }
+
     const compatible = this.providers.filter((provider) => (
-      provider.configured && supportsSession(provider, source, sampleRate, channels)
+      provider.configured
+      && !provider.capabilities.endToEndTranslation
+      && supportsSession(provider, source, sampleRate, channels)
     ));
     compatible.sort((left, right) => {
       const leftPriority = source === "auto"
@@ -52,4 +74,17 @@ export class ProviderRouter {
     if (!selected) throw new Error(`No configured speech provider supports ${source}`);
     return selected;
   }
+}
+
+function supportsEndToEndRoute(
+  provider: SpeechProvider,
+  source: SupportedLanguage,
+  target: SupportedTargetLanguage,
+): boolean {
+  return Boolean(
+    provider.capabilities.endToEndTranslation
+    && provider.capabilities.sourceLanguages.includes(source)
+    && provider.capabilities.translationTargets?.includes(target)
+    && source !== target,
+  );
 }

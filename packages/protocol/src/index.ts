@@ -62,7 +62,7 @@ export const SUPPORTED_TARGET_LANGUAGES = [
   "doi",
 ] as const satisfies readonly (typeof SUPPORTED_LANGUAGES)[number][];
 
-export const PROVIDER_IDS = ["sarvam", "elevenlabs", "mock"] as const;
+export const PROVIDER_IDS = ["sarvam", "elevenlabs", "openai", "mock"] as const;
 export const AUDIO_SAMPLE_RATES = [16_000, 24_000, 48_000] as const;
 export const CHANNEL_COUNTS = [1, 2] as const;
 
