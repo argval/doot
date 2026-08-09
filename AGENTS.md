@@ -38,3 +38,16 @@ Rules:
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+
+## Cursor Cloud specific instructions
+
+Environment: Linux VM with Node 22, npm 10, and Rust 1.83 preinstalled. Docker is NOT preinstalled. The startup update script runs `npm ci`.
+
+- Package manager is **npm** (npm workspaces), not bun. A stale `bun.lock` is committed, but CI (`.github/workflows/ci.yml`), the gateway `Dockerfile`, and `scripts/dev.sh` all use npm. Use `npm ci` / `npm run ...`.
+- Standard commands are in the root `package.json` and README "Useful checks": `npm run typecheck`, `npm run lint`, `npm run test`, `npm run build` all pass on Linux. Only `@doot/gateway` has tests (Node test runner via `tsx`); only `@doot/desktop` has a lint script (eslint).
+- The **Tauri/Rust desktop app is macOS-only** (ScreenCaptureKit). Do not try to run `npm run dev`, `npm run dev:tauri`, or `npm run build:tauri` here — they need the native macOS layer and real audio capture. The CI `native-check` job covers that on `macos-latest`.
+- What runs on this VM:
+  - Gateway: `npm run dev:gateway` → `ws://127.0.0.1:8787` with `GET /health`. Boots with no API keys.
+  - Web UI: `npm run dev:web` → Vite on **`http://localhost:1420`**. It binds IPv6 `localhost`, so `http://127.0.0.1:1420` may fail; use `localhost`. In a plain browser the overlay renders but audio capture throws a Tauri `transformCallback` error — expected without the native layer.
+- No-key end-to-end testing: the gateway has a built-in `mock` speech provider (always `configured`). Open a realtime session with `provider: "mock"` and equal source/target languages (e.g. `en`→`en`) to get full end-to-end captions without any API keys; the translation router is a passthrough when `source === target`. Live captions need `SARVAM_API_KEY` / `ELEVENLABS_API_KEY` / `TRANSLATION_API_KEY` in the repo-root `.env` (create via `npm run setup`, which copies `.env.example`).
+- PostgreSQL (`docker compose up -d postgres` + `npm run db:migrate`) is optional and not wired into the gateway yet (captions are not persisted). Docker must be installed first if you need it.
