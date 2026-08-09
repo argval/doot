@@ -373,6 +373,103 @@ test("merges Realtime partial overlap despite casing and punctuation changes", a
   }
 });
 
+test("publishes target-only end-to-end deltas without corrupting source text", async () => {
+  const harness = await createHarness(2_000);
+  try {
+    const stream = harness.provider.sessions[0]!;
+    stream.emit({
+      type: "transcript",
+      text: "",
+      translatedText: "Hello",
+      timestampMs: 100,
+      isFinal: false,
+    });
+    const partial = await harness.client.waitForMessage((message) => (
+      message.type === "caption"
+      && !message.isFinal
+      && message.translatedText === "Hello"
+    ));
+    assert.equal(partial.type, "caption");
+    assert.equal(partial.sourceText, "");
+
+    stream.emit({
+      type: "transcript",
+      text: "Hola",
+      translatedText: "Hello",
+      timestampMs: 120,
+      isFinal: true,
+    });
+    const firstFinal = await harness.client.waitForMessage((message) => (
+      message.type === "caption"
+      && message.isFinal
+      && message.translatedText === "Hello"
+    ));
+    assert.equal(firstFinal.type, "caption");
+    assert.equal(firstFinal.sourceText, "Hola");
+
+    stream.emit({
+      type: "transcript",
+      text: "Adiós",
+      translatedText: "Goodbye",
+      timestampMs: 220,
+      isFinal: true,
+    });
+    const finals = await harness.client.waitForFinalCount(2);
+    assert.equal(finals[1]?.sourceText, "Adiós");
+    assert.equal(finals[1]?.translatedText, "Goodbye");
+    assert.notEqual(finals[0]?.utteranceId, finals[1]?.utteranceId);
+    assert.equal(harness.translator.requests.length, 0);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("finalizes an unchanged end-to-end transcript before the next utterance", async () => {
+  const harness = await createHarness(2_000);
+  try {
+    const stream = harness.provider.sessions[0]!;
+    stream.emit({
+      type: "transcript",
+      text: "Hola",
+      translatedText: "Hello",
+      timestampMs: 100,
+      isFinal: false,
+    });
+    await harness.client.waitForMessage((message) => (
+      message.type === "caption"
+      && !message.isFinal
+      && message.translatedText === "Hello"
+    ));
+
+    stream.emit({
+      type: "transcript",
+      text: "Hola",
+      translatedText: "Hello",
+      timestampMs: 120,
+      isFinal: true,
+    });
+    const firstFinal = await harness.client.waitForMessage((message) => (
+      message.type === "caption"
+      && message.isFinal
+      && message.translatedText === "Hello"
+    ));
+
+    stream.emit({
+      type: "transcript",
+      text: "Adiós",
+      translatedText: "Goodbye",
+      timestampMs: 220,
+      isFinal: true,
+    });
+    const finals = await harness.client.waitForFinalCount(2);
+    assert.equal(firstFinal.type, "caption");
+    assert.notEqual(firstFinal.utteranceId, finals[1]?.utteranceId);
+    assert.equal(finals[1]?.sourceText, "Adiós");
+  } finally {
+    await harness.close();
+  }
+});
+
 test("commits finalized audio so provider recovery does not replay it", async () => {
   const harness = await createHarness(20);
   try {

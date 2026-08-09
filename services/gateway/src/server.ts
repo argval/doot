@@ -15,6 +15,7 @@ export async function buildServer(
     sarvamApiKey: config.sarvamApiKey,
     elevenLabsApiKey: config.elevenLabsApiKey,
     openAIApiKey: config.openAIApiKey,
+    openAISafetyIdentifier: config.openAISafetyIdentifier,
   }),
   translate: TranslateText = createDefaultTranslator(),
   gatewayOptions: RealtimeGatewayOptions = {},

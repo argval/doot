@@ -11,5 +11,6 @@ export const config = {
   sarvamApiKey: process.env.SARVAM_API_KEY,
   elevenLabsApiKey: process.env.ELEVENLABS_API_KEY,
   openAIApiKey: process.env.OPENAI_API_KEY,
+  openAISafetyIdentifier: process.env.OPENAI_SAFETY_IDENTIFIER,
   translationApiKey: process.env.TRANSLATION_API_KEY,
 };

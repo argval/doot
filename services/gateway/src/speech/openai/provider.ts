@@ -31,8 +31,16 @@ export class OpenAITranslateProvider implements SpeechProvider {
   constructor(
     private readonly apiKey?: string,
     private readonly runtime: OpenAIRealtimeTranslateRuntime = {},
+    private readonly safetyIdentifier?: string,
   ) {
     this.configured = Boolean(apiKey);
+  }
+
+  supportsEndToEndRoute(
+    source: typeof OPENAI_TRANSLATE_SOURCE_LANGUAGES[number],
+    target: typeof OPENAI_TRANSLATE_TARGET_LANGUAGES[number],
+  ): boolean {
+    return supportsOpenAITranslateRoute(source, target);
   }
 
   async openSession(
@@ -51,6 +59,7 @@ export class OpenAITranslateProvider implements SpeechProvider {
       this.apiKey,
       options,
       this.runtime,
+      this.safetyIdentifier,
     );
     await session.open();
     return session;

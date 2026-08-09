@@ -64,6 +64,14 @@ export interface SpeechProvider {
   id: ProviderId;
   configured: boolean;
   capabilities: SpeechProviderCapabilities;
+  /**
+   * Optional provider-owned route check for models whose supported
+   * source→target pairs are narrower than their independent language lists.
+   */
+  supportsEndToEndRoute?(
+    source: SupportedLanguage,
+    target: SupportedTargetLanguage,
+  ): boolean;
   openSession(options: OpenProviderSessionOptions): Promise<ProviderStreamSession>;
 }
 

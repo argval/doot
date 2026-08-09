@@ -21,7 +21,8 @@
 - Sarvam Realtime STT is the primary gateway transport; the legacy streaming client remains an automatic fallback for initial and terminal Realtime failures.
 - Speech providers are modular gateway adapters under `services/gateway/src/speech/`; Sarvam owns the Indic lane, OpenAI `gpt-realtime-translate` owns cross-language international captions, and ElevenLabs Scribe v2 Realtime owns same-language international captions.
 - Speech adapter construction is centralized in `services/gateway/src/speech/registry.ts`; routing and health metadata derive from the registered adapters.
-- International launch languages are English, Spanish, French, German, Portuguese, and Italian; end-to-end speech providers may emit `translatedText` and skip the text-translation hop.
+- International launch languages are English, Spanish, French, German, Portuguese, and Italian; with OpenAI configured, Auto routes to its end-to-end translation model for international coverage, while explicit Indic source choices use Sarvam's code-switch-aware lane. Without OpenAI, Auto falls back to Sarvam. End-to-end speech providers may emit `translatedText` and skip the text-translation hop.
+- Foreign-language to Indic captions are not a direct launch route: they need a deliberate English-pivot pipeline (OpenAI realtime translation → Sarvam English-to-Indic text translation) rather than treating OpenAI's translated text as the final caption.
 - Unsupported translation pairs emit an unavailable error with blank translated text; source text must never be substituted into translated-only captions.
 - Local runs often use bun workspace scripts for the desktop/Tauri app and gateway; `scripts/dev.sh` starts gateway and desktop together.
 - Caption pipeline aims for persistent Sarvam streaming with VAD-driven utterance boundaries and code-switch-tolerant Indic translation (including Kannada).

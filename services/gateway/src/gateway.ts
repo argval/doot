@@ -327,7 +327,10 @@ function updateActiveUtterance(
   event: Extract<ProviderStreamEvent, { type: "transcript" }>,
 ): void {
   const transcript = normalizeTranscript(event.text);
-  if (!transcript) return;
+  const providerTranslated = typeof event.translatedText === "string"
+    ? event.translatedText.trim()
+    : null;
+  if (!transcript && !providerTranslated) return;
 
   let utterance = session.activeUtterance;
   if (!utterance) {
@@ -356,17 +359,16 @@ function updateActiveUtterance(
 
   // Realtime `transcript.final` is the provider's authoritative complete
   // utterance, whereas partials can be overlapping incremental fragments.
-  const mergedText = event.isFinal
-    ? transcript
-    : mergeProviderTranscript(utterance.sourceText, transcript);
+  const mergedText = transcript
+    ? (event.isFinal
+      ? transcript
+      : mergeProviderTranscript(utterance.sourceText, transcript))
+    : utterance.sourceText;
   utterance.endMs = Math.max(utterance.endMs, event.timestampMs);
-  const providerTranslated = typeof event.translatedText === "string"
-    ? event.translatedText.trim()
-    : null;
   const sourceUnchanged = mergedText === utterance.sourceText;
   const translationUnchanged = providerTranslated === null
     || providerTranslated === utterance.draftTranslatedText;
-  if (sourceUnchanged && translationUnchanged) return;
+  if (sourceUnchanged && translationUnchanged && !event.isFinal) return;
 
   utterance.sourceText = mergedText;
   utterance.revision += 1;
@@ -379,10 +381,10 @@ function updateActiveUtterance(
       session,
       utterance,
       providerTranslated,
-      false,
+      event.isFinal,
       utterance.revision,
     );
-    // End-to-end providers own utterance boundaries via isFinal.
+    if (event.isFinal) completeEndToEndUtterance(session, utterance);
     return;
   }
 
@@ -405,6 +407,16 @@ function updateActiveUtterance(
   if (!session.speechActive) {
     scheduleGraceFinalization(translator, options, socket, session);
   }
+}
+
+function completeEndToEndUtterance(
+  session: SessionState,
+  utterance: ActiveUtterance,
+): void {
+  if (session.activeUtterance !== utterance) return;
+  session.activeUtterance = null;
+  clearUtteranceTimers(utterance);
+  session.providerSession?.commitAudioThrough(utterance.endMs);
 }
 
 const DRAFT_TRANSLATE_MS = 120;

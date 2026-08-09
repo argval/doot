@@ -5,9 +5,11 @@ import type {
 
 /**
  * International launch sources for OpenAI realtime translate.
- * Keep Indic sources on Sarvam; omit `auto` so Auto→English stays Sarvam-first.
+ * Auto gives international input an end-to-end English route. Explicit Indic
+ * sources remain on Sarvam for its code-switch-aware lane.
  */
 export const OPENAI_TRANSLATE_SOURCE_LANGUAGES = [
+  "auto",
   "en",
   "es",
   "fr",
@@ -37,7 +39,6 @@ type OpenAITranslateTargetLanguage =
 export const OPENAI_REALTIME_TRANSLATE_WS =
   "wss://api.openai.com/v1/realtime/translations";
 export const OPENAI_REALTIME_TRANSLATE_MODEL = "gpt-realtime-translate";
-export const OPENAI_INPUT_TRANSCRIPTION_MODEL = "gpt-realtime-whisper";
 export const OPENAI_TRANSLATE_SAMPLE_RATE = 24_000;
 
 export function isOpenAITranslateSource(

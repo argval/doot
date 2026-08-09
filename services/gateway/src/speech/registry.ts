@@ -8,6 +8,7 @@ export interface SpeechProviderCredentials {
   sarvamApiKey?: string;
   elevenLabsApiKey?: string;
   openAIApiKey?: string;
+  openAISafetyIdentifier?: string;
 }
 
 /** The single composition root for speech adapters. */
@@ -15,7 +16,11 @@ export function createProviderRouter(
   credentials: SpeechProviderCredentials = {},
 ): ProviderRouter {
   return new ProviderRouter([
-    new OpenAITranslateProvider(credentials.openAIApiKey),
+    new OpenAITranslateProvider(
+      credentials.openAIApiKey,
+      {},
+      credentials.openAISafetyIdentifier,
+    ),
     new ElevenLabsProvider(credentials.elevenLabsApiKey),
     new SarvamProvider(credentials.sarvamApiKey),
     new MockProvider(),

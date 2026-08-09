@@ -81,6 +81,9 @@ function supportsEndToEndRoute(
   source: SupportedLanguage,
   target: SupportedTargetLanguage,
 ): boolean {
+  if (provider.supportsEndToEndRoute) {
+    return provider.supportsEndToEndRoute(source, target);
+  }
   return Boolean(
     provider.capabilities.endToEndTranslation
     && provider.capabilities.sourceLanguages.includes(source)

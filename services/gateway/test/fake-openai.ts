@@ -8,18 +8,29 @@ interface FakeConnection {
   messages: unknown[];
 }
 
+interface FakeOpenAITranslateServerOptions {
+  closeSessionOnRequest?: boolean;
+}
+
 export class FakeOpenAITranslateServer {
   private readonly server: WebSocketServer;
   readonly connections: FakeConnection[] = [];
 
-  constructor() {
+  constructor(options: FakeOpenAITranslateServerOptions = {}) {
     this.server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
     this.server.on("connection", (socket, request) => {
       const connection: FakeConnection = { socket, request, messages: [] };
       this.connections.push(connection);
       socket.on("message", (raw) => {
         try {
-          connection.messages.push(JSON.parse(raw.toString()));
+          const message = JSON.parse(raw.toString());
+          connection.messages.push(message);
+          if (
+            options.closeSessionOnRequest !== false
+            && isSessionCloseMessage(message)
+          ) {
+            socket.send(JSON.stringify({ type: "session.closed" }));
+          }
         } catch {
           connection.messages.push(raw.toString());
         }
@@ -41,6 +52,12 @@ export class FakeOpenAITranslateServer {
     const connection = this.connections[connectionIndex];
     if (!connection) throw new Error(`Missing fake OpenAI connection ${connectionIndex}`);
     connection.socket.send(JSON.stringify(payload));
+  }
+
+  terminate(connectionIndex: number): void {
+    const connection = this.connections[connectionIndex];
+    if (!connection) throw new Error(`Missing fake OpenAI connection ${connectionIndex}`);
+    connection.socket.terminate();
   }
 
   async waitForConnections(count: number): Promise<void> {
@@ -71,6 +88,12 @@ export class FakeOpenAITranslateServer {
       });
     });
   }
+}
+
+function isSessionCloseMessage(message: unknown): boolean {
+  return typeof message === "object"
+    && message !== null
+    && (message as { type?: unknown }).type === "session.close";
 }
 
 async function waitForOpenAI<T>(

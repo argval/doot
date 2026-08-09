@@ -42,7 +42,7 @@ export function parseOpenAITranslateMessage(raw: string): OpenAITranslateServerE
       return {
         type: "error",
         message: readOpenAIErrorMessage(parsed),
-        retryable: false,
+        retryable: isRetryableOpenAIError(parsed),
       };
     default:
       return { type: "ignored" };
@@ -59,4 +59,13 @@ function readOpenAIErrorMessage(payload: Record<string, unknown>): string {
     }
   }
   return "OpenAI realtime translate reported an error";
+}
+
+function isRetryableOpenAIError(payload: Record<string, unknown>): boolean {
+  const error = isRecord(payload.error) ? payload.error : payload;
+  const code = typeof error.code === "string" ? error.code : "";
+  return code === "rate_limit_exceeded"
+    || code === "server_error"
+    || code === "service_unavailable"
+    || code === "timeout";
 }
