@@ -86,6 +86,7 @@ test("rejects unsupported routes without leaking source text as translation", as
   const sarvam = new SarvamTextTranslator("test-key", fetcher);
   const router = new TranslationRouter([sarvam]);
 
+  // Sarvam-only router: European pairs stay unavailable until DeepL is registered.
   await assert.rejects(
     router.translate({
       text: "Hallo Welt",

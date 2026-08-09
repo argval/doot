@@ -33,6 +33,7 @@ export async function buildServer(
 function createDefaultTranslator(): TranslateText {
   const translator = createTranslationRouter({
     sarvamApiKey: config.translationApiKey ?? config.sarvamApiKey,
+    deepLApiKey: config.deepLApiKey,
   });
   return (request) => translator.translate(request);
 }
