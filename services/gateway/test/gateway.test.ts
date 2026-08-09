@@ -1,38 +1,67 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {
+  SUPPORTED_LANGUAGES,
+  type ServerMessage,
+} from "@doot/protocol";
 import WebSocket from "ws";
 import { parseClientMessage } from "../src/gateway.js";
+import { createProviderRouter } from "../src/speech/registry.js";
+import { ELEVENLABS_SUPPORTED_LANGUAGES } from "../src/speech/elevenlabs/languages.js";
+import {
+  SARVAM_SUPPORTED_LANGUAGES,
+  hasSpeechEnergy,
+  pcmS16leRms,
+  toSarvamLanguageCode,
+} from "../src/speech/sarvam/languages.js";
 import { buildServer } from "../src/server.js";
 
-test("accepts a valid session-start message", () => {
-  const result = parseClientMessage(JSON.stringify({
-    type: "start_session",
-    sessionId: "session-1",
-    sourceLanguage: "en",
-    targetLanguage: "es",
-    sampleRate: 16_000,
-    channels: 1,
-  }));
-
-  assert.deepEqual(result, {
-    ok: true,
-    message: {
+test("accepts canonical language IDs in session-start messages", () => {
+  for (const sourceLanguage of SUPPORTED_LANGUAGES) {
+    const result = parseClientMessage(JSON.stringify({
       type: "start_session",
-      sessionId: "session-1",
-      sourceLanguage: "en",
-      targetLanguage: "es",
+      sessionId: `session-${sourceLanguage}`,
+      sourceLanguage,
+      targetLanguage: "en",
       sampleRate: 16_000,
       channels: 1,
-    },
-  });
+    }));
+    assert.equal(result.ok, true, `expected ${sourceLanguage} to be supported`);
+  }
+});
+
+test("keeps provider language sets independent", () => {
+  assert.ok(ELEVENLABS_SUPPORTED_LANGUAGES.includes("es"));
+  assert.equal(SARVAM_SUPPORTED_LANGUAGES.includes("es" as never), false);
 });
 
 test("rejects malformed, unsupported, and oversized audio messages", () => {
   for (const payload of [
     "not json",
-    JSON.stringify({ type: "start_session", sessionId: "s", sourceLanguage: "invalid", targetLanguage: "en", sampleRate: 16_000, channels: 1 }),
-    JSON.stringify({ type: "audio_chunk", sessionId: "s", sequence: 1, timestampMs: 0, encoding: "pcm_s16le", dataBase64: "not base64!" }),
-    JSON.stringify({ type: "audio_chunk", sessionId: "s", sequence: 1, timestampMs: 0, encoding: "pcm_s16le", dataBase64: "A".repeat(349_528) }),
+    JSON.stringify({
+      type: "start_session",
+      sessionId: "s",
+      sourceLanguage: "invalid",
+      targetLanguage: "en",
+      sampleRate: 16_000,
+      channels: 1,
+    }),
+    JSON.stringify({
+      type: "audio_chunk",
+      sessionId: "s",
+      sequence: 1,
+      timestampMs: 0,
+      encoding: "pcm_s16le",
+      dataBase64: "not base64!",
+    }),
+    JSON.stringify({
+      type: "audio_chunk",
+      sessionId: "s",
+      sequence: 1,
+      timestampMs: 0,
+      encoding: "pcm_s16le",
+      dataBase64: "A".repeat(349_528),
+    }),
   ]) {
     assert.deepEqual(parseClientMessage(payload), { ok: false });
   }
@@ -43,13 +72,93 @@ test("returns a protocol error for an invalid realtime WebSocket payload", async
   context.after(() => app.close());
   const address = await app.listen({ host: "127.0.0.1", port: 0 });
 
-  const response = await receiveMessage(address.replace("http", "ws") + "/v1/realtime", "not json");
+  const response = await receiveMessage(
+    address.replace("http", "ws") + "/v1/realtime",
+    "not json",
+  );
   assert.deepEqual(response, {
     type: "error",
     code: "INVALID_MESSAGE",
     message: "Message does not match the realtime protocol",
     retryable: false,
   });
+});
+
+test("streams revisioned mock captions after receiving PCM", async (context) => {
+  const app = await buildServer(
+    createProviderRouter(),
+    async (request) => request.text,
+    { utteranceGraceMs: 10 },
+  );
+  context.after(() => app.close());
+  const address = await app.listen({ host: "127.0.0.1", port: 0 });
+  const caption = await receiveMockFinalCaption(
+    address.replace("http", "ws") + "/v1/realtime",
+  );
+
+  assert.deepEqual(caption, {
+    type: "caption",
+    sessionId: "mock-session",
+    sequence: 0,
+    utteranceId: "mock-session:0:0",
+    revision: 2,
+    sourceText: "Received 1500 ms of system audio.",
+    translatedText: "Received 1500 ms of system audio.",
+    isFinal: true,
+    startMs: 0,
+    endMs: 0,
+    provider: "mock",
+  });
+});
+
+test("routes every Saaras language through Sarvam when configured", () => {
+  const router = createProviderRouter({ sarvamApiKey: "test-sarvam-key" });
+  for (const language of SARVAM_SUPPORTED_LANGUAGES) {
+    assert.equal(
+      router.select(language).id,
+      "sarvam",
+      `expected Sarvam route for ${language}`,
+    );
+  }
+  assert.equal(router.select("kn").id, "sarvam");
+});
+
+test("falls back to mock when Sarvam is not configured", () => {
+  const router = createProviderRouter();
+  assert.equal(router.select("kn").id, "mock");
+});
+
+test("routes international speech to ElevenLabs and Indic speech to Sarvam", () => {
+  const router = createProviderRouter({
+    sarvamApiKey: "test-sarvam-key",
+    elevenLabsApiKey: "test-elevenlabs-key",
+  });
+  assert.equal(router.select("es").id, "elevenlabs");
+  assert.equal(router.select("en").id, "elevenlabs");
+  assert.equal(router.select("kn").id, "sarvam");
+  assert.equal(router.select("auto").id, "sarvam");
+  assert.equal(router.select("auto", "elevenlabs").id, "elevenlabs");
+  assert.deepEqual(router.availability(), {
+    elevenlabs: true,
+    sarvam: true,
+    mock: true,
+  });
+});
+
+test("maps all Saaras languages and retains PCM diagnostics", () => {
+  assert.equal(toSarvamLanguageCode("auto"), "unknown");
+  assert.equal(toSarvamLanguageCode("kn"), "kn-IN");
+  assert.equal(toSarvamLanguageCode("doi"), "doi-IN");
+
+  const silence = new Uint8Array(32_000);
+  assert.equal(pcmS16leRms(silence), 0);
+  assert.equal(hasSpeechEnergy(silence), false);
+
+  const tone = Buffer.alloc(32_000);
+  for (let index = 0; index < tone.length; index += 2) {
+    tone.writeInt16LE(8_000, index);
+  }
+  assert.equal(hasSpeechEnergy(tone), true);
 });
 
 function receiveMessage(url: string, payload: string): Promise<unknown> {
@@ -66,6 +175,47 @@ function receiveMessage(url: string, payload: string): Promise<unknown> {
       clearTimeout(timeout);
       socket.close();
       resolve(JSON.parse(raw.toString()));
+    });
+  });
+}
+
+function receiveMockFinalCaption(url: string): Promise<ServerMessage> {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(url);
+    const timeout = setTimeout(() => {
+      socket.close();
+      reject(new Error("Timed out waiting for final mock caption"));
+    }, 3_000);
+
+    socket.once("error", reject);
+    socket.once("open", () => {
+      socket.send(JSON.stringify({
+        type: "start_session",
+        sessionId: "mock-session",
+        sourceLanguage: "en",
+        targetLanguage: "hi",
+        provider: "mock",
+        sampleRate: 16_000,
+        channels: 1,
+      }));
+    });
+    socket.on("message", (raw) => {
+      const message = JSON.parse(raw.toString()) as ServerMessage;
+      if (message.type === "session_started") {
+        socket.send(JSON.stringify({
+          type: "audio_chunk",
+          sessionId: "mock-session",
+          sequence: 0,
+          timestampMs: 0,
+          encoding: "pcm_s16le",
+          dataBase64: Buffer.alloc(48_000).toString("base64"),
+        }));
+      }
+      if (message.type === "caption" && message.isFinal) {
+        clearTimeout(timeout);
+        socket.close();
+        resolve(message);
+      }
     });
   });
 }

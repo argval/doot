@@ -1,13 +1,38 @@
 import Fastify from "fastify";
 import websocket from "@fastify/websocket";
-import { registerRealtimeGateway } from "./gateway.js";
-import { ProviderRouter } from "./providers.js";
+import { config } from "./config.js";
+import {
+  registerRealtimeGateway,
+  type RealtimeGatewayOptions,
+} from "./gateway.js";
+import { createProviderRouter } from "./speech/registry.js";
+import type { ProviderRouter } from "./speech/router.js";
+import type { TranslateText } from "./translation/contract.js";
+import { createTranslationRouter } from "./translation/registry.js";
 
-export async function buildServer(router = new ProviderRouter()) {
+export async function buildServer(
+  router: ProviderRouter = createProviderRouter({
+    sarvamApiKey: config.sarvamApiKey,
+    elevenLabsApiKey: config.elevenLabsApiKey,
+  }),
+  translate: TranslateText = createDefaultTranslator(),
+  gatewayOptions: RealtimeGatewayOptions = {},
+) {
   const app = Fastify({ logger: { transport: { target: "pino-pretty" } } });
-  await app.register(websocket, { options: { maxPayload: 384 * 1024 } });
+  await app.register(websocket, { options: { maxPayload: 512 * 1024 } });
 
-  app.get("/health", async () => ({ status: "ok", service: "doot-gateway" }));
-  registerRealtimeGateway(app, router);
+  app.get("/health", async () => ({
+    status: "ok",
+    service: "doot-gateway",
+    providers: router.availability(),
+  }));
+  registerRealtimeGateway(app, router, translate, gatewayOptions);
   return app;
+}
+
+function createDefaultTranslator(): TranslateText {
+  const translator = createTranslationRouter({
+    sarvamApiKey: config.translationApiKey ?? config.sarvamApiKey,
+  });
+  return (request) => translator.translate(request);
 }
