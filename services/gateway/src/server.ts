@@ -13,7 +13,6 @@ import { createTranslationRouter } from "./translation/registry.js";
 export async function buildServer(
   router: ProviderRouter = createProviderRouter({
     sarvamApiKey: config.sarvamApiKey,
-    elevenLabsApiKey: config.elevenLabsApiKey,
   }),
   translate: TranslateText = createDefaultTranslator(),
   gatewayOptions: RealtimeGatewayOptions = {},

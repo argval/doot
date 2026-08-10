@@ -44,7 +44,7 @@ npm run setup
 docker compose up -d postgres
 ```
 
-No API key is needed to inspect the UI or exercise the mock caption path. For live Indian-language captions, set `SARVAM_API_KEY` in the repo-root `.env` (see `.env.example`). Set `ELEVENLABS_API_KEY` to enable Scribe v2 Realtime for English, Spanish, French, German, Portuguese, and Italian. The gateway loads these keys on startup and selects a compatible provider automatically.
+No API key is needed to inspect the UI or exercise the mock caption path. For live captions, set `SARVAM_API_KEY` in the repo-root `.env` (see `.env.example`). The gateway loads this key on startup and routes supported live-caption languages through Sarvam.
 
 ## Run locally
 
@@ -77,7 +77,7 @@ npm run dev:gateway
 you launch the native desktop process by another route, start
 `npm run dev:gateway` alongside it.
 
-On macOS, start and stop capture from the overlay, the tray menu, or with `Cmd+Shift+D`. The first capture prompts for **Screen & System Audio Recording** permission. With `SARVAM_API_KEY` set, Indian-language routes (including Auto → English) use Sarvam Realtime with automatic legacy-streaming failover. With `ELEVENLABS_API_KEY` set, English, Spanish, French, German, Portuguese, and Italian use ElevenLabs Scribe v2 Realtime. Translation is routed independently; `TRANSLATION_API_KEY` can hold a separate Sarvam translation key and otherwise falls back to `SARVAM_API_KEY`.
+On macOS, start and stop capture from the overlay, the tray menu, or with `Cmd+Shift+D`. The first capture prompts for **Screen & System Audio Recording** permission. With `SARVAM_API_KEY` set, English and supported Indic-language routes use Sarvam Realtime with automatic legacy-streaming failover. Translation is routed independently; `TRANSLATION_API_KEY` can hold a separate Sarvam translation key and otherwise falls back to `SARVAM_API_KEY`.
 
 Windows still returns the explicit WASAPI scaffold error. Other platforms retain the stub backend for session-state development.
 
@@ -100,20 +100,20 @@ The shared protocol lives in `packages/protocol/src/index.ts`. A client first se
 {
   "type": "start_session",
   "sessionId": "session-id",
-  "sourceLanguage": "es",
+  "sourceLanguage": "hi",
   "targetLanguage": "en",
   "sampleRate": 16000,
   "channels": 1
 }
 ```
 
-The gateway responds with `session_started`, followed by `caption` events. When no `provider` is set, explicit Indic sources route to Sarvam, initial international sources route to ElevenLabs, and Auto preserves Sarvam’s Indic auto-detection when it is configured. Speech recognition and translation are separate modules: normalized partial/final transcripts feed the existing progressive caption stabilizer, then the translation router produces target-language text.
+The gateway responds with `session_started`, followed by `caption` events. When no `provider` is set, all supported live-caption sources route to Sarvam, and Auto uses Sarvam's automatic detection when it is configured. Speech recognition and translation are separate modules: normalized partial/final transcripts feed the existing progressive caption stabilizer, then the translation router produces target-language text.
 
-Provider-specific code is local to `services/gateway/src/speech/sarvam/` and `services/gateway/src/speech/elevenlabs/`. A new speech model implements the small interface in `services/gateway/src/speech/contract.ts` and adds one construction entry in `services/gateway/src/speech/registry.ts`; health reporting and routing derive from that registry. Translation providers follow the equivalent contract/router/registry seam under `services/gateway/src/translation/`.
+Provider-specific code is local to `services/gateway/src/speech/sarvam/`. A new speech model implements the small interface in `services/gateway/src/speech/contract.ts` and adds one construction entry in `services/gateway/src/speech/registry.ts`; health reporting and routing derive from that registry. Translation providers follow the equivalent contract/router/registry seam under `services/gateway/src/translation/`.
 
 ## Where to implement the next pieces
 
-1. **Provider benchmarks:** compare Sarvam and ElevenLabs against representative desktop audio, tracking WER, partial latency, final latency, translation quality, and cost.
+1. **Provider benchmarks:** measure Sarvam against representative desktop audio, tracking WER, partial latency, final latency, translation quality, and cost.
 2. **Caption persistence:** insert finalized segments through `@doot/db`; keep partial captions in memory only.
 3. **Windows capture:** replace the `WasapiBackend` error path with a COM/WASAPI loopback client and endpoint format conversion.
 4. **Production stream lifecycle:** add explicit backpressure telemetry and provider-level health measurements.
@@ -121,7 +121,7 @@ Provider-specific code is local to `services/gateway/src/speech/sarvam/` and `se
 ## Design decisions
 
 - **Tauri 2 + Rust:** native audio and OS integration belong beside the UI, while React keeps the overlay easy to iterate on.
-- **Provider modules:** Sarvam owns the Indic lane and ElevenLabs Scribe v2 Realtime owns the initial international lane. Both satisfy the same speech interface, while translation has its own independent provider seam.
+- **Provider modules:** Sarvam owns the supported speech and Indic translation lanes. Translation remains an independent provider seam.
 - **WebSocket gateway:** streaming audio and partial captions need a long-lived, bidirectional connection. The gateway is intentionally stateless beyond each socket for the first version.
 - **Drizzle-ready PostgreSQL:** the schema stores sessions and finalized caption segments without forcing persistence into the live audio path.
 - **Explicit platform stubs:** platform capture code is isolated behind a trait so macOS, Windows, and a future Linux backend can evolve independently.
@@ -129,7 +129,7 @@ Provider-specific code is local to `services/gateway/src/speech/sarvam/` and `se
 ## Current limitations
 
 - Native system-audio capture is implemented on macOS only.
-- Sarvam Realtime STT is wired for Indian-language routes with legacy-streaming failover; ElevenLabs Scribe v2 Realtime is wired for the initial international routes.
-- Progressive translated captions use Sarvam's text-translation API for English/Indic pairs. International same-language captions work, but cross-language international translation needs another adapter; unsupported pairs return a translation error and never display source text as translated text.
+- Sarvam Realtime STT is wired for English and Indic-language routes with legacy-streaming failover.
+- Progressive translated captions use Sarvam's text-translation API for supported English/Indic pairs; unsupported pairs return a translation error and never display source text as translated text.
 - Finalized captions are not persisted yet.
 - Authentication, rate limiting, billing, and production secrets management are intentionally out of scope for this skeleton.
