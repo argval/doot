@@ -10,11 +10,6 @@ use uuid::Uuid;
 pub enum Language {
     Auto,
     En,
-    Es,
-    Fr,
-    De,
-    Pt,
-    It,
     Hi,
     Bn,
     Gu,
@@ -44,11 +39,6 @@ impl Language {
         match value {
             "auto" => Ok(Self::Auto),
             "en" => Ok(Self::En),
-            "es" => Ok(Self::Es),
-            "fr" => Ok(Self::Fr),
-            "de" => Ok(Self::De),
-            "pt" => Ok(Self::Pt),
-            "it" => Ok(Self::It),
             "hi" => Ok(Self::Hi),
             "bn" => Ok(Self::Bn),
             "gu" => Ok(Self::Gu),
@@ -81,11 +71,6 @@ impl std::fmt::Display for Language {
         let value = match self {
             Self::Auto => "auto",
             Self::En => "en",
-            Self::Es => "es",
-            Self::Fr => "fr",
-            Self::De => "de",
-            Self::Pt => "pt",
-            Self::It => "it",
             Self::Hi => "hi",
             Self::Bn => "bn",
             Self::Gu => "gu",
@@ -252,7 +237,7 @@ mod tests {
     #[test]
     fn parses_and_serializes_every_supported_language() {
         for code in [
-            "auto", "en", "es", "fr", "de", "pt", "it", "hi", "bn", "gu", "kn", "ml", "mr", "od",
+            "auto", "en", "hi", "bn", "gu", "kn", "ml", "mr", "od",
             "pa", "ta", "te", "as", "ur", "ne", "kok", "ks", "sd", "sa", "sat", "mni", "brx",
             "mai", "doi",
         ] {

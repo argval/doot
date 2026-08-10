@@ -449,8 +449,8 @@ test("never substitutes source text when translation is unavailable", async () =
     client.send({
       type: "start_session",
       sessionId: "translation-unavailable",
-      sourceLanguage: "de",
-      targetLanguage: "en",
+      sourceLanguage: "en",
+      targetLanguage: "hi",
       provider: "mock",
       sampleRate: 16_000,
       channels: 1,
@@ -458,7 +458,7 @@ test("never substitutes source text when translation is unavailable", async () =
     await client.waitForMessage((message) => message.type === "session_started");
     provider.sessions[0]?.emit({
       type: "transcript",
-      text: "Hallo Welt",
+      text: "Hello world",
       timestampMs: 100,
       isFinal: true,
     });
@@ -472,7 +472,7 @@ test("never substitutes source text when translation is unavailable", async () =
     assert.equal(error.type, "error");
     assert.equal(error.retryable, false);
     assert.equal(caption.type, "caption");
-    assert.equal(caption.sourceText, "Hallo Welt");
+    assert.equal(caption.sourceText, "Hello world");
     assert.equal(caption.translatedText, "");
   } finally {
     await client.close();
