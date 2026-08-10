@@ -7,7 +7,6 @@ import {
 import WebSocket from "ws";
 import { parseClientMessage } from "../src/gateway.js";
 import { createProviderRouter } from "../src/speech/registry.js";
-import { ELEVENLABS_SUPPORTED_LANGUAGES } from "../src/speech/elevenlabs/languages.js";
 import {
   SARVAM_SUPPORTED_LANGUAGES,
   hasSpeechEnergy,
@@ -28,11 +27,6 @@ test("accepts canonical language IDs in session-start messages", () => {
     }));
     assert.equal(result.ok, true, `expected ${sourceLanguage} to be supported`);
   }
-});
-
-test("keeps provider language sets independent", () => {
-  assert.ok(ELEVENLABS_SUPPORTED_LANGUAGES.includes("es"));
-  assert.equal(SARVAM_SUPPORTED_LANGUAGES.includes("es" as never), false);
 });
 
 test("rejects malformed, unsupported, and oversized audio messages", () => {
@@ -128,18 +122,14 @@ test("falls back to mock when Sarvam is not configured", () => {
   assert.equal(router.select("kn").id, "mock");
 });
 
-test("routes international speech to ElevenLabs and Indic speech to Sarvam", () => {
+test("routes every supported live language through Sarvam", () => {
   const router = createProviderRouter({
     sarvamApiKey: "test-sarvam-key",
-    elevenLabsApiKey: "test-elevenlabs-key",
   });
-  assert.equal(router.select("es").id, "elevenlabs");
-  assert.equal(router.select("en").id, "elevenlabs");
-  assert.equal(router.select("kn").id, "sarvam");
-  assert.equal(router.select("auto").id, "sarvam");
-  assert.equal(router.select("auto", "elevenlabs").id, "elevenlabs");
+  for (const language of SARVAM_SUPPORTED_LANGUAGES) {
+    assert.equal(router.select(language).id, "sarvam");
+  }
   assert.deepEqual(router.availability(), {
-    elevenlabs: true,
     sarvam: true,
     mock: true,
   });

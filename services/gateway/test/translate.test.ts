@@ -83,14 +83,14 @@ test("rejects unsupported routes without leaking source text as translation", as
     called = true;
     return Response.json({ translated_text: "unexpected" });
   };
-  const sarvam = new SarvamTextTranslator("test-key", fetcher);
+  const sarvam = new SarvamTextTranslator(undefined, fetcher);
   const router = new TranslationRouter([sarvam]);
 
   await assert.rejects(
     router.translate({
-      text: "Hallo Welt",
-      source: "de",
-      target: "es",
+      text: "Hello world",
+      source: "en",
+      target: "hi",
     }),
     TranslationUnavailableError,
   );
