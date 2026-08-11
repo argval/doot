@@ -19,6 +19,7 @@ test("uses the Realtime API protocol and forwards partial and final transcripts"
     {
       sessionId: "realtime-1",
       source: "od",
+      target: "en",
       sampleRate: 16_000,
       channels: 1,
       onEvent: (event) => events.push(event),
@@ -102,6 +103,7 @@ test("replays recent audio through Realtime after a transient disconnect", async
     {
       sessionId: "realtime-reconnect",
       source: "hi",
+      target: "en",
       sampleRate: 16_000,
       channels: 1,
       onEvent: (event) => events.push(event),
@@ -148,6 +150,7 @@ test("sends documented Realtime ping keepalives", async () => {
     {
       sessionId: "realtime-ping",
       source: "en",
+      target: "hi",
       sampleRate: 16_000,
       channels: 1,
       onEvent: () => undefined,

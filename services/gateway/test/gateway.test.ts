@@ -78,6 +78,32 @@ test("returns a protocol error for an invalid realtime WebSocket payload", async
   });
 });
 
+test("returns the established provider error when Gemini is unavailable", async (context) => {
+  const app = await buildServer(createProviderRouter());
+  context.after(() => app.close());
+  const address = await app.listen({ host: "127.0.0.1", port: 0 });
+
+  const response = await receiveMessage(
+    address.replace("http", "ws") + "/v1/realtime",
+    JSON.stringify({
+      type: "start_session",
+      sessionId: "gemini-unavailable",
+      sourceLanguage: "es",
+      targetLanguage: "en",
+      provider: "gemini",
+      sampleRate: 16_000,
+      channels: 1,
+    }),
+  );
+  assert.deepEqual(response, {
+    type: "error",
+    sessionId: "gemini-unavailable",
+    code: "PROVIDER_UNAVAILABLE",
+    message: "Provider gemini is not configured",
+    retryable: false,
+  });
+});
+
 test("streams revisioned mock captions after receiving PCM", async (context) => {
   const app = await buildServer(
     createProviderRouter(),
@@ -122,6 +148,19 @@ test("falls back to mock when Sarvam is not configured", () => {
   assert.equal(router.select("kn").id, "mock");
 });
 
+test("routes the benchmark international languages through configured Gemini", () => {
+  const router = createProviderRouter({
+    sarvamApiKey: "test-sarvam-key",
+    geminiApiKey: "test-gemini-key",
+  });
+  for (const language of ["es", "fr", "de"] as const) {
+    assert.equal(router.select(language).id, "gemini");
+  }
+  assert.equal(router.select("en", undefined, 16_000, 1, "es").id, "sarvam");
+  assert.equal(router.select("en", "gemini", 16_000, 1, "es").id, "gemini");
+  assert.equal(router.select("en", "gemini", 16_000, 1, "hi").id, "gemini");
+});
+
 test("routes every supported live language through Sarvam", () => {
   const router = createProviderRouter({
     sarvamApiKey: "test-sarvam-key",
@@ -131,6 +170,7 @@ test("routes every supported live language through Sarvam", () => {
   }
   assert.deepEqual(router.availability(), {
     sarvam: true,
+    gemini: false,
     mock: true,
   });
 });

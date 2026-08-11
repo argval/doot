@@ -19,9 +19,11 @@
 - Active stack is a monorepo with Tauri 2 + Rust desktop (`apps/desktop`), React + TypeScript + Vite UI, Fastify/TypeScript WebSocket gateway, shared protocol package, and Drizzle/PostgreSQL-oriented persistence.
 - System audio capture uses ScreenCaptureKit-style paths and requires macOS Screen Recording permission for testing.
 - Sarvam Realtime STT is the primary gateway transport; the legacy streaming client remains an automatic fallback for initial and terminal Realtime failures.
+- Gemini 3.5 Live Translate is the gateway-managed benchmark lane for Spanish, French, and German sources; English→Spanish and English→Hindi can explicitly use Gemini for comparisons.
+- Gemini source/output transcription streams are correlated inside its provider session and emit native translated revisions that bypass the separate text-translation router.
 - Speech providers are modular gateway adapters under `services/gateway/src/speech/`; Sarvam owns the supported live-caption and Indic translation lanes.
 - Speech adapter construction is centralized in `services/gateway/src/speech/registry.ts`; routing and health metadata derive from the registered adapters.
-- Supported live-caption languages are English and Sarvam's Indic language set; translation remains an independent provider seam.
+- Supported live-caption languages include English, Sarvam's Indic set, and the Gemini POC's Spanish/French/German sources; Spanish is also exposed as a POC target.
 - Unsupported translation pairs emit an unavailable error with blank translated text; source text must never be substituted into translated-only captions.
 - Local runs often use bun workspace scripts for the desktop/Tauri app and gateway; `scripts/dev.sh` starts gateway and desktop together.
 - Caption pipeline aims for persistent Sarvam streaming with VAD-driven utterance boundaries and code-switch-tolerant Indic translation (including Kannada).

@@ -3,6 +3,7 @@ import type {
   ChannelCount,
   ProviderId,
   SupportedLanguage,
+  SupportedTargetLanguage,
 } from "@doot/protocol";
 import {
   supportsSession,
@@ -25,19 +26,23 @@ export class ProviderRouter {
     requested?: ProviderId,
     sampleRate?: AudioSampleRate,
     channels?: ChannelCount,
+    target?: SupportedTargetLanguage,
   ): SpeechProvider {
     if (requested) {
       const explicit = this.providers.find((provider) => provider.id === requested);
       if (!explicit) throw new Error(`Unknown provider: ${requested}`);
       if (!explicit.configured) throw new Error(`Provider ${requested} is not configured`);
-      if (!supportsSession(explicit, source, sampleRate, channels)) {
-        throw new Error(`Provider ${requested} does not support this ${source} audio session`);
+      if (!supportsSession(explicit, source, sampleRate, channels, target)) {
+        throw new Error(
+          `Provider ${requested} does not support this ${source}`
+          + `${target ? ` → ${target}` : ""} audio session`,
+        );
       }
       return explicit;
     }
 
     const compatible = this.providers.filter((provider) => (
-      provider.configured && supportsSession(provider, source, sampleRate, channels)
+      provider.configured && supportsSession(provider, source, sampleRate, channels, target)
     ));
     compatible.sort((left, right) => {
       const leftPriority = source === "auto"

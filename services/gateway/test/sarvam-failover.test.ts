@@ -176,6 +176,7 @@ function options(events: ProviderStreamEvent[]): OpenProviderSessionOptions {
   return {
     sessionId: "failover-1",
     source: "kn" as const,
+    target: "en" as const,
     sampleRate: 16_000,
     channels: 1,
     onEvent: (event: ProviderStreamEvent) => {

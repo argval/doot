@@ -20,6 +20,7 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
+    "benchmark:live": "npm run benchmark:live --workspace @doot/gateway --",
     "db:generate": "npm run db:generate --workspace @doot/db",
     "db:migrate": "npm run db:migrate --workspace @doot/db"
   },
