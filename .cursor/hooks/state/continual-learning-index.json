@@ -40,9 +40,9 @@
     "size": 4478
   },
   "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/38c99732-8495-4448-b11d-db2afb4c2bac/38c99732-8495-4448-b11d-db2afb4c2bac.jsonl": {
-    "mtime": 1786201844.8068218,
-    "mtime_ns": 1786201844806821898,
-    "size": 796213
+    "mtime": 1786202611.0547104,
+    "mtime_ns": 1786202611054710446,
+    "size": 835389
   },
   "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/38c99732-8495-4448-b11d-db2afb4c2bac/subagents/0bf1b136-c180-4c27-8454-464cd4992871.jsonl": {
     "mtime": 1786197000.6067612,
@@ -50,9 +50,9 @@
     "size": 22507
   },
   "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/38c99732-8495-4448-b11d-db2afb4c2bac/subagents/6c84109d-7f0d-48ed-9970-c91666096925.jsonl": {
-    "mtime": 1786201865.0811563,
-    "mtime_ns": 1786201865081156147,
-    "size": 2961
+    "mtime": 1786201954.2636125,
+    "mtime_ns": 1786201954263612521,
+    "size": 19957
   },
   "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/38c99732-8495-4448-b11d-db2afb4c2bac/subagents/7c25724f-dd89-4ed1-bf46-427a27466052.jsonl": {
     "mtime": 1786199291.7559187,
@@ -84,10 +84,30 @@
     "mtime_ns": 1786194508330985403,
     "size": 13908
   },
+  "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/b6917951-6fe5-4a8b-8cc7-fa4232db243e/b6917951-6fe5-4a8b-8cc7-fa4232db243e.jsonl": {
+    "mtime": 1786623822.5113757,
+    "mtime_ns": 1786623822511375666,
+    "size": 79127
+  },
+  "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/b6917951-6fe5-4a8b-8cc7-fa4232db243e/subagents/22c2b041-8f54-43d1-b07f-d749614dafcc.jsonl": {
+    "mtime": 1786623856.4144187,
+    "mtime_ns": 1786623856414418768,
+    "size": 1810
+  },
+  "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/b6917951-6fe5-4a8b-8cc7-fa4232db243e/subagents/c7aa1337-a0be-4fa4-91a4-e1487c68c0f4.jsonl": {
+    "mtime": 1786622784.7229962,
+    "mtime_ns": 1786622784722996348,
+    "size": 10779
+  },
   "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/bf52f7f8-70e8-4d5f-a970-acbdd000a507/bf52f7f8-70e8-4d5f-a970-acbdd000a507.jsonl": {
     "mtime": 1786176587.7215843,
     "mtime_ns": 1786176587721584364,
     "size": 19318
+  },
+  "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/dce2943a-fe72-47bb-9fae-56044935956c/dce2943a-fe72-47bb-9fae-56044935956c.jsonl": {
+    "mtime": 1786241871.7633326,
+    "mtime_ns": 1786241871763332708,
+    "size": 805680
   },
   "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/e1a0bfb2-8df3-435a-8fa4-b28ec937b2e4/e1a0bfb2-8df3-435a-8fa4-b28ec937b2e4.jsonl": {
     "mtime": 1786071649.7103534,
