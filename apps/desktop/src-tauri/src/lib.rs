@@ -28,11 +28,10 @@ pub(crate) fn remember_provider(app: &AppHandle, provider: &str) {
     if trimmed.is_empty() {
         return;
     }
-    let Some(state) = app.try_state::<AppState>() else {
-        return;
-    };
-    if let Ok(mut last_provider) = state.last_provider.lock() {
-        *last_provider = Some(trimmed.to_string());
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Ok(mut last_provider) = state.last_provider.lock() {
+            *last_provider = Some(trimmed.to_string());
+        }
     }
 }
 
