@@ -49,12 +49,9 @@ const LANGUAGE_MARKERS: Record<string, RegExp> = {
 export function geminiLanguageScore(text: string, language: string): number {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (!normalized) return 0;
-  if (language === "hi") {
-    return normalized.match(LANGUAGE_MARKERS.hi)?.length ?? 0;
-  }
   const pattern = LANGUAGE_MARKERS[language];
   if (!pattern) return 0;
-  return (normalized.match(pattern) ?? []).length;
+  return normalized.match(pattern)?.length ?? 0;
 }
 
 export function looksLikeGeminiLanguage(text: string, language: string): boolean {
