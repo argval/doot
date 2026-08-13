@@ -7,11 +7,11 @@
 - Prefer a single idle/hover opacity model with a smooth fade (more transparent when idle, more opaque on hover); avoid multi-level or flickering transparency.
 - When asked for approach or design, discuss first and do not start implementing until explicitly told to.
 - Prefer Sarvam speech models for captioning/translation, especially for Indian languages and code-switched speech (e.g. Hinglish, Kannada–English).
+- For non-Indic/international languages, prefer caption-native STT+MT (Sarvam-like progressive text) over audio→audio interpretation models whose captions are side-channel ASR.
 - Prefer TypeScript 7 configured consistently across the monorepo.
 - When committing agent work, include `AGENTS.md` updates in the same commit (do not leave them unstaged as unrelated).
 - Prefer translated-only captions; do not show source/original transcription under the translation.
-- Translated captions should update progressively in realtime (word-by-word feel) while staying sentence-aware—not only after pause or finalization.
-- When the captions area fills, keep the latest caption visible (do not clip at the bottom); prefer continuous sentence flow over fragmented short phrases.
+- Translated captions should update progressively in realtime (word-by-word feel) while staying sentence-aware—not only after pause or finalization; when the captions area fills, keep the latest caption visible and prefer continuous sentence flow over fragmented short phrases.
 
 ## Learned Workspace Facts
 
@@ -19,13 +19,13 @@
 - Active stack is a monorepo with Tauri 2 + Rust desktop (`apps/desktop`), React + TypeScript + Vite UI, Fastify/TypeScript WebSocket gateway, shared protocol package, and Drizzle/PostgreSQL-oriented persistence.
 - System audio capture uses ScreenCaptureKit-style paths and requires macOS Screen Recording permission for testing.
 - Sarvam Realtime STT is the primary gateway transport; the legacy streaming client remains an automatic fallback for initial and terminal Realtime failures.
-- Gemini 3.5 Live Translate is the gateway-managed benchmark lane for Spanish, French, and German sources; English→Spanish and English→Hindi can explicitly use Gemini for comparisons.
-- Gemini source/output transcription streams are correlated inside its provider session and emit native translated revisions that bypass the separate text-translation router.
+- Gemini 3.5 Live Translate (`GEMINI_API_KEY`) is a gateway-managed international POC/benchmark for Spanish/French/German sources→en/hi/es; the overlay has no provider toggle—Auto and many English pairs still route to Sarvam.
+- Gemini Live Translate is audio→audio first; captions come from correlated side-channel source/output transcription and bypass the text-translation router (weaker caption UX than Sarvam's STT+MT path).
 - Speech providers are modular gateway adapters under `services/gateway/src/speech/`; Sarvam owns the supported live-caption and Indic translation lanes.
 - Speech adapter construction is centralized in `services/gateway/src/speech/registry.ts`; routing and health metadata derive from the registered adapters.
 - Supported live-caption languages include English, Sarvam's Indic set, and the Gemini POC's Spanish/French/German sources; Spanish is also exposed as a POC target.
 - Unsupported translation pairs emit an unavailable error with blank translated text; source text must never be substituted into translated-only captions.
-- Local runs often use bun workspace scripts for the desktop/Tauri app and gateway; `scripts/dev.sh` starts gateway and desktop together.
+- Local runs use npm workspace scripts (`npm run dev` / `scripts/dev.sh` starts gateway and desktop together); package manager is npm, not bun.
 - Caption pipeline aims for persistent Sarvam streaming with VAD-driven utterance boundaries and code-switch-tolerant Indic translation (including Kannada).
 
 ## graphify

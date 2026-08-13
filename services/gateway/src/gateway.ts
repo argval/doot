@@ -294,7 +294,7 @@ function handleProviderEvent(
       return;
     }
     case "translation": {
-      updateNativeTranslation(translator, socket, session, event);
+      updateNativeTranslation(translator, options, socket, session, event);
       return;
     }
     case "warning": {
@@ -399,13 +399,40 @@ function updateActiveUtterance(
 
 function updateNativeTranslation(
   translator: TranslateText,
+  options: RequiredGatewayOptions,
   socket: WebSocket,
   session: SessionState,
   event: Extract<ProviderStreamEvent, { type: "translation" }>,
 ): void {
-  const utterance = session.activeUtterance;
   const translated = normalizeTranscript(event.text);
-  if (!utterance || !utterance.sourceText || !translated) return;
+  if (!translated) return;
+
+  let utterance = session.activeUtterance;
+  if (!utterance) {
+    // Native providers (Gemini) can emit translated text before source text.
+    const sequence = session.nextSequence;
+    session.nextSequence += 1;
+    utterance = {
+      id: `${session.request.sessionId}:${event.timestampMs}:${sequence}`,
+      sequence,
+      revision: 0,
+      sourceText: "",
+      startMs: session.pendingSpeechStartMs ?? event.timestampMs,
+      endMs: event.timestampMs,
+      graceTimer: null,
+      safetyTimer: null,
+      draftTimer: null,
+      draftMaxWaitTimer: null,
+      draftSourceText: null,
+      draftTranslatedText: null,
+      nativeTranslatedText: null,
+    };
+    session.activeUtterance = utterance;
+    session.pendingSpeechStartMs = null;
+    utterance.safetyTimer = setTimeout(() => {
+      void finalizeActiveUtterance(translator, socket, session);
+    }, options.maxUtteranceMs);
+  }
 
   // Native translation events are provider-normalized cumulative snapshots.
   const mergedText = translated;

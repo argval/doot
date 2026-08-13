@@ -324,6 +324,51 @@ test("publishes provider-native translations without calling the text translator
   }
 });
 
+test("publishes native translations that arrive before source transcripts", async () => {
+  const harness = await createHarness(2_000, true);
+  try {
+    const stream = harness.provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 100 });
+    stream.emit({
+      type: "translation",
+      text: "Hello world",
+      timestampMs: 140,
+      languageCode: "en",
+      isFinal: false,
+    });
+    const draft = await harness.client.waitForMessage(
+      (message) => message.type === "caption" && !message.isFinal,
+    );
+    assert.equal(draft.type, "caption");
+    assert.equal(draft.translatedText, "Hello world");
+    assert.equal(draft.sourceText, "");
+
+    stream.emit({
+      type: "transcript",
+      text: "Hola mundo",
+      timestampMs: 160,
+      languageCode: "es",
+      isFinal: false,
+    });
+    stream.emit({
+      type: "translation",
+      text: "Hello world.",
+      timestampMs: 200,
+      languageCode: "en",
+      isFinal: true,
+    });
+    const final = await harness.client.waitForMessage(
+      (message) => message.type === "caption" && message.isFinal,
+    );
+    assert.equal(final.type, "caption");
+    assert.equal(final.translatedText, "Hello world.");
+    assert.equal(final.sourceText, "Hola mundo");
+    assert.equal(harness.translator.requests.length, 0);
+  } finally {
+    await harness.close();
+  }
+});
+
 test("finalizes promptly when Realtime sends transcript.final before VAD speech_end", async () => {
   const harness = await createHarness(2_000);
   try {

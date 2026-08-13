@@ -7,12 +7,18 @@ import { isRecord } from "../../util.js";
 import {
   GEMINI_LIVE_TRANSLATE_MODEL,
   GEMINI_LIVE_TRANSLATE_WS,
+  filterGeminiTranslationToTarget,
+  geminiLanguageCodeMatches,
 } from "./languages.js";
 
 const SETUP_TIMEOUT_MS = 8_000;
 const END_TIMEOUT_MS = 3_000;
-const TRANSCRIPT_SETTLE_MS = 200;
+/** Match Sarvam's endpointing so Gemini does not finalize mid-phrase. */
+const TRANSCRIPT_SETTLE_MS = 500;
+/** Soft coalesce target — desktop already emits ~100 ms frames. */
 const PCM_BYTES_PER_100_MS = 3_200;
+/** Same silence window Sarvam Realtime uses (`silence_duration_ms=500`). */
+const GEMINI_SILENCE_DURATION_MS = 500;
 
 export interface GeminiLiveRuntime {
   endpoint?: string;
@@ -161,6 +167,8 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     }
 
     this.awaitingTurn = true;
+    // Mirror Sarvam: forward live PCM as it arrives. Only coalesce undersized
+    // leftovers toward ~100 ms — never invent silence by zero-padding.
     if (this.pendingAudio.byteLength === 0) this.pendingAudioTimestampMs = timestampMs;
     this.pendingAudio = Buffer.concat([this.pendingAudio, Buffer.from(audio)]);
     while (this.pendingAudio.byteLength >= PCM_BYTES_PER_100_MS) {
@@ -174,6 +182,20 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
       this.pendingAudioTimestampMs = this.pendingAudio.byteLength > 0
         ? (this.pendingAudioTimestampMs ?? timestampMs) + 100
         : null;
+    }
+    if (
+      this.pendingAudio.byteLength > 0
+      && this.pendingAudio.byteLength === audio.byteLength
+      && audio.byteLength < PCM_BYTES_PER_100_MS
+    ) {
+      // Desktop already paced this chunk; send it immediately like Sarvam.
+      this.sendAudioFrame(
+        socket,
+        this.pendingAudio,
+        this.pendingAudioTimestampMs ?? timestampMs,
+      );
+      this.pendingAudio = Buffer.alloc(0);
+      this.pendingAudioTimestampMs = null;
     }
   }
 
@@ -190,11 +212,10 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
       throw new Error("Gemini Live Translate flush requires an open connection");
     }
     if (this.pendingAudio.byteLength > 0) {
-      const finalFrame = Buffer.alloc(PCM_BYTES_PER_100_MS);
-      this.pendingAudio.copy(finalFrame);
+      // Send the real remainder — zero-padding looked like speech silence/noise.
       this.sendAudioFrame(
         socket,
-        finalFrame,
+        this.pendingAudio,
         this.pendingAudioTimestampMs ?? this.lastTimestampMs,
       );
       this.pendingAudio = Buffer.alloc(0);
@@ -240,13 +261,25 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
 
   private sendSetup(socket: WebSocket, waiter: Waiter): void {
     try {
+      // Transcription + VAD live on setup (BidiGenerateContentSetup). Google's
+      // live-translate WS example nests transcription under generationConfig and
+      // the runtime rejects that with 1007. Silence window mirrors Sarvam.
       socket.send(JSON.stringify({
         setup: {
           model: `models/${GEMINI_LIVE_TRANSLATE_MODEL}`,
+          inputAudioTranscription: {},
+          outputAudioTranscription: {},
+          realtimeInputConfig: {
+            automaticActivityDetection: {
+              disabled: false,
+              startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
+              endOfSpeechSensitivity: "END_SENSITIVITY_LOW",
+              prefixPaddingMs: 20,
+              silenceDurationMs: GEMINI_SILENCE_DURATION_MS,
+            },
+          },
           generationConfig: {
             responseModalities: ["AUDIO"],
-            inputAudioTranscription: {},
-            outputAudioTranscription: {},
             translationConfig: {
               targetLanguageCode: this.options.target,
               echoTargetLanguage: true,
@@ -316,10 +349,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     if (!merged || merged === this.sourceText) return;
     this.sourceText = merged;
     this.sourceLanguageCode = languageCode ?? this.sourceLanguageCode;
-    if (!this.speechStarted) {
-      this.speechStarted = true;
-      this.options.onEvent({ type: "speech_start", timestampMs: this.lastTimestampMs });
-    }
+    this.markSpeechStarted();
     this.options.onEvent({
       type: "transcript",
       text: this.sourceText,
@@ -332,16 +362,39 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
   }
 
   private handleOutputTranscription(text: string, languageCode?: string): void {
-    const merged = mergeStreamingText(this.translatedText, text);
-    if (!merged || merged === this.translatedText) return;
-    this.translatedText = merged;
-    this.targetLanguageCode = languageCode ?? this.targetLanguageCode;
+    // Gemini frequently puts source-language text on outputTranscription during
+    // fast/mixed speech. Never let that into translated-only captions.
+    if (!geminiLanguageCodeMatches(languageCode, this.options.target)) return;
+    const filteredIncoming = filterGeminiTranslationToTarget(
+      text,
+      this.options.target,
+      this.options.source,
+    );
+    if (!filteredIncoming) return;
+
+    const merged = mergeStreamingText(this.translatedText, filteredIncoming);
+    const filteredMerged = filterGeminiTranslationToTarget(
+      merged,
+      this.options.target,
+      this.options.source,
+    );
+    if (!filteredMerged || filteredMerged === this.translatedText) return;
+    this.translatedText = filteredMerged;
+    this.targetLanguageCode = languageCode ?? this.targetLanguageCode ?? this.options.target;
+    // Translated-only overlay: do not wait for the source transcript stream.
+    this.markSpeechStarted();
     this.emitTranslation(false);
     if (this.turnCompleteSeen) this.scheduleFinalization();
   }
 
+  private markSpeechStarted(): void {
+    if (this.speechStarted) return;
+    this.speechStarted = true;
+    this.options.onEvent({ type: "speech_start", timestampMs: this.lastTimestampMs });
+  }
+
   private emitTranslation(isFinal: boolean): void {
-    if (!this.sourceText || !this.translatedText) return;
+    if (!this.translatedText) return;
     if (!isFinal && this.translatedText === this.lastEmittedTranslation) return;
     this.lastEmittedTranslation = this.translatedText;
     this.options.onEvent({
@@ -362,18 +415,13 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
   }
 
   private finalizeTurn(): void {
-    if (this.sourceText && this.translatedText) {
+    if (this.translatedText) {
       this.emitTranslation(true);
     } else if (this.sourceText) {
       this.options.onEvent({
         type: "error",
         message: "Gemini Live Translate completed without translated text",
         retryable: true,
-      });
-    } else if (this.translatedText) {
-      this.options.onEvent({
-        type: "warning",
-        message: "Gemini Live Translate completed without an input transcript",
       });
     }
     if (this.speechStarted) {
@@ -468,20 +516,79 @@ function readTranscription(value: unknown): {
 
 function mergeStreamingText(existing: string, incoming: string): string {
   const normalized = normalizeText(incoming);
-  if (!existing) return normalized;
-  if (!normalized || normalized === existing || existing.startsWith(normalized)) return existing;
-  if (normalized.startsWith(existing)) return normalized;
+  if (!existing) return collapseStutter(normalized);
+  if (!normalized) return existing;
+  if (normalized === existing || existing.startsWith(normalized)) {
+    return collapseStutter(existing);
+  }
+  if (normalized.startsWith(existing)) return collapseStutter(normalized);
+
+  // Gemini often re-emits the same short phrase on fast speech (esp. Spanish).
+  // Treat contained phrases as already merged instead of appending forever.
+  if (containsPhrase(existing, normalized)) return collapseStutter(existing);
+  if (containsPhrase(normalized, existing)) return collapseStutter(normalized);
 
   const existingWords = existing.split(/\s+/);
   const incomingWords = normalized.split(/\s+/);
-  for (let overlap = Math.min(existingWords.length, incomingWords.length); overlap > 0; overlap -= 1) {
-    const suffix = existingWords.slice(-overlap).join(" ").toLocaleLowerCase();
-    const prefix = incomingWords.slice(0, overlap).join(" ").toLocaleLowerCase();
-    if (suffix === prefix) {
-      return [...existingWords, ...incomingWords.slice(overlap)].join(" ");
+  if (hasWordPrefix(incomingWords, existingWords)) return collapseStutter(normalized);
+  if (hasWordPrefix(existingWords, incomingWords)) return collapseStutter(existing);
+
+  // Incoming matches the trailing words exactly → stutter, not progress.
+  for (let size = Math.min(incomingWords.length, existingWords.length); size >= 1; size -= 1) {
+    if (sameWords(existingWords.slice(-size), incomingWords.slice(0, size))) {
+      if (size === incomingWords.length) return collapseStutter(existing);
+      return collapseStutter([...existingWords, ...incomingWords.slice(size)].join(" "));
     }
   }
-  return `${existing} ${normalized}`;
+
+  return collapseStutter(`${existing} ${normalized}`);
+}
+
+/** True when `needle` already appears as a contiguous word phrase inside `haystack`. */
+function containsPhrase(haystack: string, needle: string): boolean {
+  const hayWords = haystack.split(/\s+/);
+  const needleWords = needle.split(/\s+/);
+  if (needleWords.length === 0 || needleWords.length > hayWords.length) return false;
+  for (let start = 0; start <= hayWords.length - needleWords.length; start += 1) {
+    if (sameWords(hayWords.slice(start, start + needleWords.length), needleWords)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Collapse immediate duplicated tails like "where is this where is this". */
+function collapseStutter(text: string): string {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length < 2) return words.join(" ");
+  let end = words.length;
+  for (let n = Math.min(8, Math.floor(end / 2)); n >= 2; n -= 1) {
+    while (
+      end >= 2 * n
+      && sameWords(words.slice(end - n, end), words.slice(end - 2 * n, end - n))
+    ) {
+      end -= n;
+    }
+  }
+  return words.slice(0, end).join(" ");
+}
+
+function hasWordPrefix(words: string[], prefix: string[]): boolean {
+  return prefix.length <= words.length && sameWords(words.slice(0, prefix.length), prefix);
+}
+
+function sameWords(left: string[], right: string[]): boolean {
+  return left.length === right.length
+    && left.every((word, index) => wordsEquivalent(word, right[index] ?? ""));
+}
+
+function wordsEquivalent(left: string, right: string): boolean {
+  const normalizeWord = (word: string) => word
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .replace(/^[^\p{L}\p{N}\p{M}]+|[^\p{L}\p{N}\p{M}]+$/gu, "");
+  const normalizedLeft = normalizeWord(left);
+  return normalizedLeft.length > 0 && normalizedLeft === normalizeWord(right);
 }
 
 function normalizeText(value: string): string {

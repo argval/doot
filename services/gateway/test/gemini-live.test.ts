@@ -31,10 +31,19 @@ test("configures Live Translate, sends 100 ms PCM frames, and correlates transcr
     assert.deepEqual(setup, {
       setup: {
         model: "models/gemini-3.5-live-translate-preview",
+        inputAudioTranscription: {},
+        outputAudioTranscription: {},
+        realtimeInputConfig: {
+          automaticActivityDetection: {
+            disabled: false,
+            startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
+            endOfSpeechSensitivity: "END_SENSITIVITY_LOW",
+            prefixPaddingMs: 20,
+            silenceDurationMs: 500,
+          },
+        },
         generationConfig: {
           responseModalities: ["AUDIO"],
-          inputAudioTranscription: {},
-          outputAudioTranscription: {},
           translationConfig: {
             targetLanguageCode: "en",
             echoTargetLanguage: true,
@@ -58,21 +67,24 @@ test("configures Live Translate, sends 100 ms PCM frames, and correlates transcr
       message.realtimeInput.audio.mimeType === "audio/pcm;rate=16000"
     )));
 
+    // Undersized frames are forwarded immediately, same as Sarvam (no silence pad).
     session.pushAudio(Buffer.alloc(1_600, 8), 300);
-    await new Promise<void>((resolve) => setTimeout(resolve, 10));
-    assert.equal(connection.messages.filter(isAudioMessage).length, 2);
-    session.pushAudio(Buffer.alloc(1_600, 9), 350);
-    const bufferedAudio = await waitForGemini(() => {
+    await waitForGemini(() => {
       const audio = connection.messages.filter(isAudioMessage);
       return audio.length === 3 ? audio[2] : undefined;
     });
     assert.equal(
-      Buffer.from(bufferedAudio.realtimeInput.audio.data, "base64").byteLength,
-      3_200,
+      Buffer.from(
+        connection.messages.filter(isAudioMessage)[2]!.realtimeInput.audio.data,
+        "base64",
+      ).byteLength,
+      1_600,
     );
     session.pushAudio(Buffer.alloc(800, 10), 400);
-    await new Promise<void>((resolve) => setTimeout(resolve, 10));
-    assert.equal(connection.messages.filter(isAudioMessage).length, 3);
+    await waitForGemini(() => {
+      const audio = connection.messages.filter(isAudioMessage);
+      return audio.length === 4 ? audio[3] : undefined;
+    });
 
     // Google documents no ordering guarantee between these streams.
     server.send({
@@ -103,7 +115,7 @@ test("configures Live Translate, sends 100 ms PCM frames, and correlates transcr
     assert.ok(finalAudio);
     assert.equal(
       Buffer.from(finalAudio.realtimeInput.audio.data, "base64").byteLength,
-      3_200,
+      800,
     );
     server.send({ serverContent: { turnComplete: true } });
     await flushing;
@@ -121,6 +133,130 @@ test("configures Live Translate, sends 100 ms PCM frames, and correlates transcr
     )));
     assert.ok(events.some((event) => event.type === "speech_start"));
     assert.ok(events.some((event) => event.type === "speech_end"));
+  } finally {
+    await session.close();
+    await server.close();
+  }
+});
+
+test("does not stutter when Gemini re-emits the same Spanish translation fragment", async () => {
+  const server = new FakeGeminiServer();
+  const endpoint = await server.endpoint();
+  const events: ProviderStreamEvent[] = [];
+  const session = new GeminiLiveTranslateSession(
+    "test-gemini-key",
+    {
+      sessionId: "gemini-stutter",
+      source: "es",
+      target: "en",
+      sampleRate: 16_000,
+      channels: 1,
+      onEvent: (event) => events.push(event),
+    },
+    { endpoint, setupTimeoutMs: 250, endTimeoutMs: 250, settleMs: 10 },
+  );
+
+  try {
+    const opening = session.open();
+    await server.waitForMessage(isSetupMessage);
+    server.send({ setupComplete: {} });
+    await opening;
+
+    server.send({
+      serverContent: {
+        outputTranscription: { text: "Where is this", languageCode: "en" },
+      },
+    });
+    server.send({
+      serverContent: {
+        outputTranscription: { text: "Where is this", languageCode: "en" },
+      },
+    });
+    server.send({
+      serverContent: {
+        outputTranscription: { text: "Where is this?", languageCode: "en" },
+      },
+    });
+    server.send({
+      serverContent: {
+        outputTranscription: { text: "Where is this where is this", languageCode: "en" },
+      },
+    });
+
+    await waitForGemini(() => events.find((event) => (
+      event.type === "translation" && event.text === "Where is this"
+    )));
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    const translations = events.filter((event) => event.type === "translation");
+    assert.equal(translations.at(-1)?.text, "Where is this");
+    assert.ok(translations.every((event) => (
+      event.type === "translation" && !/where is this where is this/i.test(event.text)
+    )));
+  } finally {
+    await session.close();
+    await server.close();
+  }
+});
+
+test("strips Spanish source leaks from Gemini English captions", async () => {
+  const server = new FakeGeminiServer();
+  const endpoint = await server.endpoint();
+  const events: ProviderStreamEvent[] = [];
+  const session = new GeminiLiveTranslateSession(
+    "test-gemini-key",
+    {
+      sessionId: "gemini-es-leak",
+      source: "es",
+      target: "en",
+      sampleRate: 16_000,
+      channels: 1,
+      onEvent: (event) => events.push(event),
+    },
+    { endpoint, setupTimeoutMs: 250, endTimeoutMs: 250, settleMs: 10 },
+  );
+
+  try {
+    const opening = session.open();
+    await server.waitForMessage(isSetupMessage);
+    server.send({ setupComplete: {} });
+    await opening;
+
+    server.send({
+      serverContent: {
+        outputTranscription: {
+          text: "I will invoke the Alien Enemies Act of 1798.",
+          languageCode: "en",
+        },
+      },
+    });
+    server.send({
+      serverContent: {
+        outputTranscription: {
+          text: "Esta ley aun vigente permite arrestar y deportar a migrantes",
+          languageCode: "es",
+        },
+      },
+    });
+    server.send({
+      serverContent: {
+        outputTranscription: {
+          text: "That's when they ran the country a little tougher than we run it today. Estale, aun vigente marte dos siglos despues, permite arrestar y deportar a migrantes",
+          languageCode: "en",
+        },
+      },
+    });
+
+    await waitForGemini(() => events.find((event) => (
+      event.type === "translation"
+      && /tougher than we run it today/i.test(event.text)
+    )));
+
+    const translations = events.filter((event) => event.type === "translation");
+    const latest = translations.at(-1);
+    assert.ok(latest && latest.type === "translation");
+    assert.match(latest.text, /Alien Enemies Act|tougher than we run it today/i);
+    assert.doesNotMatch(latest.text, /migrantes|vigente|despues|Estale/i);
   } finally {
     await session.close();
     await server.close();
