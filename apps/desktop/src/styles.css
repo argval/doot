@@ -59,7 +59,7 @@ button {
   padding: 20px 22px 18px;
   border: 1px solid rgb(255 255 255 / 16%);
   border-radius: 18px;
-  background-color: rgb(25 24 31 / 42%);
+  background-color: rgb(25 24 31 / var(--overlay-idle-alpha, 0.42));
   cursor: grab;
   isolation: isolate;
   user-select: none;
@@ -70,7 +70,7 @@ button {
   inset: 0;
   z-index: 0;
   border-radius: inherit;
-  background: rgb(25 24 31 / 45%);
+  background: rgb(25 24 31 / var(--overlay-hover-boost, 0.45));
   content: "";
   opacity: 0;
   pointer-events: none;
@@ -322,7 +322,7 @@ button {
   width: 100%;
   margin: 0;
   color: #f5f4f7;
-  font-size: 28px;
+  font-size: var(--caption-font-size, 28px);
   font-weight: 510;
   line-height: 1.25;
   letter-spacing: -0.035em;

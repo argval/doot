@@ -1,0 +1,347 @@
+html.settings-window,
+body.settings-window,
+html.settings-window #root {
+  min-width: 0;
+  overflow: hidden;
+  color: #1d1d1f;
+  background: #e8e8ed;
+}
+
+.settings-shell {
+  display: grid;
+  grid-template-columns: 188px minmax(0, 1fr);
+  height: 100%;
+  font-family: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont,
+    "Helvetica Neue", sans-serif;
+}
+
+.settings-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 18px 12px 16px;
+  border-right: 1px solid rgb(0 0 0 / 8%);
+  background: rgb(255 255 255 / 42%);
+}
+
+.settings-brand {
+  margin: 0 8px 10px;
+  color: #8e8e93;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: #3a3a3c;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 510;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-nav-item:hover {
+  background: rgb(0 0 0 / 6%);
+}
+
+.settings-nav-item.selected {
+  color: #111;
+  background: rgb(0 0 0 / 8%);
+}
+
+.settings-nav-item:focus-visible {
+  outline: 2px solid #0a84ff;
+  outline-offset: 1px;
+}
+
+.settings-content {
+  min-width: 0;
+  padding: 22px 28px 28px;
+  overflow: auto;
+}
+
+.settings-content h1 {
+  margin: 0 0 18px;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+
+.settings-group {
+  margin: 0 0 16px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 52px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgb(0 0 0 / 6%);
+}
+
+.settings-row:last-child {
+  border-bottom: 0;
+}
+
+.settings-row span {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-row strong {
+  color: #1d1d1f;
+  font-size: 13px;
+  font-weight: 580;
+}
+
+.settings-row em {
+  color: #6e6e73;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.settings-row select {
+  flex: none;
+  min-width: 148px;
+  max-width: 200px;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  color: #1d1d1f;
+  background: rgb(120 120 128 / 12%);
+  font: inherit;
+  font-size: 13px;
+}
+
+.settings-row input[type="checkbox"] {
+  flex: none;
+  width: 42px;
+  height: 24px;
+  margin: 0;
+  appearance: none;
+  border-radius: 999px;
+  background: rgb(120 120 128 / 32%);
+  cursor: pointer;
+  transition: background 160ms ease;
+}
+
+.settings-row input[type="checkbox"]::before {
+  display: block;
+  width: 20px;
+  height: 20px;
+  margin: 2px;
+  border-radius: 50%;
+  background: #fff;
+  content: "";
+  transition: transform 160ms ease;
+}
+
+.settings-row input[type="checkbox"]:checked {
+  background: #34c759;
+}
+
+.settings-row input[type="checkbox"]:checked::before {
+  transform: translateX(18px);
+}
+
+.settings-row input[type="checkbox"]:focus-visible,
+.settings-row select:focus-visible,
+.settings-slider input:focus-visible {
+  outline: 2px solid #0a84ff;
+  outline-offset: 2px;
+}
+
+.settings-slider {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  width: 210px;
+}
+
+.settings-slider input[type="range"] {
+  flex: 1 1 auto;
+  margin: 0;
+  accent-color: #0a84ff;
+}
+
+.settings-slider-value,
+.settings-value,
+.settings-shortcut {
+  flex: none;
+  color: #6e6e73;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.settings-shortcut {
+  padding: 3px 8px;
+  border-radius: 6px;
+  color: #1d1d1f;
+  background: rgb(120 120 128 / 12%);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 590;
+}
+
+.settings-badge {
+  flex: none;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: #6e6e73;
+  background: rgb(120 120 128 / 12%);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.settings-badge.ok {
+  color: #0e7a32;
+  background: rgb(52 199 89 / 16%);
+}
+
+.settings-badge.down {
+  color: #c43131;
+  background: rgb(255 59 48 / 14%);
+}
+
+.settings-badge.live {
+  color: #b54716;
+  background: rgb(255 149 0 / 18%);
+}
+
+.settings-error {
+  margin: -6px 2px 14px;
+  color: #c43131;
+  font-size: 12px;
+}
+
+.settings-footnote {
+  margin: 4px 2px 0;
+  color: #6e6e73;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.settings-footnote code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.settings-about {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 2px;
+}
+
+.settings-about-name {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -0.04em;
+}
+
+.settings-about-tag,
+.settings-about-version {
+  margin: 0;
+  color: #6e6e73;
+  font-size: 13px;
+}
+
+@media (prefers-color-scheme: dark) {
+  html.settings-window,
+  body.settings-window,
+  html.settings-window #root {
+    color: #f5f5f7;
+    background: #1c1c1e;
+  }
+
+  .settings-sidebar {
+    border-right-color: rgb(255 255 255 / 8%);
+    background: rgb(255 255 255 / 4%);
+  }
+
+  .settings-brand {
+    color: #8e8e93;
+  }
+
+  .settings-nav-item {
+    color: #e5e5ea;
+  }
+
+  .settings-nav-item:hover {
+    background: rgb(255 255 255 / 8%);
+  }
+
+  .settings-nav-item.selected {
+    color: #fff;
+    background: rgb(255 255 255 / 12%);
+  }
+
+  .settings-group {
+    background: #2c2c2e;
+  }
+
+  .settings-row {
+    border-bottom-color: rgb(255 255 255 / 8%);
+  }
+
+  .settings-row strong {
+    color: #f5f5f7;
+  }
+
+  .settings-row em,
+  .settings-slider-value,
+  .settings-value,
+  .settings-footnote,
+  .settings-about-tag,
+  .settings-about-version {
+    color: #a1a1a6;
+  }
+
+  .settings-row select,
+  .settings-shortcut {
+    color: #f5f5f7;
+    background: rgb(120 120 128 / 28%);
+  }
+
+  .settings-badge {
+    color: #a1a1a6;
+    background: rgb(120 120 128 / 24%);
+  }
+
+  .settings-badge.ok {
+    color: #30d158;
+    background: rgb(48 209 88 / 16%);
+  }
+
+  .settings-badge.down {
+    color: #ff6961;
+    background: rgb(255 69 58 / 16%);
+  }
+
+  .settings-badge.live {
+    color: #ffd60a;
+    background: rgb(255 214 10 / 14%);
+  }
+}

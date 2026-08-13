@@ -1,8 +1,11 @@
 use crate::audio::{AudioCaptureStatus, Language, SessionConfig};
 use crate::events::{emit_status, SessionStatusEvent};
+use crate::stream::GATEWAY_ADDR;
 use crate::AppState;
 use serde::Serialize;
+use std::time::Duration;
 use tauri::{AppHandle, State, WebviewWindow};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -11,6 +14,14 @@ pub struct SessionInfo {
     pub source_language: String,
     pub target_language: String,
     pub provider: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionStatus {
+    pub gateway_reachable: bool,
+    pub capture: AudioCaptureStatus,
+    pub last_provider: Option<String>,
 }
 
 #[tauri::command]
@@ -41,6 +52,7 @@ pub fn start_caption_session(
         target_language: session.config().target_language.to_string(),
         provider: session.provider_name().to_string(),
     };
+    crate::remember_provider(&app, &info.provider);
     emit_status(&app, SessionStatusEvent::capturing(info.session_id.clone()));
     Ok(info)
 }
@@ -89,4 +101,53 @@ pub fn audio_capture_status(state: State<'_, AppState>) -> Result<AudioCaptureSt
         .lock()
         .map_err(|_| "audio engine lock poisoned")?;
     Ok(engine.capture_status())
+}
+
+#[tauri::command]
+pub async fn connection_status(state: State<'_, AppState>) -> Result<ConnectionStatus, String> {
+    let capture = {
+        let engine = state
+            .audio_engine
+            .lock()
+            .map_err(|_| "audio engine lock poisoned")?;
+        engine.capture_status()
+    };
+    let last_provider = state
+        .last_provider
+        .lock()
+        .map_err(|_| "last provider lock poisoned")?
+        .clone();
+    Ok(ConnectionStatus {
+        gateway_reachable: probe_gateway().await,
+        capture,
+        last_provider,
+    })
+}
+
+#[tauri::command]
+pub fn open_settings_window(app: AppHandle) -> Result<(), String> {
+    crate::open_settings(&app)
+}
+
+async fn probe_gateway() -> bool {
+    let connect = tokio::time::timeout(
+        Duration::from_millis(700),
+        tokio::net::TcpStream::connect(GATEWAY_ADDR),
+    )
+    .await;
+    let Ok(Ok(mut stream)) = connect else {
+        return false;
+    };
+    let request = b"GET /health HTTP/1.0\r\nHost: 127.0.0.1:8787\r\nConnection: close\r\n\r\n";
+    if stream.write_all(request).await.is_err() {
+        return false;
+    }
+    let mut buf = [0u8; 256];
+    match tokio::time::timeout(Duration::from_millis(700), stream.read(&mut buf)).await {
+        Ok(Ok(n)) if n > 0 => {
+            let body = String::from_utf8_lossy(&buf[..n]);
+            body.contains("200") || body.contains("\"ok\"")
+        }
+        _ => false,
+    }
 }

@@ -11,6 +11,7 @@
 - Prefer TypeScript 7 configured consistently across the monorepo.
 - When committing agent work, include `AGENTS.md` updates in the same commit (do not leave them unstaged as unrelated).
 - Prefer translated-only captions; do not show source/original transcription under the translation.
+- Settings belong in a separate decorated window, not on the captions overlay.
 - Translated captions should update progressively in realtime (word-by-word feel) while staying sentence-aware—not only after pause or finalization; when the captions area fills, keep the latest caption visible and prefer continuous sentence flow over fragmented short phrases.
 
 ## Learned Workspace Facts
@@ -27,6 +28,9 @@
 - Unsupported translation pairs emit an unavailable error with blank translated text; source text must never be substituted into translated-only captions.
 - Local runs use npm workspace scripts (`npm run dev` / `scripts/dev.sh` starts gateway and desktop together); package manager is npm, not bun.
 - Caption pipeline aims for persistent Sarvam streaming with VAD-driven utterance boundaries and code-switch-tolerant Indic translation (including Kannada).
+- Desktop chrome is two windows: the captions overlay stays captions-only, and a decorated Settings window opens from Doot → Settings… (⌘,), the tray, or `open_settings_window`.
+- Overlay prefs persist with `tauri-plugin-store` (languages, caption text size, idle opacity, open-at-login, last provider). Overlay position/size persist with `tauri-plugin-window-state`.
+- Settings Connection is status-only in this phase (gateway reachability, capture backend, last provider). API keys and gateway process still live in `.env` / the terminal.
 
 ## graphify
 

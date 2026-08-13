@@ -11,6 +11,7 @@ use tokio::sync::oneshot;
 use tokio::time::{interval, sleep, Duration, Instant};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
+pub(crate) const GATEWAY_ADDR: &str = "127.0.0.1:8787";
 const GATEWAY_URL: &str = "ws://127.0.0.1:8787/v1/realtime";
 const MAX_CHUNK_BYTES: usize = 3_200; // 100 ms @ 16 kHz mono S16LE — matches live capture pace
 const MAX_RECONNECT_ATTEMPTS: u32 = 8;
@@ -98,8 +99,7 @@ impl StreamManager {
     }
 
     pub fn is_active(&self) -> bool {
-        self
-            .running
+        self.running
             .as_ref()
             .is_some_and(|flag| flag.load(Ordering::SeqCst))
     }
@@ -438,6 +438,7 @@ fn handle_server_message(
             if caption.utterance_id.is_empty() {
                 return Err("caption event is missing utteranceId".into());
             }
+            crate::remember_provider(app, &caption.provider);
             app.emit(CAPTION_SEGMENT_EVENT, caption)
                 .map_err(|error| format!("failed to publish caption: {error}"))?;
             Ok(ServerMessageAction::Continue)
