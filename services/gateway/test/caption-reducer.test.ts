@@ -149,6 +149,31 @@ test("bounds finalized utterances during long-running sessions", () => {
   assert.ok(state.finalized.length <= 18);
 });
 
+test("hides consecutive duplicate translated captions in the visible window", () => {
+  let state = EMPTY_CAPTION_STATE;
+  state = reduceCaptionEvent(state, caption({
+    utteranceId: "session:1:0",
+    revision: 1,
+    translatedText: "Where is this",
+    isFinal: true,
+    startMs: 100,
+    endMs: 200,
+  }));
+  state = reduceCaptionEvent(state, caption({
+    utteranceId: "session:2:1",
+    sequence: 1,
+    revision: 1,
+    translatedText: "Where is this",
+    isFinal: true,
+    startMs: 300,
+    endMs: 400,
+  }));
+
+  assert.deepEqual(selectVisibleCaptions(state), {
+    translatedText: "Where is this",
+  });
+});
+
 function caption(overrides: Partial<CaptionEvent>): CaptionEvent {
   return {
     type: "caption",

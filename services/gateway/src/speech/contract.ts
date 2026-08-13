@@ -3,6 +3,7 @@ import type {
   ChannelCount,
   ProviderId,
   SupportedLanguage,
+  SupportedTargetLanguage,
 } from "@doot/protocol";
 
 export type ProviderStreamState = "connecting" | "open" | "reconnecting" | "closed";
@@ -18,6 +19,15 @@ export type ProviderStreamEvent =
     /** True only when the provider emitted a complete utterance transcript. */
     isFinal: boolean;
   }
+  | {
+    type: "translation";
+    /** Cumulative translated text for the active provider utterance. */
+    text: string;
+    timestampMs: number;
+    languageCode?: string;
+    /** True when the provider has settled the translated utterance. */
+    isFinal: boolean;
+  }
   | { type: "warning"; message: string }
   | { type: "error"; message: string; retryable: boolean }
   | { type: "state"; state: ProviderStreamState };
@@ -28,6 +38,10 @@ export interface SpeechProviderCapabilities {
   channels: readonly ChannelCount[];
   automaticLanguageDetection: boolean;
   partialTranscripts: boolean;
+  /** The provider returns translated text from the same streaming session. */
+  nativeTranslation?: boolean;
+  /** When present, limits targets accepted by this provider. */
+  targetLanguages?: readonly SupportedTargetLanguage[];
   routingPriority: number;
   automaticDetectionPriority: number;
 }
@@ -35,6 +49,7 @@ export interface SpeechProviderCapabilities {
 export interface OpenProviderSessionOptions {
   sessionId: string;
   source: SupportedLanguage;
+  target: SupportedTargetLanguage;
   sampleRate: AudioSampleRate;
   channels: ChannelCount;
   onEvent(event: ProviderStreamEvent): void;
@@ -59,9 +74,15 @@ export function supportsSession(
   source: SupportedLanguage,
   sampleRate?: AudioSampleRate,
   channels?: ChannelCount,
+  target?: SupportedTargetLanguage,
 ): boolean {
   const capabilities = provider.capabilities;
   return capabilities.sourceLanguages.includes(source)
     && (sampleRate === undefined || capabilities.sampleRates.includes(sampleRate))
-    && (channels === undefined || capabilities.channels.includes(channels));
+    && (channels === undefined || capabilities.channels.includes(channels))
+    && (
+      target === undefined
+      || capabilities.targetLanguages === undefined
+      || capabilities.targetLanguages.includes(target)
+    );
 }

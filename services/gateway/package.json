@@ -7,8 +7,9 @@
     "dev": "tsx watch src/main.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
-    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
-    "test": "tsx --test test/**/*.test.ts"
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json && tsc -p tsconfig.scripts.json",
+    "test": "tsx --test test/**/*.test.ts",
+    "benchmark:live": "tsx scripts/benchmark-live.ts"
   },
   "dependencies": {
     "@doot/protocol": "0.1.0",

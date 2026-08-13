@@ -285,6 +285,90 @@ test("publishes a draft translation before the utterance finalizes", async () =>
   }
 });
 
+test("publishes provider-native translations without calling the text translator", async () => {
+  const harness = await createHarness(2_000, true);
+  try {
+    const stream = harness.provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 100 });
+    stream.emit({
+      type: "transcript",
+      text: "Es una oportunidad increíble",
+      timestampMs: 150,
+      languageCode: "es",
+      isFinal: false,
+    });
+    stream.emit({
+      type: "translation",
+      text: "It is an incredible opportunity",
+      timestampMs: 180,
+      languageCode: "en",
+      isFinal: false,
+    });
+    stream.emit({
+      type: "translation",
+      text: "It is an incredible opportunity.",
+      timestampMs: 220,
+      languageCode: "en",
+      isFinal: true,
+    });
+
+    const final = await harness.client.waitForMessage(
+      (message) => message.type === "caption" && message.isFinal,
+    );
+    assert.equal(final.type, "caption");
+    assert.equal(final.sourceText, "Es una oportunidad increíble");
+    assert.equal(final.translatedText, "It is an incredible opportunity.");
+    assert.equal(harness.translator.requests.length, 0);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("publishes native translations that arrive before source transcripts", async () => {
+  const harness = await createHarness(2_000, true);
+  try {
+    const stream = harness.provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 100 });
+    stream.emit({
+      type: "translation",
+      text: "Hello world",
+      timestampMs: 140,
+      languageCode: "en",
+      isFinal: false,
+    });
+    const draft = await harness.client.waitForMessage(
+      (message) => message.type === "caption" && !message.isFinal,
+    );
+    assert.equal(draft.type, "caption");
+    assert.equal(draft.translatedText, "Hello world");
+    assert.equal(draft.sourceText, "");
+
+    stream.emit({
+      type: "transcript",
+      text: "Hola mundo",
+      timestampMs: 160,
+      languageCode: "es",
+      isFinal: false,
+    });
+    stream.emit({
+      type: "translation",
+      text: "Hello world.",
+      timestampMs: 200,
+      languageCode: "en",
+      isFinal: true,
+    });
+    const final = await harness.client.waitForMessage(
+      (message) => message.type === "caption" && message.isFinal,
+    );
+    assert.equal(final.type, "caption");
+    assert.equal(final.translatedText, "Hello world.");
+    assert.equal(final.sourceText, "Hola mundo");
+    assert.equal(harness.translator.requests.length, 0);
+  } finally {
+    await harness.close();
+  }
+});
+
 test("finalizes promptly when Realtime sends transcript.final before VAD speech_end", async () => {
   const harness = await createHarness(2_000);
   try {
@@ -488,9 +572,12 @@ interface Harness {
   close(): Promise<void>;
 }
 
-async function createHarness(utteranceGraceMs = 25): Promise<Harness> {
+async function createHarness(
+  utteranceGraceMs = 25,
+  nativeTranslation = false,
+): Promise<Harness> {
   const sessionId = `test-${Math.random().toString(16).slice(2)}`;
-  const provider = new ControlledProvider();
+  const provider = new ControlledProvider(nativeTranslation);
   const translator = new RecordingTranslator();
   const router = new ProviderRouter([provider]);
   const app = await buildServer(
@@ -528,16 +615,21 @@ async function createHarness(utteranceGraceMs = 25): Promise<Harness> {
 class ControlledProvider implements SpeechProvider {
   readonly id = "mock" as const;
   readonly configured = true;
-  readonly capabilities = {
-    sourceLanguages: SUPPORTED_LANGUAGES,
-    sampleRates: AUDIO_SAMPLE_RATES,
-    channels: CHANNEL_COUNTS,
-    automaticLanguageDetection: true,
-    partialTranscripts: true,
-    routingPriority: 100,
-    automaticDetectionPriority: 100,
-  } as const;
+  readonly capabilities;
   readonly sessions: ControlledSession[] = [];
+
+  constructor(nativeTranslation = false) {
+    this.capabilities = {
+      sourceLanguages: SUPPORTED_LANGUAGES,
+      sampleRates: AUDIO_SAMPLE_RATES,
+      channels: CHANNEL_COUNTS,
+      automaticLanguageDetection: true,
+      partialTranscripts: true,
+      nativeTranslation,
+      routingPriority: 100,
+      automaticDetectionPriority: 100,
+    } as const;
+  }
 
   async openSession(options: OpenProviderSessionOptions): Promise<ProviderStreamSession> {
     const session = new ControlledSession(options);

@@ -46,11 +46,13 @@ interface ActiveUtterance {
   draftMaxWaitTimer: NodeJS.Timeout | null;
   draftSourceText: string | null;
   draftTranslatedText: string | null;
+  nativeTranslatedText: string | null;
 }
 
 interface SessionState {
   request: StartSessionRequest;
   providerId: ProviderId;
+  nativeTranslation: boolean;
   providerSession: ProviderStreamSession | null;
   activeUtterance: ActiveUtterance | null;
   nextSequence: number;
@@ -192,10 +194,12 @@ async function startSession(
       request.provider,
       request.sampleRate,
       request.channels,
+      request.targetLanguage,
     );
     const session: SessionState = {
       request,
       providerId: provider.id,
+      nativeTranslation: provider.capabilities.nativeTranslation === true,
       providerSession: null,
       activeUtterance: null,
       nextSequence: 0,
@@ -211,6 +215,7 @@ async function startSession(
     const providerSession = await provider.openSession({
       sessionId: request.sessionId,
       source: request.sourceLanguage,
+      target: request.targetLanguage,
       sampleRate: request.sampleRate,
       channels: request.channels,
       onEvent: (event) => {
@@ -278,7 +283,7 @@ function handleProviderEvent(
     }
     case "transcript": {
       updateActiveUtterance(translator, options, socket, session, event);
-      if (event.isFinal && session.activeUtterance) {
+      if (event.isFinal && !session.nativeTranslation && session.activeUtterance) {
         session.speechActive = false;
         session.activeUtterance.endMs = Math.max(
           session.activeUtterance.endMs,
@@ -286,6 +291,10 @@ function handleProviderEvent(
         );
         void finalizeActiveUtterance(translator, socket, session);
       }
+      return;
+    }
+    case "translation": {
+      updateNativeTranslation(translator, options, socket, session, event);
       return;
     }
     case "warning": {
@@ -344,6 +353,7 @@ function updateActiveUtterance(
       draftMaxWaitTimer: null,
       draftSourceText: null,
       draftTranslatedText: null,
+      nativeTranslatedText: null,
     };
     session.activeUtterance = utterance;
     session.pendingSpeechStartMs = null;
@@ -363,11 +373,13 @@ function updateActiveUtterance(
   utterance.sourceText = mergedText;
   utterance.revision += 1;
   // Keep the last good draft on-screen while a newer translation is in flight.
-  const provisionalTranslated = utterance.draftTranslatedText
-    && utterance.draftSourceText
-    && mergedText.startsWith(utterance.draftSourceText)
-    ? utterance.draftTranslatedText
-    : "";
+  const provisionalTranslated = session.nativeTranslation
+    ? utterance.nativeTranslatedText ?? ""
+    : utterance.draftTranslatedText
+      && utterance.draftSourceText
+      && mergedText.startsWith(utterance.draftSourceText)
+      ? utterance.draftTranslatedText
+      : "";
   sendCaption(
     socket,
     session,
@@ -376,10 +388,75 @@ function updateActiveUtterance(
     false,
     utterance.revision,
   );
-  scheduleDraftTranslation(translator, socket, session, utterance);
+  if (!session.nativeTranslation) {
+    scheduleDraftTranslation(translator, socket, session, utterance);
+  }
 
   if (!session.speechActive) {
     scheduleGraceFinalization(translator, options, socket, session);
+  }
+}
+
+function updateNativeTranslation(
+  translator: TranslateText,
+  options: RequiredGatewayOptions,
+  socket: WebSocket,
+  session: SessionState,
+  event: Extract<ProviderStreamEvent, { type: "translation" }>,
+): void {
+  const translated = normalizeTranscript(event.text);
+  if (!translated) return;
+
+  let utterance = session.activeUtterance;
+  if (!utterance) {
+    // Native providers (Gemini) can emit translated text before source text.
+    const sequence = session.nextSequence;
+    session.nextSequence += 1;
+    utterance = {
+      id: `${session.request.sessionId}:${event.timestampMs}:${sequence}`,
+      sequence,
+      revision: 0,
+      sourceText: "",
+      startMs: session.pendingSpeechStartMs ?? event.timestampMs,
+      endMs: event.timestampMs,
+      graceTimer: null,
+      safetyTimer: null,
+      draftTimer: null,
+      draftMaxWaitTimer: null,
+      draftSourceText: null,
+      draftTranslatedText: null,
+      nativeTranslatedText: null,
+    };
+    session.activeUtterance = utterance;
+    session.pendingSpeechStartMs = null;
+    utterance.safetyTimer = setTimeout(() => {
+      void finalizeActiveUtterance(translator, socket, session);
+    }, options.maxUtteranceMs);
+  }
+
+  // Native translation events are provider-normalized cumulative snapshots.
+  const mergedText = translated;
+  utterance.endMs = Math.max(utterance.endMs, event.timestampMs);
+  if (mergedText !== utterance.nativeTranslatedText) {
+    utterance.nativeTranslatedText = mergedText;
+    utterance.draftTranslatedText = mergedText;
+    utterance.draftSourceText = utterance.sourceText;
+    if (!event.isFinal) {
+      utterance.revision += 1;
+      sendCaption(
+        socket,
+        session,
+        utterance,
+        mergedText,
+        false,
+        utterance.revision,
+      );
+    }
+  }
+
+  if (event.isFinal && session.activeUtterance === utterance) {
+    session.speechActive = false;
+    void finalizeActiveUtterance(translator, socket, session);
   }
 }
 
@@ -497,7 +574,21 @@ function finalizeActiveUtterance(
   session.providerSession?.commitAudioThrough(utterance.endMs);
   const request = session.request;
   const finalize = async () => {
-    let translatedText = utterance.draftTranslatedText ?? "";
+    let translatedText = session.nativeTranslation
+      ? utterance.nativeTranslatedText ?? ""
+      : utterance.draftTranslatedText ?? "";
+    if (session.nativeTranslation) {
+      if (session.closed) return;
+      sendCaption(
+        socket,
+        session,
+        utterance,
+        translatedText,
+        true,
+        utterance.revision + 1,
+      );
+      return;
+    }
     const canReuseDraft = Boolean(
       utterance.draftTranslatedText
       && utterance.draftSourceText === utterance.sourceText,

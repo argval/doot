@@ -13,6 +13,7 @@ import { createTranslationRouter } from "./translation/registry.js";
 export async function buildServer(
   router: ProviderRouter = createProviderRouter({
     sarvamApiKey: config.sarvamApiKey,
+    geminiApiKey: config.geminiApiKey,
   }),
   translate: TranslateText = createDefaultTranslator(),
   gatewayOptions: RealtimeGatewayOptions = {},

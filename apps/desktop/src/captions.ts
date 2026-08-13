@@ -58,8 +58,18 @@ export function selectVisibleCaptions(state: CaptionState): {
   const translatedText = recent
     .map((utterance) => utterance.translatedText)
     .filter(Boolean)
+    .filter((text, index, texts) => {
+      const previous = texts[index - 1];
+      if (!previous) return true;
+      // Avoid "where is this where is this" when consecutive Gemini turns stutter.
+      return normalizeVisible(previous) !== normalizeVisible(text);
+    })
     .join(" ");
   return { translatedText };
+}
+
+function normalizeVisible(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLocaleLowerCase();
 }
 
 function revisionFor(state: CaptionState, utteranceId: string): number {
