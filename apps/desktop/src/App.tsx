@@ -20,6 +20,14 @@ import {
   subscribeToSessionStatus,
   type DesktopSession,
 } from "./lib/tauri";
+import {
+  DEFAULT_PREFS,
+  applyOverlayAppearance,
+  loadPrefs,
+  subscribeToPrefs,
+  updatePrefs,
+  type DesktopPrefs,
+} from "./lib/prefs";
 
 const selectableSourceLanguages = SUPPORTED_SOURCE_LANGUAGES.filter(
   (language) => language !== "auto",
@@ -27,16 +35,36 @@ const selectableSourceLanguages = SUPPORTED_SOURCE_LANGUAGES.filter(
 const selectableTargetLanguages = SUPPORTED_TARGET_LANGUAGES;
 
 export function App() {
-  const [sourceLanguage, setSourceLanguage] = useState<SupportedLanguage>("auto");
-  const [targetLanguage, setTargetLanguage] = useState<SupportedLanguage>("en");
+  const [prefs, setPrefs] = useState<DesktopPrefs>(DEFAULT_PREFS);
   const [captions, setCaptions] = useState(EMPTY_CAPTION_STATE);
   const [session, setSession] = useState<DesktopSession | null>(null);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const acceptedSessionIdRef = useRef<string | null>(null);
+  const lastProviderRef = useRef<string | null>(DEFAULT_PREFS.lastProvider);
   const captionCopyRef = useRef<HTMLDivElement>(null);
   const visibleCaptions = selectVisibleCaptions(captions);
+  const sourceLanguage = prefs.sourceLanguage;
+  const targetLanguage = prefs.targetLanguage;
+
+  const applyPrefs = useCallback((next: DesktopPrefs) => {
+    lastProviderRef.current = next.lastProvider;
+    setPrefs(next);
+    applyOverlayAppearance(next);
+  }, []);
+
+  const persistLanguage = useCallback(async (
+    key: "sourceLanguage" | "targetLanguage",
+    value: SupportedLanguage,
+  ) => {
+    setPrefs((current) => {
+      const next = { ...current, [key]: value };
+      applyOverlayAppearance(next);
+      return next;
+    });
+    await updatePrefs({ [key]: value });
+  }, []);
 
   const toggleCapture = useCallback(async () => {
     if (isTransitioning) return;
@@ -58,6 +86,10 @@ export function App() {
         const next = await startCaptionSession(sourceLanguage, targetLanguage);
         acceptedSessionIdRef.current = next.sessionId;
         setSession(next);
+        if (next.provider && next.provider !== lastProviderRef.current) {
+          lastProviderRef.current = next.provider;
+          void updatePrefs({ lastProvider: next.provider });
+        }
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -65,6 +97,33 @@ export function App() {
       setIsTransitioning(false);
     }
   }, [isTransitioning, session, sourceLanguage, targetLanguage]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unsubscribe: (() => void) | undefined;
+
+    void loadPrefs().then((loaded) => {
+      if (!disposed) {
+        applyPrefs(loaded);
+      }
+    });
+    void subscribeToPrefs((next) => {
+      if (!disposed) {
+        applyPrefs(next);
+      }
+    }).then((cleanup) => {
+      if (disposed) {
+        cleanup();
+      } else {
+        unsubscribe = cleanup;
+      }
+    });
+
+    return () => {
+      disposed = true;
+      unsubscribe?.();
+    };
+  }, [applyPrefs]);
 
   useEffect(() => {
     let disposed = false;
@@ -80,6 +139,10 @@ export function App() {
         setCaptions((current) => reduceCaptionEvent(current, event));
         setError(null);
         setStatusNotice(null);
+        if (event.provider && event.provider !== lastProviderRef.current) {
+          lastProviderRef.current = event.provider;
+          void updatePrefs({ lastProvider: event.provider });
+        }
       }),
       subscribeToCaptureToggle(() => {
         void toggleCapture();
@@ -152,7 +215,7 @@ export function App() {
           <LanguageSelect
             label="From"
             value={sourceLanguage}
-            onChange={setSourceLanguage}
+            onChange={(language) => void persistLanguage("sourceLanguage", language)}
             languages={selectableSourceLanguages}
             allowAuto
             disabled={session !== null || isTransitioning}
@@ -161,7 +224,7 @@ export function App() {
           <LanguageSelect
             label="To"
             value={targetLanguage}
-            onChange={setTargetLanguage}
+            onChange={(language) => void persistLanguage("targetLanguage", language)}
             languages={selectableTargetLanguages}
             disabled={session !== null || isTransitioning}
           />

@@ -37,3 +37,24 @@ export function subscribeToSessionStatus(handler: (status: SessionStatus) => voi
 export function subscribeToCaptureToggle(handler: () => void): Promise<() => void> {
   return listen("caption://toggle-request", handler);
 }
+
+export interface AudioCaptureStatus {
+  state: string;
+  backend: string;
+  sampleRate: number;
+  channels: number;
+}
+
+export interface ConnectionStatus {
+  gatewayReachable: boolean;
+  capture: AudioCaptureStatus;
+  lastProvider: string | null;
+}
+
+export async function getConnectionStatus(): Promise<ConnectionStatus> {
+  return invoke<ConnectionStatus>("connection_status");
+}
+
+export async function openSettingsWindow(): Promise<void> {
+  return invoke("open_settings_window");
+}

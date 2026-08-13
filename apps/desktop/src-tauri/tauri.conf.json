@@ -39,5 +39,10 @@
     "macOS": {
       "minimumSystemVersion": "14.0"
     }
+  },
+  "plugins": {
+    "store": {},
+    "autostart": {},
+    "window-state": {}
   }
 }
