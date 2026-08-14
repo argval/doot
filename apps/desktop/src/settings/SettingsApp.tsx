@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import {
   Activity,
   Captions,
@@ -20,6 +20,7 @@ import {
   DEFAULT_PREFS,
   OVERLAY_IDLE_OPACITY_MAX,
   OVERLAY_IDLE_OPACITY_MIN,
+  hoverBoostFor,
   loadPrefs,
   subscribeToPrefs,
   updatePrefs,
@@ -31,11 +32,93 @@ import {
   getConnectionStatus,
   type ConnectionStatus,
 } from "../lib/tauri";
+import { captionScript, CaptionPanel } from "../overlay/CaptionPanel";
+import type { VisibleCaptionLine } from "../captions";
 
 type SettingsSection = "general" | "captions" | "connection" | "about";
 
 const SOURCE_LANGUAGES = SUPPORTED_SOURCE_LANGUAGES.filter((language) => language !== "auto");
 const TARGET_LANGUAGES = SUPPORTED_TARGET_LANGUAGES;
+
+const OPACITY_PRESETS = [
+  { id: "ghost", label: "Ghost", value: 0.22 },
+  { id: "balanced", label: "Balanced", value: 0.42 },
+  { id: "solid", label: "Solid", value: 0.62 },
+] as const;
+
+const PREVIEW_LATIN: readonly VisibleCaptionLine[] = [
+  {
+    utteranceId: "settings-preview-1",
+    translatedText: "Earlier turns stay on their own lines, a little quieter.",
+    isActive: false,
+  },
+  {
+    utteranceId: "settings-preview-2",
+    translatedText: "The live caption keeps updating as you speak.",
+    isActive: true,
+  },
+];
+
+const PREVIEW_INDIC: readonly VisibleCaptionLine[] = [
+  {
+    utteranceId: "settings-preview-kn-1",
+    translatedText: "ಹಿಂದಿನ ವಾಕ್ಯವು ತನ್ನ ಸಾಲಿನಲ್ಲಿಯೇ ಉಳಿಯುತ್ತದೆ.",
+    isActive: false,
+  },
+  {
+    utteranceId: "settings-preview-kn-2",
+    translatedText: "ನೇರ ಶೀರ್ಷಿಕೆ ಮಾತು ಬಂದಂತೆ ನವೀಕರಿಸುತ್ತದೆ.",
+    isActive: true,
+  },
+];
+
+const PREVIEW_CJK: readonly VisibleCaptionLine[] = [
+  {
+    utteranceId: "settings-preview-ja-1",
+    translatedText: "前の発話は少し控えめに残ります。",
+    isActive: false,
+  },
+  {
+    utteranceId: "settings-preview-ja-2",
+    translatedText: "ライブ字幕は話している最中に更新されます。",
+    isActive: true,
+  },
+];
+
+const PREVIEW_RTL: readonly VisibleCaptionLine[] = [
+  {
+    utteranceId: "settings-preview-ar-1",
+    translatedText: "تبقى الجمل السابقة في أسطرها بهدوء أكبر.",
+    isActive: false,
+  },
+  {
+    utteranceId: "settings-preview-ar-2",
+    translatedText: "يتحدّث السطر المباشر أثناء الكلام.",
+    isActive: true,
+  },
+];
+
+function previewTargetLanguage(language: SupportedLanguage): SupportedLanguage {
+  return language === "auto" ? "en" : language;
+}
+
+function previewLinesFor(language: SupportedLanguage): readonly VisibleCaptionLine[] {
+  switch (captionScript(previewTargetLanguage(language))) {
+    case "indic":
+      return PREVIEW_INDIC;
+    case "cjk":
+      return PREVIEW_CJK;
+    case "rtl":
+      return PREVIEW_RTL;
+    default:
+      return PREVIEW_LATIN;
+  }
+}
+
+function selectedOpacityPreset(opacity: number): (typeof OPACITY_PRESETS)[number]["id"] | null {
+  const match = OPACITY_PRESETS.find((preset) => Math.abs(preset.value - opacity) < 0.015);
+  return match?.id ?? null;
+}
 
 const SECTIONS: ReadonlyArray<{
   id: SettingsSection;
@@ -265,9 +348,28 @@ function CaptionsSection({
   onPatch: (patch: Partial<DesktopPrefs>) => void;
 }) {
   const opacityPercent = Math.round(prefs.overlayIdleOpacity * 100);
+  const opacityPreset = selectedOpacityPreset(prefs.overlayIdleOpacity);
+  const previewLanguage = previewTargetLanguage(prefs.targetLanguage);
 
   return (
     <>
+      <p className="settings-preview-label">Overlay preview</p>
+      <div
+        className="settings-overlay-preview"
+        style={{
+          "--caption-font-size": `${prefs.captionFontSize}px`,
+          "--overlay-idle-alpha": String(prefs.overlayIdleOpacity),
+          "--overlay-hover-boost": String(hoverBoostFor(prefs.overlayIdleOpacity)),
+        } as CSSProperties}
+      >
+        <CaptionPanel
+          lines={previewLinesFor(prefs.targetLanguage)}
+          targetLanguage={previewLanguage}
+          error={null}
+          statusNotice={null}
+          placeholder="Your live captions will appear here."
+        />
+      </div>
       <section className="settings-group" aria-label="Languages">
         <label className="settings-row">
           <span>
@@ -335,10 +437,29 @@ function CaptionsSection({
             <span className="settings-slider-value">{prefs.captionFontSize}px</span>
           </div>
         </label>
+        <div className="settings-row">
+          <span>
+            <strong>Idle look</strong>
+            <em>Ghost, Balanced, or Solid. Hover still steps up one notch.</em>
+          </span>
+          <div className="settings-presets" role="group" aria-label="Idle opacity presets">
+            {OPACITY_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className={opacityPreset === preset.id ? "selected" : undefined}
+                aria-pressed={opacityPreset === preset.id}
+                onClick={() => onPatch({ overlayIdleOpacity: preset.value })}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <label className="settings-row">
           <span>
             <strong>Idle opacity</strong>
-            <em>Hover still steps up one notch. One slider, not two.</em>
+            <em>Fine-tune the idle glass. One slider, not two.</em>
           </span>
           <div className="settings-slider">
             <input

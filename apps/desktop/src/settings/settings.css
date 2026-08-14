@@ -74,6 +74,71 @@ html.settings-window #root {
   letter-spacing: -0.03em;
 }
 
+.settings-preview-label {
+  margin: 0 2px 8px;
+  color: var(--settings-ink-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.settings-overlay-preview {
+  position: relative;
+  height: 168px;
+  margin: 0 0 16px;
+  overflow: hidden;
+  border-radius: 14px;
+  background:
+    radial-gradient(ellipse 80% 70% at 10% 18%, #7f92c4, transparent 55%),
+    radial-gradient(ellipse 70% 60% at 92% 88%, #d47852, transparent 50%),
+    #16141c;
+}
+
+.settings-overlay-preview .caption-window {
+  position: absolute;
+  inset: 12px;
+  cursor: default;
+}
+
+.settings-overlay-preview .caption-window:active {
+  cursor: default;
+}
+
+.settings-presets {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--settings-control);
+}
+
+.settings-presets button {
+  padding: 5px 10px;
+  border-radius: 6px;
+  color: var(--settings-ink-secondary);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 560;
+  cursor: pointer;
+}
+
+.settings-presets button:hover {
+  color: var(--settings-ink);
+}
+
+.settings-presets button.selected {
+  color: var(--settings-control-ink);
+  background: var(--settings-bg);
+  box-shadow: 0 0 0 1px var(--settings-row-border);
+}
+
+.settings-presets button:focus-visible {
+  outline: 2px solid var(--settings-accent);
+  outline-offset: 1px;
+}
+
 .settings-group {
   margin: 0 0 16px;
   overflow: hidden;
