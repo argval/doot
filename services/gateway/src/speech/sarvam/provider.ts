@@ -17,6 +17,7 @@ export class SarvamProvider implements SpeechProvider {
     partialTranscripts: true,
     routingPriority: 90,
     automaticDetectionPriority: 100,
+    restrictAutoToFamilyTargets: true,
   } as const;
 
   constructor(private readonly apiKey?: string) {

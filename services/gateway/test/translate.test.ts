@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { GeminiTextTranslator } from "../src/translation/gemini/provider.js";
 import { SarvamTextTranslator } from "../src/translation/sarvam/provider.js";
 import { TranslationRouter } from "../src/translation/router.js";
 import { TranslationUnavailableError } from "../src/translation/contract.js";
@@ -95,4 +96,59 @@ test("rejects unsupported routes without leaking source text as translation", as
     TranslationUnavailableError,
   );
   assert.equal(called, false);
+});
+
+test("translates English to Spanish through Gemini text translation", async () => {
+  const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const fetcher: typeof fetch = async (input, init) => {
+    const url = String(input);
+    const rawBody = init?.body;
+    if (typeof rawBody !== "string") throw new Error("Expected JSON request body");
+    requests.push({ url, body: JSON.parse(rawBody) as Record<string, unknown> });
+    return Response.json({
+      candidates: [{ content: { parts: [{ text: "Hola mundo" }] } }],
+    });
+  };
+  const translator = new GeminiTextTranslator("test-gemini-key", fetcher);
+
+  const translated = await translator.translate({
+    text: "Hello world",
+    source: "en",
+    target: "es",
+  });
+
+  assert.equal(translated, "Hola mundo");
+  assert.equal(requests.length, 1);
+  assert.match(requests[0]!.url, /gemini-2\.5-flash:generateContent/);
+  assert.match(JSON.stringify(requests[0]!.body), /Spanish/);
+});
+
+test("prefers Sarvam for Indic pairs and Gemini for European targets", async () => {
+  const models: string[] = [];
+  const sarvamFetcher: typeof fetch = async (_input, init) => {
+    models.push("sarvam");
+    const rawBody = init?.body;
+    if (typeof rawBody !== "string") throw new Error("Expected JSON request body");
+    return Response.json({ translated_text: "Indic translation" });
+  };
+  const geminiFetcher: typeof fetch = async () => {
+    models.push("gemini");
+    return Response.json({
+      candidates: [{ content: { parts: [{ text: "Bonjour" }] } }],
+    });
+  };
+  const router = new TranslationRouter([
+    new SarvamTextTranslator("sarvam-key", sarvamFetcher),
+    new GeminiTextTranslator("gemini-key", geminiFetcher),
+  ]);
+
+  assert.equal(
+    await router.translate({ text: "ನಮಸ್ಕಾರ", source: "kn", target: "en" }),
+    "Indic translation",
+  );
+  assert.equal(
+    await router.translate({ text: "Hello", source: "en", target: "fr" }),
+    "Bonjour",
+  );
+  assert.deepEqual(models, ["sarvam", "gemini"]);
 });

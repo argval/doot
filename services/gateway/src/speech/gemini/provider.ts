@@ -8,16 +8,16 @@ import {
   type GeminiLiveRuntime,
 } from "./live.js";
 import {
-  GEMINI_POC_SOURCE_LANGUAGES,
-  GEMINI_POC_TARGET_LANGUAGES,
+  GEMINI_LIVE_SOURCE_LANGUAGES,
+  GEMINI_LIVE_TARGET_LANGUAGES,
 } from "./languages.js";
 
 export class GeminiProvider implements SpeechProvider {
   readonly id = "gemini" as const;
   readonly configured: boolean;
   readonly capabilities = {
-    sourceLanguages: GEMINI_POC_SOURCE_LANGUAGES,
-    targetLanguages: GEMINI_POC_TARGET_LANGUAGES,
+    sourceLanguages: GEMINI_LIVE_SOURCE_LANGUAGES,
+    targetLanguages: GEMINI_LIVE_TARGET_LANGUAGES,
     sampleRates: [16_000],
     channels: [1],
     automaticLanguageDetection: true,

@@ -42,6 +42,11 @@ export interface SpeechProviderCapabilities {
   nativeTranslation?: boolean;
   /** When present, limits targets accepted by this provider. */
   targetLanguages?: readonly SupportedTargetLanguage[];
+  /**
+   * Auto-detect only when the target is in this provider's source family.
+   * Sarvam uses this so Auto→Spanish (etc.) falls through to Gemini.
+   */
+  restrictAutoToFamilyTargets?: boolean;
   routingPriority: number;
   automaticDetectionPriority: number;
 }
@@ -84,5 +89,11 @@ export function supportsSession(
       target === undefined
       || capabilities.targetLanguages === undefined
       || capabilities.targetLanguages.includes(target)
+    )
+    && (
+      source !== "auto"
+      || target === undefined
+      || !capabilities.restrictAutoToFamilyTargets
+      || capabilities.sourceLanguages.some((language) => language === target)
     );
 }

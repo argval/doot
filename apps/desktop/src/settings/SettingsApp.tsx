@@ -8,6 +8,7 @@ import {
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getName, getVersion } from "@tauri-apps/api/app";
 import {
+  groupedCaptionLanguages,
   LANGUAGE_LABELS,
   SUPPORTED_SOURCE_LANGUAGES,
   SUPPORTED_TARGET_LANGUAGES,
@@ -275,7 +276,7 @@ function CaptionsSection({
         <label className="settings-row">
           <span>
             <strong>From</strong>
-            <em>Spoken language. Auto detect stays on Sarvam routes.</em>
+            <em>Spoken language. Auto uses Sarvam for English/Indic targets and Gemini otherwise.</em>
           </span>
           <select
             value={prefs.sourceLanguage}
@@ -284,10 +285,14 @@ function CaptionsSection({
             }}
           >
             <option value="auto">{LANGUAGE_LABELS.auto}</option>
-            {SOURCE_LANGUAGES.map((language) => (
-              <option key={language} value={language}>
-                {LANGUAGE_LABELS[language]}
-              </option>
+            {groupedCaptionLanguages(SOURCE_LANGUAGES).map((group) => (
+              <optgroup key={group.id} label={group.label}>
+                {group.languages.map((language) => (
+                  <option key={language} value={language}>
+                    {LANGUAGE_LABELS[language]}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </label>
@@ -302,10 +307,14 @@ function CaptionsSection({
               onPatch({ targetLanguage: event.target.value as SupportedLanguage });
             }}
           >
-            {TARGET_LANGUAGES.map((language) => (
-              <option key={language} value={language}>
-                {LANGUAGE_LABELS[language]}
-              </option>
+            {groupedCaptionLanguages(TARGET_LANGUAGES).map((group) => (
+              <optgroup key={group.id} label={group.label}>
+                {group.languages.map((language) => (
+                  <option key={language} value={language}>
+                    {LANGUAGE_LABELS[language]}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </label>

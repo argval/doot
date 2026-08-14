@@ -9,6 +9,7 @@ import {
   GEMINI_LIVE_TRANSLATE_WS,
   filterGeminiTranslationToTarget,
   geminiLanguageCodeMatches,
+  toGeminiLanguageCode,
 } from "./languages.js";
 
 const SETUP_TIMEOUT_MS = 8_000;
@@ -281,7 +282,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
           generationConfig: {
             responseModalities: ["AUDIO"],
             translationConfig: {
-              targetLanguageCode: this.options.target,
+              targetLanguageCode: toGeminiLanguageCode(this.options.target),
               echoTargetLanguage: true,
             },
           },

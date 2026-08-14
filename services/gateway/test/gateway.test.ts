@@ -7,12 +7,14 @@ import {
 import WebSocket from "ws";
 import { parseClientMessage } from "../src/gateway.js";
 import { createProviderRouter } from "../src/speech/registry.js";
+import { createTranslationRouter } from "../src/translation/registry.js";
 import {
   SARVAM_SUPPORTED_LANGUAGES,
   hasSpeechEnergy,
   pcmS16leRms,
   toSarvamLanguageCode,
 } from "../src/speech/sarvam/languages.js";
+import { toGeminiLanguageCode } from "../src/speech/gemini/languages.js";
 import { buildServer } from "../src/server.js";
 
 test("accepts canonical language IDs in session-start messages", () => {
@@ -26,6 +28,20 @@ test("accepts canonical language IDs in session-start messages", () => {
       channels: 1,
     }));
     assert.equal(result.ok, true, `expected ${sourceLanguage} to be supported`);
+  }
+});
+
+test("accepts international translation targets", () => {
+  for (const targetLanguage of ["es", "fr", "de", "ja", "zh"] as const) {
+    const result = parseClientMessage(JSON.stringify({
+      type: "start_session",
+      sessionId: `session-to-${targetLanguage}`,
+      sourceLanguage: "en",
+      targetLanguage,
+      sampleRate: 16_000,
+      channels: 1,
+    }));
+    assert.equal(result.ok, true, `expected target ${targetLanguage} to be supported`);
   }
 });
 
@@ -148,15 +164,20 @@ test("falls back to mock when Sarvam is not configured", () => {
   assert.equal(router.select("kn").id, "mock");
 });
 
-test("routes the benchmark international languages through configured Gemini", () => {
+test("routes international sources through Gemini and Sarvam sources through Sarvam", () => {
   const router = createProviderRouter({
     sarvamApiKey: "test-sarvam-key",
     geminiApiKey: "test-gemini-key",
   });
-  for (const language of ["es", "fr", "de"] as const) {
+  for (const language of ["es", "fr", "de", "it", "ja", "zh"] as const) {
     assert.equal(router.select(language).id, "gemini");
+    assert.equal(router.select(language, undefined, 16_000, 1, "en").id, "gemini");
   }
   assert.equal(router.select("en", undefined, 16_000, 1, "es").id, "sarvam");
+  assert.equal(router.select("en", undefined, 16_000, 1, "fr").id, "sarvam");
+  assert.equal(router.select("kn", undefined, 16_000, 1, "es").id, "sarvam");
+  assert.equal(router.select("auto", undefined, 16_000, 1, "en").id, "sarvam");
+  assert.equal(router.select("auto", undefined, 16_000, 1, "es").id, "gemini");
   assert.equal(router.select("en", "gemini", 16_000, 1, "es").id, "gemini");
   assert.equal(router.select("en", "gemini", 16_000, 1, "hi").id, "gemini");
 });
@@ -175,10 +196,48 @@ test("routes every supported live language through Sarvam", () => {
   });
 });
 
+test("health reports speech, translation, and language coverage", async (context) => {
+  const translation = createTranslationRouter({
+    sarvamApiKey: "test-sarvam-key",
+    geminiApiKey: "test-gemini-key",
+  });
+  const app = await buildServer(
+    createProviderRouter({
+      sarvamApiKey: "test-sarvam-key",
+      geminiApiKey: "test-gemini-key",
+    }),
+    (request) => translation.translate(request),
+    {},
+    translation,
+  );
+  context.after(() => app.close());
+
+  const response = await app.inject({ method: "GET", url: "/health" });
+  assert.equal(response.statusCode, 200);
+  const body = response.json() as {
+    status: string;
+    providers: Record<string, boolean>;
+    translation: Record<string, boolean>;
+    languages: { sources: string[]; targets: string[] };
+  };
+  assert.equal(body.status, "ok");
+  assert.equal(body.providers.sarvam, true);
+  assert.equal(body.providers.gemini, true);
+  assert.equal(body.translation.sarvam, true);
+  assert.equal(body.translation.gemini, true);
+  assert.ok(body.languages.sources.includes("auto"));
+  assert.ok(body.languages.sources.includes("es"));
+  assert.ok(body.languages.targets.includes("fr"));
+  assert.ok(body.languages.targets.includes("ja"));
+});
+
 test("maps all Saaras languages and retains PCM diagnostics", () => {
   assert.equal(toSarvamLanguageCode("auto"), "unknown");
   assert.equal(toSarvamLanguageCode("kn"), "kn-IN");
   assert.equal(toSarvamLanguageCode("doi"), "doi-IN");
+  assert.equal(toGeminiLanguageCode("en"), "en");
+  assert.equal(toGeminiLanguageCode("zh"), "zh-Hans");
+  assert.equal(toGeminiLanguageCode("pt"), "pt-BR");
 
   const silence = new Uint8Array(32_000);
   assert.equal(pcmS16leRms(silence), 0);
