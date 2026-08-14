@@ -67,7 +67,6 @@ export function CaptionPanel({
       data-script={script}
       onMouseDown={onDragStart}
     >
-      <span className="caption-grain" aria-hidden="true" />
       {captureControl}
       <div ref={copyRef} className="caption-copy">
         {error ? (

@@ -77,18 +77,6 @@ export function geminiLanguageScore(text: string, language: string): number {
   return normalized.match(pattern)?.length ?? 0;
 }
 
-export function looksLikeGeminiLanguage(text: string, language: string): boolean {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (!normalized) return false;
-  const score = geminiLanguageScore(normalized, language);
-  if (language === "hi") return score >= 2;
-  const words = normalized.split(/\s+/).filter(Boolean);
-  if (words.length === 0) return false;
-  // Short fragments need fewer hits; longer ones need a clearer signal.
-  const threshold = words.length <= 4 ? 1 : Math.max(2, Math.floor(words.length * 0.18));
-  return score >= threshold;
-}
-
 function splitGeminiCaptionParts(text: string): string[] {
   // Sentence endings only — do not split on ", Capital" (German nouns break that).
   // Include Hindi danda । so Devanagari + Latin mixes can be filtered per clause.

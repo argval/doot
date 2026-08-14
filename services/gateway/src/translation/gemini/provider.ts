@@ -36,8 +36,6 @@ export class GeminiTextTranslator implements TextTranslationProvider {
     if (request.source !== "auto" && request.source === request.target) return text;
     if (!this.apiKey) throw new Error("Gemini translation is not configured");
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TRANSLATION_TIMEOUT_MS);
     try {
       const response = await this.fetcher(`${GEMINI_TRANSLATE_URL}?key=${this.apiKey}`, {
         method: "POST",
@@ -56,7 +54,7 @@ export class GeminiTextTranslator implements TextTranslationProvider {
             maxOutputTokens: 1024,
           },
         }),
-        signal: controller.signal,
+        signal: AbortSignal.timeout(TRANSLATION_TIMEOUT_MS),
       });
       const body: unknown = await response.json().catch(() => null);
       if (!response.ok) {
@@ -68,12 +66,10 @@ export class GeminiTextTranslator implements TextTranslationProvider {
       }
       return unwrapTranslation(translated);
     } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
+      if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
         throw new Error("Gemini translation timed out");
       }
       throw error instanceof Error ? error : new Error("Gemini translation failed");
-    } finally {
-      clearTimeout(timeout);
     }
   }
 }

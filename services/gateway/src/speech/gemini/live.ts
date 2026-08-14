@@ -4,6 +4,7 @@ import type {
   ProviderStreamSession,
 } from "../contract.js";
 import { isRecord } from "../../util.js";
+import { mergeStreamingText } from "../../merge-text.js";
 import {
   GEMINI_LIVE_TRANSLATE_MODEL,
   GEMINI_LIVE_TRANSLATE_WS,
@@ -59,7 +60,6 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
   private setupComplete = false;
   private ending = false;
   private closed = false;
-  private emittedClosedState = false;
 
   constructor(
     private readonly apiKey: string,
@@ -76,7 +76,6 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
 
   open(): Promise<void> {
     if (this.closed) return Promise.reject(new Error("Gemini session is closed"));
-    this.options.onEvent({ type: "state", state: "connecting" });
     const url = new URL(this.runtime.endpoint ?? GEMINI_LIVE_TRANSLATE_WS);
     url.searchParams.set("key", this.apiKey);
     const socket = new WebSocket(url);
@@ -143,7 +142,6 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
             retryable: true,
           });
         }
-        this.emitClosedState();
       });
     });
   }
@@ -238,7 +236,6 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     const socket = this.socket;
     this.socket = null;
     if (!socket || socket.readyState === WebSocket.CLOSED) {
-      this.emitClosedState();
       return;
     }
     await new Promise<void>((resolve) => {
@@ -257,7 +254,6 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
       socket.once("close", finish);
       socket.close(1000, "Doot caption session closed");
     });
-    this.emitClosedState();
   }
 
   private sendSetup(socket: WebSocket, waiter: Waiter): void {
@@ -308,7 +304,6 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
 
     if ("setupComplete" in payload) {
       this.setupComplete = true;
-      this.options.onEvent({ type: "state", state: "open" });
       this.setupWaiter?.resolve();
       return;
     }
@@ -492,12 +487,6 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
       },
     });
   }
-
-  private emitClosedState(): void {
-    if (this.emittedClosedState) return;
-    this.emittedClosedState = true;
-    this.options.onEvent({ type: "state", state: "closed" });
-  }
 }
 
 function readTranscription(value: unknown): {
@@ -513,83 +502,6 @@ function readTranscription(value: unknown): {
       ? { languageCode: value.languageCode }
       : {}),
   };
-}
-
-function mergeStreamingText(existing: string, incoming: string): string {
-  const normalized = normalizeText(incoming);
-  if (!existing) return collapseStutter(normalized);
-  if (!normalized) return existing;
-  if (normalized === existing || existing.startsWith(normalized)) {
-    return collapseStutter(existing);
-  }
-  if (normalized.startsWith(existing)) return collapseStutter(normalized);
-
-  // Gemini often re-emits the same short phrase on fast speech (esp. Spanish).
-  // Treat contained phrases as already merged instead of appending forever.
-  if (containsPhrase(existing, normalized)) return collapseStutter(existing);
-  if (containsPhrase(normalized, existing)) return collapseStutter(normalized);
-
-  const existingWords = existing.split(/\s+/);
-  const incomingWords = normalized.split(/\s+/);
-  if (hasWordPrefix(incomingWords, existingWords)) return collapseStutter(normalized);
-  if (hasWordPrefix(existingWords, incomingWords)) return collapseStutter(existing);
-
-  // Incoming matches the trailing words exactly → stutter, not progress.
-  for (let size = Math.min(incomingWords.length, existingWords.length); size >= 1; size -= 1) {
-    if (sameWords(existingWords.slice(-size), incomingWords.slice(0, size))) {
-      if (size === incomingWords.length) return collapseStutter(existing);
-      return collapseStutter([...existingWords, ...incomingWords.slice(size)].join(" "));
-    }
-  }
-
-  return collapseStutter(`${existing} ${normalized}`);
-}
-
-/** True when `needle` already appears as a contiguous word phrase inside `haystack`. */
-function containsPhrase(haystack: string, needle: string): boolean {
-  const hayWords = haystack.split(/\s+/);
-  const needleWords = needle.split(/\s+/);
-  if (needleWords.length === 0 || needleWords.length > hayWords.length) return false;
-  for (let start = 0; start <= hayWords.length - needleWords.length; start += 1) {
-    if (sameWords(hayWords.slice(start, start + needleWords.length), needleWords)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/** Collapse immediate duplicated tails like "where is this where is this". */
-function collapseStutter(text: string): string {
-  const words = text.split(/\s+/).filter(Boolean);
-  if (words.length < 2) return words.join(" ");
-  let end = words.length;
-  for (let n = Math.min(8, Math.floor(end / 2)); n >= 2; n -= 1) {
-    while (
-      end >= 2 * n
-      && sameWords(words.slice(end - n, end), words.slice(end - 2 * n, end - n))
-    ) {
-      end -= n;
-    }
-  }
-  return words.slice(0, end).join(" ");
-}
-
-function hasWordPrefix(words: string[], prefix: string[]): boolean {
-  return prefix.length <= words.length && sameWords(words.slice(0, prefix.length), prefix);
-}
-
-function sameWords(left: string[], right: string[]): boolean {
-  return left.length === right.length
-    && left.every((word, index) => wordsEquivalent(word, right[index] ?? ""));
-}
-
-function wordsEquivalent(left: string, right: string): boolean {
-  const normalizeWord = (word: string) => word
-    .normalize("NFKC")
-    .toLocaleLowerCase()
-    .replace(/^[^\p{L}\p{N}\p{M}]+|[^\p{L}\p{N}\p{M}]+$/gu, "");
-  const normalizedLeft = normalizeWord(left);
-  return normalizedLeft.length > 0 && normalizedLeft === normalizeWord(right);
 }
 
 function normalizeText(value: string): string {

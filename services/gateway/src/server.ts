@@ -9,25 +9,43 @@ import {
   registerRealtimeGateway,
   type RealtimeGatewayOptions,
 } from "./gateway.js";
-import { createProviderRouter } from "./speech/registry.js";
-import type { ProviderRouter } from "./speech/router.js";
-import type { TranslateText } from "./translation/contract.js";
-import { createTranslationRouter } from "./translation/registry.js";
-import type { TranslationRouter } from "./translation/router.js";
+import { GeminiProvider } from "./speech/gemini/provider.js";
+import { MockProvider } from "./speech/mock/provider.js";
+import { ProviderRouter } from "./speech/router.js";
+import { SarvamProvider } from "./speech/sarvam/provider.js";
+import { GeminiTextTranslator } from "./translation/gemini/provider.js";
+import { TranslationRouter } from "./translation/router.js";
+import { SarvamTextTranslator } from "./translation/sarvam/provider.js";
 
-const defaultTranslationRouter = createTranslationRouter({
-  sarvamApiKey: config.translationApiKey ?? config.sarvamApiKey,
-  geminiApiKey: config.geminiApiKey,
-});
+export function createProviderRouter(
+  credentials: { sarvamApiKey?: string; geminiApiKey?: string } = {},
+): ProviderRouter {
+  return new ProviderRouter([
+    new SarvamProvider(credentials.sarvamApiKey),
+    new GeminiProvider(credentials.geminiApiKey),
+    new MockProvider(),
+  ]);
+}
+
+export function createTranslationRouter(
+  credentials: { sarvamApiKey?: string; geminiApiKey?: string } = {},
+): TranslationRouter {
+  return new TranslationRouter([
+    new SarvamTextTranslator(credentials.sarvamApiKey),
+    new GeminiTextTranslator(credentials.geminiApiKey),
+  ]);
+}
 
 export async function buildServer(
   router: ProviderRouter = createProviderRouter({
     sarvamApiKey: config.sarvamApiKey,
     geminiApiKey: config.geminiApiKey,
   }),
-  translate: TranslateText = (request) => defaultTranslationRouter.translate(request),
+  translation: TranslationRouter = createTranslationRouter({
+    sarvamApiKey: config.sarvamApiKey,
+    geminiApiKey: config.geminiApiKey,
+  }),
   gatewayOptions: RealtimeGatewayOptions = {},
-  translation: TranslationRouter = defaultTranslationRouter,
 ) {
   const app = Fastify({ logger: { transport: { target: "pino-pretty" } } });
   await app.register(websocket, { options: { maxPayload: 512 * 1024 } });
@@ -46,7 +64,7 @@ export async function buildServer(
       },
     };
   });
-  registerRealtimeGateway(app, router, translate, gatewayOptions);
+  registerRealtimeGateway(app, router, (request) => translation.translate(request), gatewayOptions);
   return app;
 }
 

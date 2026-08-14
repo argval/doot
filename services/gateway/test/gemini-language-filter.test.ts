@@ -3,7 +3,6 @@ import test from "node:test";
 import {
   filterGeminiTranslationToTarget,
   geminiLanguageCodeMatches,
-  looksLikeGeminiLanguage,
 } from "../src/speech/gemini/languages.js";
 
 test("drops Spanish source leaks from English Gemini translations", () => {
@@ -109,21 +108,4 @@ test("matches Gemini language codes against doot targets", () => {
   assert.equal(geminiLanguageCodeMatches("fr-FR", "en"), false);
   assert.equal(geminiLanguageCodeMatches("de", "en"), false);
   assert.equal(geminiLanguageCodeMatches(undefined, "en"), true);
-});
-
-test("detects Spanish marker density", () => {
-  assert.equal(
-    looksLikeGeminiLanguage(
-      "permite arrestar y deportar a migrantes mayores de catorce años",
-      "es",
-    ),
-    true,
-  );
-  assert.equal(
-    looksLikeGeminiLanguage(
-      "That's when they ran the country a little tougher than we run it today",
-      "es",
-    ),
-    false,
-  );
 });

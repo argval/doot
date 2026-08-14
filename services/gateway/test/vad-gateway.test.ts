@@ -4,6 +4,7 @@ import {
   AUDIO_SAMPLE_RATES,
   CHANNEL_COUNTS,
   SUPPORTED_LANGUAGES,
+  SUPPORTED_TARGET_LANGUAGES,
   type ServerMessage,
 } from "@doot/protocol";
 import WebSocket from "ws";
@@ -15,17 +16,30 @@ import type {
   SpeechProvider,
 } from "../src/speech/contract.js";
 import { buildServer } from "../src/server.js";
+import { TranslationRouter } from "../src/translation/router.js";
 import {
   TranslationUnavailableError,
   type TranslationRequest,
 } from "../src/translation/contract.js";
+
+function asTranslationRouter(
+  translate: (request: TranslationRequest) => Promise<string>,
+): TranslationRouter {
+  return new TranslationRouter([{
+    id: "test",
+    configured: true,
+    targetLanguages: SUPPORTED_TARGET_LANGUAGES,
+    supports: () => true,
+    translate,
+  }]);
+}
 
 test("closes a provider session that opens after its client disconnected", async () => {
   const provider = new DelayedProvider();
   const translator = new RecordingTranslator();
   const app = await buildServer(
     new ProviderRouter([provider]),
-    (request) => translator.translate(request),
+    asTranslationRouter((request) => translator.translate(request)),
   );
   const address = await app.listen({ host: "127.0.0.1", port: 0 });
   const client = await RealtimeClient.connect(
@@ -62,7 +76,7 @@ test("suppresses delayed translations from a replaced session generation", async
   const translator = new DeferredTranslator();
   const app = await buildServer(
     new ProviderRouter([provider]),
-    (request) => translator.translate(request),
+    asTranslationRouter((request) => translator.translate(request)),
     { utteranceGraceMs: 5 },
   );
   const address = await app.listen({ host: "127.0.0.1", port: 0 });
@@ -409,8 +423,6 @@ test("merges overlapping transcript text across a provider reconnect", async () 
       timestampMs: 150,
       isFinal: false,
     });
-    stream.emit({ type: "state", state: "reconnecting" });
-    stream.emit({ type: "state", state: "open" });
     stream.emit({
       type: "transcript",
       text: "world again",
@@ -519,9 +531,9 @@ test("never substitutes source text when translation is unavailable", async () =
   const provider = new ControlledProvider();
   const app = await buildServer(
     new ProviderRouter([provider]),
-    async (request) => {
+    asTranslationRouter(async (request) => {
       throw new TranslationUnavailableError(request);
-    },
+    }),
     { utteranceGraceMs: 5 },
   );
   const address = await app.listen({ host: "127.0.0.1", port: 0 });
@@ -582,7 +594,7 @@ async function createHarness(
   const router = new ProviderRouter([provider]);
   const app = await buildServer(
     router,
-    (request) => translator.translate(request),
+    asTranslationRouter((request) => translator.translate(request)),
     { utteranceGraceMs, maxUtteranceMs: 5_000 },
   );
   const address = await app.listen({ host: "127.0.0.1", port: 0 });
@@ -623,8 +635,6 @@ class ControlledProvider implements SpeechProvider {
       sourceLanguages: SUPPORTED_LANGUAGES,
       sampleRates: AUDIO_SAMPLE_RATES,
       channels: CHANNEL_COUNTS,
-      automaticLanguageDetection: true,
-      partialTranscripts: true,
       nativeTranslation,
       routingPriority: 100,
       automaticDetectionPriority: 100,
@@ -645,8 +655,6 @@ class DelayedProvider implements SpeechProvider {
     sourceLanguages: SUPPORTED_LANGUAGES,
     sampleRates: AUDIO_SAMPLE_RATES,
     channels: CHANNEL_COUNTS,
-    automaticLanguageDetection: true,
-    partialTranscripts: true,
     routingPriority: 100,
     automaticDetectionPriority: 100,
   } as const;

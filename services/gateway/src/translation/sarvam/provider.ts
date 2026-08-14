@@ -66,8 +66,6 @@ export class SarvamTextTranslator implements TextTranslationProvider {
     model: "mayura:v1" | "sarvam-translate:v1";
     mode: "modern-colloquial" | "formal";
   }): Promise<TranslationResult> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TRANSLATION_TIMEOUT_MS);
     try {
       const response = await this.fetcher(SARVAM_TRANSLATE_URL, {
         method: "POST",
@@ -83,7 +81,7 @@ export class SarvamTextTranslator implements TextTranslationProvider {
           mode: options.mode,
           output_script: "fully-native",
         }),
-        signal: controller.signal,
+        signal: AbortSignal.timeout(TRANSLATION_TIMEOUT_MS),
       });
 
       const body: unknown = await response.json().catch(() => null);
@@ -103,7 +101,7 @@ export class SarvamTextTranslator implements TextTranslationProvider {
       }
       return { ok: true, text: body.translated_text.trim() };
     } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
+      if (isTimeoutError(error)) {
         return {
           ok: false,
           status: 504,
@@ -115,8 +113,6 @@ export class SarvamTextTranslator implements TextTranslationProvider {
         status: 502,
         message: error instanceof Error ? error.message : "Sarvam translation failed",
       };
-    } finally {
-      clearTimeout(timeout);
     }
   }
 }
@@ -134,4 +130,9 @@ function readTranslationError(body: unknown, status: number): string {
     }
   }
   return `Sarvam translation failed (HTTP ${status})`;
+}
+
+function isTimeoutError(error: unknown): boolean {
+  return error instanceof Error
+    && (error.name === "TimeoutError" || error.name === "AbortError");
 }

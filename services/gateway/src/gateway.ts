@@ -23,6 +23,7 @@ import {
   type TranslateText,
 } from "./translation/contract.js";
 import { isRecord } from "./util.js";
+import { mergeStreamingText } from "./merge-text.js";
 
 const maxAudioChunkBytes = 256 * 1024;
 const maxBase64Length = Math.ceil(maxAudioChunkBytes / 3) * 4;
@@ -316,8 +317,6 @@ function handleProviderEvent(
       });
       return;
     }
-    case "state":
-      return;
     default: {
       const exhaustive: never = event;
       return exhaustive;
@@ -365,7 +364,7 @@ function updateActiveUtterance(
   // utterance, whereas partials can be overlapping incremental fragments.
   const mergedText = event.isFinal
     ? transcript
-    : mergeProviderTranscript(utterance.sourceText, transcript);
+    : mergeStreamingText(utterance.sourceText, transcript);
   utterance.endMs = Math.max(utterance.endMs, event.timestampMs);
   if (mergedText === utterance.sourceText) return;
 
@@ -694,48 +693,6 @@ function sendCaption(
     endMs: utterance.endMs,
     provider: session.providerId,
   });
-}
-
-function mergeProviderTranscript(existing: string, incoming: string): string {
-  if (!existing) return incoming;
-  if (existing === incoming || incoming.startsWith(existing)) return incoming;
-  if (existing.startsWith(incoming)) return existing;
-
-  const existingWords = existing.split(/\s+/);
-  const incomingWords = incoming.split(/\s+/);
-  if (hasWordPrefix(incomingWords, existingWords)) return incoming;
-  if (hasWordPrefix(existingWords, incomingWords)) return existing;
-  for (
-    let overlap = Math.min(existingWords.length, incomingWords.length);
-    overlap > 0;
-    overlap -= 1
-  ) {
-    if (sameWords(
-      existingWords.slice(-overlap),
-      incomingWords.slice(0, overlap),
-    )) {
-      return [...existingWords, ...incomingWords.slice(overlap)].join(" ");
-    }
-  }
-  return `${existing} ${incoming}`;
-}
-
-function hasWordPrefix(words: string[], prefix: string[]): boolean {
-  return prefix.length <= words.length && sameWords(words.slice(0, prefix.length), prefix);
-}
-
-function sameWords(left: string[], right: string[]): boolean {
-  return left.length === right.length
-    && left.every((word, index) => wordsEquivalent(word, right[index] ?? ""));
-}
-
-function wordsEquivalent(left: string, right: string): boolean {
-  const normalizeWord = (word: string) => word
-    .normalize("NFKC")
-    .toLocaleLowerCase()
-    .replace(/^[^\p{L}\p{N}\p{M}]+|[^\p{L}\p{N}\p{M}]+$/gu, "");
-  const normalizedLeft = normalizeWord(left);
-  return normalizedLeft.length > 0 && normalizedLeft === normalizeWord(right);
 }
 
 function normalizeTranscript(value: string): string {

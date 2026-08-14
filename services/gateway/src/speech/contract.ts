@@ -6,8 +6,6 @@ import type {
   SupportedTargetLanguage,
 } from "@doot/protocol";
 
-export type ProviderStreamState = "connecting" | "open" | "reconnecting" | "closed";
-
 export type ProviderStreamEvent =
   | { type: "speech_start"; timestampMs: number }
   | { type: "speech_end"; timestampMs: number }
@@ -29,15 +27,12 @@ export type ProviderStreamEvent =
     isFinal: boolean;
   }
   | { type: "warning"; message: string }
-  | { type: "error"; message: string; retryable: boolean }
-  | { type: "state"; state: ProviderStreamState };
+  | { type: "error"; message: string; retryable: boolean };
 
 export interface SpeechProviderCapabilities {
   sourceLanguages: readonly SupportedLanguage[];
   sampleRates: readonly AudioSampleRate[];
   channels: readonly ChannelCount[];
-  automaticLanguageDetection: boolean;
-  partialTranscripts: boolean;
   /** The provider returns translated text from the same streaming session. */
   nativeTranslation?: boolean;
   /** When present, limits targets accepted by this provider. */

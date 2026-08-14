@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   groupedCaptionLanguages,
   LANGUAGE_LABELS,
-  SUPPORTED_SOURCE_LANGUAGES,
+  SUPPORTED_LANGUAGES,
   SUPPORTED_TARGET_LANGUAGES,
   type SupportedLanguage,
 } from "@doot/protocol";
@@ -14,7 +14,7 @@ import {
   selectVisibleCaptions,
 } from "./captions";
 import { CaptionPanel } from "./overlay/CaptionPanel";
-import { useOverlayWebPreview } from "./overlay/web-preview";
+import { overlayWebPreview } from "./overlay/web-preview";
 import { captureShortcutLabel } from "./lib/shortcut";
 import { isTauriRuntime } from "./lib/runtime";
 import {
@@ -36,7 +36,7 @@ import {
   type DesktopPrefs,
 } from "./lib/prefs";
 
-const selectableSourceLanguages = SUPPORTED_SOURCE_LANGUAGES.filter(
+const selectableSourceLanguages = SUPPORTED_LANGUAGES.filter(
   (language) => language !== "auto",
 );
 const selectableTargetLanguages = SUPPORTED_TARGET_LANGUAGES;
@@ -51,7 +51,7 @@ export function App() {
   const acceptedSessionIdRef = useRef<string | null>(null);
   const lastProviderRef = useRef<string | null>(DEFAULT_PREFS.lastProvider);
   const captionCopyRef = useRef<HTMLDivElement>(null);
-  const preview = useOverlayWebPreview();
+  const preview = overlayWebPreview();
   const visibleLines = preview.lines ?? selectVisibleCaptions(captions).lines;
   const sourceLanguage = prefs.sourceLanguage;
   const targetLanguage = preview.targetLanguage ?? prefs.targetLanguage;

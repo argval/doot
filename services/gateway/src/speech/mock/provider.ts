@@ -18,8 +18,6 @@ export class MockProvider implements SpeechProvider {
     sourceLanguages: SUPPORTED_LANGUAGES,
     sampleRates: AUDIO_SAMPLE_RATES,
     channels: CHANNEL_COUNTS,
-    automaticLanguageDetection: true,
-    partialTranscripts: false,
     routingPriority: 0,
     automaticDetectionPriority: 0,
   } as const;
@@ -37,9 +35,7 @@ class MockStreamingSession implements ProviderStreamSession {
   private lastTimestampMs = 0;
   private closed = false;
 
-  constructor(private readonly options: OpenProviderSessionOptions) {
-    options.onEvent({ type: "state", state: "open" });
-  }
+  constructor(private readonly options: OpenProviderSessionOptions) {}
 
   pushAudio(audio: Uint8Array, timestampMs: number): void {
     if (this.closed) return;
@@ -60,7 +56,6 @@ class MockStreamingSession implements ProviderStreamSession {
 
   async close(): Promise<void> {
     this.closed = true;
-    this.options.onEvent({ type: "state", state: "closed" });
   }
 
   private emitTranscript(): void {

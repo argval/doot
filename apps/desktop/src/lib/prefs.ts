@@ -20,7 +20,6 @@ export interface DesktopPrefs {
   translateEnabled: boolean;
   captionFontSize: number;
   overlayIdleOpacity: number;
-  openAtLogin: boolean;
   lastProvider: string | null;
 }
 
@@ -30,7 +29,6 @@ export const DEFAULT_PREFS: DesktopPrefs = {
   translateEnabled: true,
   captionFontSize: 28,
   overlayIdleOpacity: 0.42,
-  openAtLogin: false,
   lastProvider: null,
 };
 
@@ -88,9 +86,6 @@ export function normalizePrefs(value: unknown): DesktopPrefs {
   const translateEnabled = typeof record.translateEnabled === "boolean"
     ? record.translateEnabled
     : DEFAULT_PREFS.translateEnabled;
-  const openAtLogin = typeof record.openAtLogin === "boolean"
-    ? record.openAtLogin
-    : DEFAULT_PREFS.openAtLogin;
   const lastProvider = typeof record.lastProvider === "string" && record.lastProvider.trim()
     ? record.lastProvider.trim()
     : null;
@@ -105,7 +100,6 @@ export function normalizePrefs(value: unknown): DesktopPrefs {
     translateEnabled,
     captionFontSize,
     overlayIdleOpacity,
-    openAtLogin,
     lastProvider,
   };
 }

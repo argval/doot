@@ -20,8 +20,6 @@ export class GeminiProvider implements SpeechProvider {
     targetLanguages: GEMINI_LIVE_TARGET_LANGUAGES,
     sampleRates: [16_000],
     channels: [1],
-    automaticLanguageDetection: true,
-    partialTranscripts: true,
     nativeTranslation: true,
     routingPriority: 80,
     automaticDetectionPriority: 0,

@@ -3,8 +3,8 @@ import type {
   ProviderStreamSession,
   SpeechProvider,
 } from "../contract.js";
-import { SarvamFailoverSession } from "./failover.js";
 import { SARVAM_SUPPORTED_LANGUAGES } from "./languages.js";
+import { SarvamRealtimeSession } from "./realtime.js";
 
 export class SarvamProvider implements SpeechProvider {
   id = "sarvam" as const;
@@ -13,8 +13,6 @@ export class SarvamProvider implements SpeechProvider {
     sourceLanguages: SARVAM_SUPPORTED_LANGUAGES,
     sampleRates: [16_000],
     channels: [1],
-    automaticLanguageDetection: true,
-    partialTranscripts: true,
     routingPriority: 90,
     automaticDetectionPriority: 100,
     restrictAutoToFamilyTargets: true,
@@ -28,7 +26,7 @@ export class SarvamProvider implements SpeechProvider {
     options: OpenProviderSessionOptions,
   ): Promise<ProviderStreamSession> {
     if (!this.apiKey) throw new Error("SARVAM_API_KEY is not configured");
-    const session = new SarvamFailoverSession(this.apiKey, options);
+    const session = new SarvamRealtimeSession(this.apiKey, options);
     await session.open();
     return session;
   }

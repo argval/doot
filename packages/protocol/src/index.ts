@@ -98,15 +98,14 @@ export const SUPPORTED_LANGUAGES = [
   ...INDIC_LANGUAGES,
 ] as const;
 
-export const SUPPORTED_SOURCE_LANGUAGES = SUPPORTED_LANGUAGES;
 export const SUPPORTED_TARGET_LANGUAGES = [
   ...INTERNATIONAL_LANGUAGES,
   ...INDIC_LANGUAGES,
 ] as const satisfies readonly (typeof SUPPORTED_LANGUAGES)[number][];
 
 export const PROVIDER_IDS = ["sarvam", "gemini", "mock"] as const;
-export const AUDIO_SAMPLE_RATES = [16_000, 24_000, 48_000] as const;
-export const CHANNEL_COUNTS = [1, 2] as const;
+export const AUDIO_SAMPLE_RATES = [16_000] as const;
+export const CHANNEL_COUNTS = [1] as const;
 
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 export type SupportedTargetLanguage = (typeof SUPPORTED_TARGET_LANGUAGES)[number];
@@ -204,38 +203,29 @@ export const LANGUAGE_LABELS: Readonly<Record<SupportedLanguage, string>> = {
   doi: "Dogri",
 };
 
-export const LANGUAGE_GROUP_LABELS = {
-  international: "International",
-  indic: "Indic",
-} as const;
-
-export type LanguageGroupId = keyof typeof LANGUAGE_GROUP_LABELS;
-
-export interface LanguageGroup {
-  id: LanguageGroupId;
-  label: string;
-  languages: SupportedLanguage[];
-}
-
-/** Group caption languages for overlay/settings selects, preserving protocol order. */
+/** Group caption languages for overlay selects, preserving protocol order. */
 export function groupedCaptionLanguages(
   languages: readonly SupportedLanguage[],
-): LanguageGroup[] {
+): Array<{ id: "international" | "indic"; label: string; languages: SupportedLanguage[] }> {
   const allowed = new Set<string>(languages);
-  const groups: LanguageGroup[] = [];
+  const groups: Array<{
+    id: "international" | "indic";
+    label: string;
+    languages: SupportedLanguage[];
+  }> = [];
   const international = INTERNATIONAL_LANGUAGES.filter((language) => allowed.has(language));
   const indic = INDIC_LANGUAGES.filter((language) => allowed.has(language));
   if (international.length > 0) {
     groups.push({
       id: "international",
-      label: LANGUAGE_GROUP_LABELS.international,
+      label: "International",
       languages: [...international],
     });
   }
   if (indic.length > 0) {
     groups.push({
       id: "indic",
-      label: LANGUAGE_GROUP_LABELS.indic,
+      label: "Indic",
       languages: [...indic],
     });
   }

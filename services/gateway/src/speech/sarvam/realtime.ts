@@ -83,7 +83,7 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
   }
 
   async open(): Promise<void> {
-    await this.connect(false);
+    await this.connect();
   }
 
   pushAudio(audio: Uint8Array, timestampMs: number): void {
@@ -183,7 +183,6 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
     const socket = this.socket;
     this.socket = null;
     if (!socket || socket.readyState === WebSocket.CLOSED) {
-      this.options.onEvent({ type: "state", state: "closed" });
       return;
     }
 
@@ -216,15 +215,10 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
         }
       }
     });
-    this.options.onEvent({ type: "state", state: "closed" });
   }
 
-  private connect(reconnecting: boolean): Promise<void> {
+  private connect(): Promise<void> {
     if (this.closed || this.terminal || this.ending) return Promise.resolve();
-    this.options.onEvent({
-      type: "state",
-      state: reconnecting ? "reconnecting" : "connecting",
-    });
 
     const url = new URL(this.runtime.endpoint ?? SARVAM_REALTIME_STT_WS);
     url.searchParams.set("model", "saaras:v3-realtime");
@@ -271,7 +265,6 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
         clearTimeout(timeout);
         this.reconnectAttempts = 0;
         this.replayQueuedForOutage = false;
-        this.options.onEvent({ type: "state", state: "open" });
         this.startPing();
         this.drainQueue();
         resolve();
@@ -531,7 +524,6 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
     }
 
     this.options.onEvent({ type: "warning", message });
-    this.options.onEvent({ type: "state", state: "reconnecting" });
     const delayMs = Math.min(
       (this.runtime.reconnectBaseDelayMs ?? 250)
         * (2 ** (this.reconnectAttempts - 1)),
@@ -539,7 +531,7 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
     );
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      void this.connect(true).catch((error: unknown) => {
+      void this.connect().catch((error: unknown) => {
         const detail = error instanceof Error ? error.message : String(error);
         this.scheduleReconnect(detail);
       });

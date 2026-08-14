@@ -1,63 +1,19 @@
-import type {
-  SupportedLanguage,
-  SupportedTargetLanguage,
-} from "@doot/protocol";
+import type { SupportedLanguage } from "@doot/protocol";
+import {
+  isSarvamSupportedLanguage,
+  SARVAM_SUPPORTED_LANGUAGES,
+} from "../../speech/sarvam/languages.js";
 
-export const SARVAM_TRANSLATION_SOURCE_LANGUAGES = [
-  "auto",
-  "en",
-  "hi",
-  "bn",
-  "gu",
-  "kn",
-  "ml",
-  "mr",
-  "od",
-  "pa",
-  "ta",
-  "te",
-  "as",
-  "ur",
-  "ne",
-  "kok",
-  "ks",
-  "sd",
-  "sa",
-  "sat",
-  "mni",
-  "brx",
-  "mai",
-  "doi",
-] as const satisfies readonly SupportedLanguage[];
+export const SARVAM_TRANSLATION_SOURCE_LANGUAGES = SARVAM_SUPPORTED_LANGUAGES;
 
-export const SARVAM_TRANSLATION_TARGET_LANGUAGES = [
-  "en",
-  "hi",
-  "bn",
-  "gu",
-  "kn",
-  "ml",
-  "mr",
-  "od",
-  "pa",
-  "ta",
-  "te",
-  "as",
-  "ur",
-  "ne",
-  "kok",
-  "ks",
-  "sd",
-  "sa",
-  "sat",
-  "mni",
-  "brx",
-  "mai",
-  "doi",
-] as const satisfies readonly SupportedTargetLanguage[];
+type SarvamTranslationTargetLanguage = Exclude<
+  (typeof SARVAM_SUPPORTED_LANGUAGES)[number],
+  "auto"
+>;
 
-type SarvamTranslationTargetLanguage =
-  (typeof SARVAM_TRANSLATION_TARGET_LANGUAGES)[number];
+export const SARVAM_TRANSLATION_TARGET_LANGUAGES = SARVAM_SUPPORTED_LANGUAGES.filter(
+  (language): language is SarvamTranslationTargetLanguage => language !== "auto",
+);
 
 const languageCodes: Record<SarvamTranslationTargetLanguage, string> = {
   en: "en-IN",
@@ -88,7 +44,7 @@ const languageCodes: Record<SarvamTranslationTargetLanguage, string> = {
 export function isSarvamTranslationSource(
   language: SupportedLanguage,
 ): boolean {
-  return SARVAM_TRANSLATION_SOURCE_LANGUAGES.some((candidate) => candidate === language);
+  return isSarvamSupportedLanguage(language);
 }
 
 export function isSarvamTranslationTarget(

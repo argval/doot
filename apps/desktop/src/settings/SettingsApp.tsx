@@ -8,27 +8,19 @@ import {
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getName, getVersion } from "@tauri-apps/api/app";
 import {
-  groupedCaptionLanguages,
-  LANGUAGE_LABELS,
-  SUPPORTED_SOURCE_LANGUAGES,
-  SUPPORTED_TARGET_LANGUAGES,
   type SupportedLanguage,
 } from "@doot/protocol";
 import {
   CAPTION_FONT_SIZE_MAX,
   CAPTION_FONT_SIZE_MIN,
   DEFAULT_PREFS,
-  OVERLAY_IDLE_OPACITY_MAX,
-  OVERLAY_IDLE_OPACITY_MIN,
   hoverBoostFor,
-  concreteCaptionLanguage,
   loadPrefs,
   subscribeToPrefs,
   updatePrefs,
   type DesktopPrefs,
 } from "../lib/prefs";
 import { isTauriRuntime } from "../lib/runtime";
-import { captureShortcutLabel } from "../lib/shortcut";
 import {
   getConnectionStatus,
   type ConnectionStatus,
@@ -37,9 +29,6 @@ import { captionScript, CaptionPanel } from "../overlay/CaptionPanel";
 import type { VisibleCaptionLine } from "../captions";
 
 type SettingsSection = "general" | "captions" | "connection" | "about";
-
-const SOURCE_LANGUAGES = SUPPORTED_SOURCE_LANGUAGES.filter((language) => language !== "auto");
-const TARGET_LANGUAGES = SUPPORTED_TARGET_LANGUAGES;
 
 const OPACITY_PRESETS = [
   { id: "ghost", label: "Ghost", value: 0.22 },
@@ -132,26 +121,10 @@ const SECTIONS: ReadonlyArray<{
   { id: "about", label: "About", icon: Info },
 ];
 
-function sectionTitle(section: SettingsSection): string {
-  switch (section) {
-    case "general":
-      return "General";
-    case "captions":
-      return "Captions";
-    case "connection":
-      return "Connection";
-    case "about":
-      return "About";
-    default: {
-      const exhaustive: never = section;
-      return exhaustive;
-    }
-  }
-}
-
 export function SettingsApp() {
   const [section, setSection] = useState<SettingsSection>("general");
   const [prefs, setPrefs] = useState<DesktopPrefs>(DEFAULT_PREFS);
+  const [openAtLogin, setOpenAtLoginEnabled] = useState(false);
   const [connection, setConnection] = useState<ConnectionStatus | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -164,12 +137,12 @@ export function SettingsApp() {
 
     void (async () => {
       const loaded = await loadPrefs();
-      let openAtLogin = loaded.openAtLogin;
+      let loginEnabled = false;
       if (isTauriRuntime()) {
         try {
-          openAtLogin = await isEnabled();
+          loginEnabled = await isEnabled();
         } catch {
-          openAtLogin = false;
+          loginEnabled = false;
         }
         try {
           const [name, version] = await Promise.all([getName(), getVersion()]);
@@ -182,7 +155,8 @@ export function SettingsApp() {
         }
       }
       if (!disposed) {
-        setPrefs({ ...loaded, openAtLogin });
+        setPrefs(loaded);
+        setOpenAtLoginEnabled(loginEnabled);
       }
     })();
 
@@ -238,7 +212,7 @@ export function SettingsApp() {
 
   const setOpenAtLogin = useCallback(async (enabled: boolean) => {
     setLoginError(null);
-    setPrefs((current) => ({ ...current, openAtLogin: enabled }));
+    setOpenAtLoginEnabled(enabled);
     try {
       if (isTauriRuntime()) {
         if (enabled) {
@@ -247,9 +221,8 @@ export function SettingsApp() {
           await disable();
         }
       }
-      await updatePrefs({ openAtLogin: enabled });
     } catch (caught) {
-      setPrefs((current) => ({ ...current, openAtLogin: !enabled }));
+      setOpenAtLoginEnabled(!enabled);
       setLoginError(caught instanceof Error ? caught.message : String(caught));
     }
   }, []);
@@ -276,10 +249,10 @@ export function SettingsApp() {
         })}
       </nav>
       <main className="settings-content">
-        <h1>{sectionTitle(section)}</h1>
+        <h1>{SECTIONS.find((item) => item.id === section)?.label}</h1>
         {section === "general" && (
           <GeneralSection
-            openAtLogin={prefs.openAtLogin}
+            openAtLogin={openAtLogin}
             loginError={loginError}
             onOpenAtLoginChange={(enabled) => void setOpenAtLogin(enabled)}
           />
@@ -328,15 +301,6 @@ function GeneralSection({
         </label>
       </section>
       {loginError && <p className="settings-error">{loginError}</p>}
-      <section className="settings-group" aria-label="Keyboard">
-        <div className="settings-row">
-          <span>
-            <strong>Start or stop capturing</strong>
-            <em>Global shortcut. Editing comes later.</em>
-          </span>
-          <kbd className="settings-shortcut">{captureShortcutLabel()}</kbd>
-        </div>
-      </section>
     </>
   );
 }
@@ -348,7 +312,6 @@ function CaptionsSection({
   prefs: DesktopPrefs;
   onPatch: (patch: Partial<DesktopPrefs>) => void;
 }) {
-  const opacityPercent = Math.round(prefs.overlayIdleOpacity * 100);
   const opacityPreset = selectedOpacityPreset(prefs.overlayIdleOpacity);
   const previewLanguage = previewTargetLanguage(prefs.targetLanguage);
 
@@ -371,88 +334,6 @@ function CaptionsSection({
           placeholder="Your live captions will appear here."
         />
       </div>
-      <section className="settings-group" aria-label="Languages">
-        <label className="settings-row">
-          <span>
-            <strong>Translate</strong>
-            <em>When off, captions stay in one language. When on, pick From and To.</em>
-          </span>
-          <input
-            type="checkbox"
-            role="switch"
-            checked={prefs.translateEnabled}
-            onChange={(event) => {
-              const enabled = event.target.checked;
-              onPatch({
-                translateEnabled: enabled,
-                sourceLanguage: enabled ? "auto" : prefs.targetLanguage,
-                targetLanguage: enabled
-                  ? concreteCaptionLanguage(prefs.targetLanguage)
-                  : prefs.targetLanguage,
-              });
-            }}
-          />
-        </label>
-        {prefs.translateEnabled && (
-          <label className="settings-row">
-            <span>
-              <strong>From</strong>
-              <em>Spoken language. Auto uses Sarvam for English/Indic targets and Gemini otherwise.</em>
-            </span>
-            <select
-              value={prefs.sourceLanguage}
-              onChange={(event) => {
-                onPatch({ sourceLanguage: event.target.value as SupportedLanguage });
-              }}
-            >
-              <option value="auto">{LANGUAGE_LABELS.auto}</option>
-              {groupedCaptionLanguages(SOURCE_LANGUAGES).map((group) => (
-                <optgroup key={group.id} label={group.label}>
-                  {group.languages.map((language) => (
-                    <option key={language} value={language}>
-                      {LANGUAGE_LABELS[language]}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </label>
-        )}
-        <label className="settings-row">
-          <span>
-            <strong>{prefs.translateEnabled ? "To" : "Language"}</strong>
-            <em>
-              {prefs.translateEnabled
-                ? "Translated captions only. Takes effect on the next capture."
-                : "Caption language, including Auto detect. Same spoken language, no translation."}
-            </em>
-          </span>
-          <select
-            value={prefs.targetLanguage}
-            onChange={(event) => {
-              const language = event.target.value as SupportedLanguage;
-              onPatch(
-                prefs.translateEnabled
-                  ? { targetLanguage: language }
-                  : { sourceLanguage: language, targetLanguage: language },
-              );
-            }}
-          >
-            {!prefs.translateEnabled && (
-              <option value="auto">{LANGUAGE_LABELS.auto}</option>
-            )}
-            {groupedCaptionLanguages(TARGET_LANGUAGES).map((group) => (
-              <optgroup key={group.id} label={group.label}>
-                {group.languages.map((language) => (
-                  <option key={language} value={language}>
-                    {LANGUAGE_LABELS[language]}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        </label>
-      </section>
       <section className="settings-group" aria-label="Overlay">
         <label className="settings-row">
           <span>
@@ -492,25 +373,6 @@ function CaptionsSection({
             ))}
           </div>
         </div>
-        <label className="settings-row">
-          <span>
-            <strong>Idle opacity</strong>
-            <em>Fine-tune the idle glass. One slider, not two.</em>
-          </span>
-          <div className="settings-slider">
-            <input
-              type="range"
-              min={OVERLAY_IDLE_OPACITY_MIN}
-              max={OVERLAY_IDLE_OPACITY_MAX}
-              step={0.01}
-              value={prefs.overlayIdleOpacity}
-              onChange={(event) => {
-                onPatch({ overlayIdleOpacity: Number(event.target.value) });
-              }}
-            />
-            <span className="settings-slider-value">{opacityPercent}%</span>
-          </div>
-        </label>
       </section>
     </>
   );

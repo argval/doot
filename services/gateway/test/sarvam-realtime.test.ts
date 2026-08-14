@@ -123,9 +123,7 @@ test("replays recent audio through Realtime after a transient disconnect", async
       server.connections[0]?.messages.some(isRealtimeAudioInput),
     ));
     server.terminate(0);
-    await waitForCondition(() => events.some((event) => (
-      event.type === "state" && event.state === "reconnecting"
-    )));
+    await waitForCondition(() => events.some((event) => event.type === "warning"));
 
     session.pushAudio(Buffer.alloc(3_200, 22), 200);
     await server.waitForConnections(2);

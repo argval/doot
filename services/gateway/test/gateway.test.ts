@@ -6,16 +6,9 @@ import {
 } from "@doot/protocol";
 import WebSocket from "ws";
 import { parseClientMessage } from "../src/gateway.js";
-import { createProviderRouter } from "../src/speech/registry.js";
-import { createTranslationRouter } from "../src/translation/registry.js";
-import {
-  SARVAM_SUPPORTED_LANGUAGES,
-  hasSpeechEnergy,
-  pcmS16leRms,
-  toSarvamLanguageCode,
-} from "../src/speech/sarvam/languages.js";
+import { buildServer, createProviderRouter, createTranslationRouter } from "../src/server.js";
+import { SARVAM_SUPPORTED_LANGUAGES } from "../src/speech/sarvam/languages.js";
 import { toGeminiLanguageCode } from "../src/speech/gemini/languages.js";
-import { buildServer } from "../src/server.js";
 
 test("accepts canonical language IDs in session-start messages", () => {
   for (const sourceLanguage of SUPPORTED_LANGUAGES) {
@@ -135,7 +128,7 @@ test("returns the established provider error when Gemini is unavailable", async 
 test("streams revisioned mock captions after receiving PCM", async (context) => {
   const app = await buildServer(
     createProviderRouter(),
-    async (request) => request.text,
+    createTranslationRouter(),
     { utteranceGraceMs: 10 },
   );
   context.after(() => app.close());
@@ -219,8 +212,6 @@ test("health reports speech, translation, and language coverage", async (context
       sarvamApiKey: "test-sarvam-key",
       geminiApiKey: "test-gemini-key",
     }),
-    (request) => translation.translate(request),
-    {},
     translation,
   );
   context.after(() => app.close());
@@ -244,23 +235,10 @@ test("health reports speech, translation, and language coverage", async (context
   assert.ok(body.languages.targets.includes("ja"));
 });
 
-test("maps all Saaras languages and retains PCM diagnostics", () => {
-  assert.equal(toSarvamLanguageCode("auto"), "unknown");
-  assert.equal(toSarvamLanguageCode("kn"), "kn-IN");
-  assert.equal(toSarvamLanguageCode("doi"), "doi-IN");
+test("maps Gemini language codes", () => {
   assert.equal(toGeminiLanguageCode("en"), "en");
   assert.equal(toGeminiLanguageCode("zh"), "zh-Hans");
   assert.equal(toGeminiLanguageCode("pt"), "pt-BR");
-
-  const silence = new Uint8Array(32_000);
-  assert.equal(pcmS16leRms(silence), 0);
-  assert.equal(hasSpeechEnergy(silence), false);
-
-  const tone = Buffer.alloc(32_000);
-  for (let index = 0; index < tone.length; index += 2) {
-    tone.writeInt16LE(8_000, index);
-  }
-  assert.equal(hasSpeechEnergy(tone), true);
 });
 
 function receiveMessage(url: string, payload: string): Promise<unknown> {
@@ -295,7 +273,7 @@ function receiveMockFinalCaption(url: string): Promise<ServerMessage> {
         type: "start_session",
         sessionId: "mock-session",
         sourceLanguage: "en",
-        targetLanguage: "hi",
+        targetLanguage: "en",
         provider: "mock",
         sampleRate: 16_000,
         channels: 1,
