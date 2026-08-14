@@ -1,11 +1,18 @@
 import type { CaptionEvent } from "@doot/protocol";
 
 const MAX_FINALIZED_UTTERANCES = 18;
-const MAX_VISIBLE_UTTERANCES = 2;
+/** Recent speaker turns / pause-separated sections kept on-screen. */
+const MAX_VISIBLE_UTTERANCES = 4;
 
 export interface CaptionState {
   finalized: CaptionEvent[];
   active: CaptionEvent | null;
+}
+
+export interface VisibleCaptionLine {
+  utteranceId: string;
+  translatedText: string;
+  isActive: boolean;
 }
 
 export const EMPTY_CAPTION_STATE: CaptionState = {
@@ -47,25 +54,50 @@ export function reduceCaptionEvent(
   };
 }
 
-/** Primary overlay line only — translations, never the source transcript. */
+/**
+ * Overlay turns: each VAD-finalized utterance is its own line.
+ * Short pauses stay on one line because the gateway coalesces them into
+ * a single utterance. Speaker changes and long pauses become new lines.
+ */
 export function selectVisibleCaptions(state: CaptionState): {
-  translatedText: string;
+  lines: VisibleCaptionLine[];
 } {
   const utterances = state.active
     ? [...state.finalized, state.active]
     : state.finalized;
   const recent = utterances.slice(-MAX_VISIBLE_UTTERANCES);
-  const translatedText = recent
-    .map((utterance) => utterance.translatedText)
-    .filter(Boolean)
-    .filter((text, index, texts) => {
-      const previous = texts[index - 1];
-      if (!previous) return true;
-      // Avoid "where is this where is this" when consecutive Gemini turns stutter.
-      return normalizeVisible(previous) !== normalizeVisible(text);
-    })
-    .join(" ");
-  return { translatedText };
+  const lines: VisibleCaptionLine[] = [];
+
+  for (const utterance of recent) {
+    const translatedText = utterance.translatedText.trim();
+    if (!translatedText) continue;
+
+    const previous = lines[lines.length - 1];
+    if (
+      previous
+      && normalizeVisible(previous.translatedText) === normalizeVisible(translatedText)
+    ) {
+      // Avoid "where is this / where is this" when consecutive Gemini turns stutter.
+      lines[lines.length - 1] = toVisibleLine(state, utterance, translatedText);
+      continue;
+    }
+
+    lines.push(toVisibleLine(state, utterance, translatedText));
+  }
+
+  return { lines };
+}
+
+function toVisibleLine(
+  state: CaptionState,
+  utterance: CaptionEvent,
+  translatedText: string,
+): VisibleCaptionLine {
+  return {
+    utteranceId: utterance.utteranceId,
+    translatedText,
+    isActive: state.active?.utteranceId === utterance.utteranceId,
+  };
 }
 
 function normalizeVisible(value: string): string {

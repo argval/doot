@@ -93,7 +93,6 @@ button {
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 10px;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -101,6 +100,15 @@ button {
   /* Fade older text at the top so the latest line stays fully readable. */
   mask-image: linear-gradient(to bottom, transparent 0%, #000 1.4rem);
   -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 1.4rem);
+}
+
+.caption-lines {
+  display: flex;
+  width: 100%;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 0.42em;
+  margin-top: auto;
 }
 
 .caption-copy::-webkit-scrollbar {
@@ -331,6 +339,14 @@ button {
   flex: 0 0 auto;
   /* Keep the newest lines pinned to the bottom of the visible area. */
   margin-top: auto;
+}
+
+.caption-turn {
+  margin-top: 0;
+}
+
+.caption-turn:not(.live) {
+  color: rgb(245 244 247 / 70%);
 }
 
 .caption-text.placeholder {

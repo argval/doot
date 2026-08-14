@@ -45,7 +45,7 @@ export function App() {
   const acceptedSessionIdRef = useRef<string | null>(null);
   const lastProviderRef = useRef<string | null>(DEFAULT_PREFS.lastProvider);
   const captionCopyRef = useRef<HTMLDivElement>(null);
-  const visibleCaptions = selectVisibleCaptions(captions);
+  const visibleLines = selectVisibleCaptions(captions).lines;
   const sourceLanguage = prefs.sourceLanguage;
   const targetLanguage = prefs.targetLanguage;
 
@@ -196,11 +196,13 @@ export function App() {
     };
   }, [toggleCapture]);
 
+  const placeholder = session
+    ? "Listening to system audio…"
+    : "Your live captions will appear here.";
   const displayedText = error
-    || visibleCaptions.translatedText
-    || (session
-      ? "Listening to system audio…"
-      : "Your live captions will appear here.");
+    || (visibleLines.length > 0
+      ? visibleLines.map((line) => line.translatedText).join("\n")
+      : placeholder);
 
   useLayoutEffect(() => {
     const captionCopy = captionCopyRef.current;
@@ -254,16 +256,24 @@ export function App() {
           }}
         >
           <div ref={captionCopyRef} className="caption-copy">
-            <p
-              className={error
-                ? "caption-text error-text"
-                : visibleCaptions.translatedText
-                  ? "caption-text"
-                  : "caption-text placeholder"}
-              aria-live="polite"
-            >
-              {displayedText}
-            </p>
+            {error ? (
+              <p className="caption-text error-text" aria-live="polite">{error}</p>
+            ) : visibleLines.length > 0 ? (
+              <div className="caption-lines" aria-live="polite">
+                {visibleLines.map((line) => (
+                  <p
+                    key={line.utteranceId}
+                    className={line.isActive
+                      ? "caption-text caption-turn live"
+                      : "caption-text caption-turn"}
+                  >
+                    {line.translatedText}
+                  </p>
+                ))}
+              </div>
+            ) : (
+              <p className="caption-text placeholder">{placeholder}</p>
+            )}
           </div>
           {!error && statusNotice && (
             <p className="caption-notice" role="status">{statusNotice}</p>

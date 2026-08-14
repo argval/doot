@@ -11,6 +11,7 @@
 - Prefer TypeScript 7 configured consistently across the monorepo.
 - When committing agent work, include `AGENTS.md` updates in the same commit (do not leave them unstaged as unrelated).
 - Prefer translated-only captions; do not show source/original transcription under the translation.
+- Captions start a new overlay line on each speaker turn, long pause, or section break (VAD-finalized utterance). Short pauses stay on the same line because the gateway coalesces them. Do not concatenate recent turns into one continuous string.
 - Settings belong in a separate decorated window, not on the captions overlay.
 - Translated captions should update progressively in realtime (word-by-word feel) while staying sentence-aware—not only after pause or finalization; when the captions area fills, keep the latest caption visible and prefer continuous sentence flow over fragmented short phrases.
 
@@ -31,6 +32,7 @@
 - Caption pipeline aims for persistent Sarvam streaming with VAD-driven utterance boundaries and code-switch-tolerant Indic translation (including Kannada).
 - Desktop chrome is two windows: the captions overlay stays captions-only, and a decorated Settings window opens from Doot → Settings… (⌘,), the tray, or `open_settings_window`.
 - Overlay prefs persist with `tauri-plugin-store` (languages, caption text size, idle opacity, open-at-login, last provider). Overlay position/size persist with `tauri-plugin-window-state`.
+- Overlay caption lines map 1:1 to gateway utterances: the last few turns stack as separate lines (previous turns slightly dimmer), instead of joining with spaces.
 - Settings Connection is status-only in this phase (gateway reachability, capture backend, last provider). API keys and gateway process still live in `.env` / the terminal.
 
 ## graphify
