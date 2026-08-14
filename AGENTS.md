@@ -38,7 +38,7 @@
 - Overlay visuals share `apps/desktop/src/tokens.css`. Caption chrome lives in `CaptionPanel` (`apps/desktop/src/overlay/CaptionPanel.tsx`) so Settings can reuse the same panel later.
 - The caption panel sets `lang` / `dir` from the **target** language (protocol `od` → HTML `or`). Indic, CJK, and RTL scripts use looser line-height and no negative tracking; Latin keeps tighter display type.
 - Overlay shows a hover-only resize grip; caption font size stays a pref and does not scale with the window.
-- Non-Tauri overlay preview adds `web-preview` on `<html>` so glass shows against a backdrop. Tauri keeps a fully transparent window.
+- Browser overlay preview adds `web-preview` on `<html>` so glass shows against a backdrop. Tauri keeps a fully transparent window. Caption/status listeners are skipped in the browser so Tauri `transformCallback` errors do not replace captions.
 - Browser-only UI checks: `http://localhost:1420/?preview=captions` (stacked lines), `/?preview=captions-indic` (Kannada metrics), `/?window=settings` (Settings). These query flags are ignored in Tauri.
 - Settings Connection is status-only in this phase (gateway reachability, capture backend, last provider). API keys and gateway process still live in `.env` / the terminal.
 - Windows Settings copy and overlay shortcut labels should stay OS-neutral (`this computer`, `Ctrl+Shift+D`); do not hardcode Mac-only chrome strings.
