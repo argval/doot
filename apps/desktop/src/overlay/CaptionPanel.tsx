@@ -37,8 +37,10 @@ export function CaptionPanel({
   error,
   statusNotice,
   placeholder,
+  listening = false,
   copyRef,
   onDragStart,
+  onOpenSettings,
   showResizeGrip = false,
 }: {
   lines: readonly VisibleCaptionLine[];
@@ -46,8 +48,10 @@ export function CaptionPanel({
   error: string | null;
   statusNotice: string | null;
   placeholder: string;
+  listening?: boolean;
   copyRef?: Ref<HTMLDivElement>;
   onDragStart?: (event: MouseEvent<HTMLElement>) => void;
+  onOpenSettings?: () => void;
   showResizeGrip?: boolean;
 }) {
   const script = captionScript(targetLanguage);
@@ -64,7 +68,19 @@ export function CaptionPanel({
       <span className="caption-grain" aria-hidden="true" />
       <div ref={copyRef} className="caption-copy">
         {error ? (
-          <p className="caption-text error-text" aria-live="polite">{error}</p>
+          <div className="caption-error" aria-live="polite">
+            <p className="caption-text error-text">{error}</p>
+            {onOpenSettings && (
+              <button
+                type="button"
+                className="caption-error-action"
+                onMouseDown={(event) => event.stopPropagation()}
+                onClick={onOpenSettings}
+              >
+                Open Settings
+              </button>
+            )}
+          </div>
         ) : lines.length > 0 ? (
           <div className="caption-lines" aria-live="polite">
             {lines.map((line) => (
@@ -79,7 +95,10 @@ export function CaptionPanel({
             ))}
           </div>
         ) : (
-          <p className="caption-text placeholder">{placeholder}</p>
+          <p className={listening ? "caption-text placeholder listening" : "caption-text placeholder"}>
+            {listening && <AudioBars />}
+            {placeholder}
+          </p>
         )}
       </div>
       {!error && statusNotice && (
@@ -102,5 +121,16 @@ export function CaptionPanel({
         </span>
       )}
     </section>
+  );
+}
+
+function AudioBars() {
+  return (
+    <span className="audio-bars" aria-hidden="true">
+      <span />
+      <span />
+      <span />
+      <span />
+    </span>
   );
 }

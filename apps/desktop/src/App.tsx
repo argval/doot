@@ -14,10 +14,11 @@ import {
   selectVisibleCaptions,
 } from "./captions";
 import { CaptionPanel } from "./overlay/CaptionPanel";
-import { webPreviewCaptionLines, webPreviewTargetLanguage } from "./overlay/web-preview";
+import { useOverlayWebPreview } from "./overlay/web-preview";
 import { captureShortcutLabel } from "./lib/shortcut";
 import { isTauriRuntime } from "./lib/runtime";
 import {
+  openSettingsWindow,
   startCaptionSession,
   stopCaptionSession,
   subscribeToCaptions,
@@ -49,10 +50,18 @@ export function App() {
   const acceptedSessionIdRef = useRef<string | null>(null);
   const lastProviderRef = useRef<string | null>(DEFAULT_PREFS.lastProvider);
   const captionCopyRef = useRef<HTMLDivElement>(null);
-  const previewLines = webPreviewCaptionLines();
-  const visibleLines = previewLines ?? selectVisibleCaptions(captions).lines;
+  const preview = useOverlayWebPreview();
+  const visibleLines = preview.lines ?? selectVisibleCaptions(captions).lines;
   const sourceLanguage = prefs.sourceLanguage;
-  const targetLanguage = webPreviewTargetLanguage() ?? prefs.targetLanguage;
+  const targetLanguage = preview.targetLanguage ?? prefs.targetLanguage;
+  const capturing = session !== null || preview.capturing;
+  const overlayError = preview.error ?? error;
+  const listening = capturing && visibleLines.length === 0 && !overlayError;
+  const languagesLocked = capturing || isTransitioning;
+  const providerLabel = session?.provider || prefs.lastProvider;
+  const captureHint = capturing
+    ? `Stop capturing (${captureShortcutLabel()})${providerLabel ? ` · ${providerLabel}` : ""}`
+    : `Start capturing (${captureShortcutLabel()})`;
 
   const applyPrefs = useCallback((next: DesktopPrefs) => {
     lastProviderRef.current = next.lastProvider;
@@ -74,6 +83,10 @@ export function App() {
 
   const toggleCapture = useCallback(async () => {
     if (isTransitioning) return;
+    if (!isTauriRuntime()) {
+      setError("System audio capture needs the Doot desktop app.");
+      return;
+    }
 
     setIsTransitioning(true);
     setError(null);
@@ -130,6 +143,14 @@ export function App() {
       unsubscribe?.();
     };
   }, [applyPrefs]);
+
+  const openSettings = useCallback(() => {
+    if (!isTauriRuntime()) {
+      window.location.assign("/?window=settings");
+      return;
+    }
+    void openSettingsWindow().catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     if (!isTauriRuntime()) {
@@ -204,10 +225,10 @@ export function App() {
     };
   }, [toggleCapture]);
 
-  const placeholder = session
+  const placeholder = capturing
     ? "Listening to system audio…"
     : "Your live captions will appear here.";
-  const displayedText = error
+  const displayedText = overlayError
     || (visibleLines.length > 0
       ? visibleLines.map((line) => line.translatedText).join("\n")
       : placeholder);
@@ -229,7 +250,7 @@ export function App() {
             onChange={(language) => void persistLanguage("sourceLanguage", language)}
             languages={selectableSourceLanguages}
             allowAuto
-            disabled={session !== null || isTransitioning}
+            disabled={languagesLocked}
           />
           <span className="language-divider"><Languages size={13} /></span>
           <LanguageSelect
@@ -237,22 +258,19 @@ export function App() {
             value={targetLanguage}
             onChange={(language) => void persistLanguage("targetLanguage", language)}
             languages={selectableTargetLanguages}
-            disabled={session !== null || isTransitioning}
+            disabled={languagesLocked}
           />
           <button
             type="button"
-            className={session ? "capture-toggle active" : "capture-toggle"}
+            className={capturing ? "capture-toggle active" : "capture-toggle"}
             disabled={isTransitioning}
-            aria-label={session ? "Stop capturing" : "Start capturing"}
-            title={
-              session
-                ? `Stop capturing (${captureShortcutLabel()})`
-                : `Start capturing (${captureShortcutLabel()})`
-            }
+            aria-pressed={capturing}
+            aria-label={capturing ? "Stop capturing" : "Start capturing"}
+            title={captureHint}
             onMouseDown={(event) => event.stopPropagation()}
             onClick={() => void toggleCapture()}
           >
-            {session
+            {capturing
               ? <Square size={10} fill="currentColor" />
               : <Circle size={11} fill="currentColor" />}
           </button>
@@ -261,11 +279,13 @@ export function App() {
         <CaptionPanel
           lines={visibleLines}
           targetLanguage={targetLanguage}
-          error={error}
+          error={overlayError}
           statusNotice={statusNotice}
           placeholder={placeholder}
+          listening={listening}
           copyRef={captionCopyRef}
           showResizeGrip
+          onOpenSettings={openSettings}
           onDragStart={(event) => {
             if (event.button !== 0 || !isTauriRuntime()) {
               return;
@@ -299,6 +319,7 @@ function LanguageSelect({
       <select
         value={value}
         disabled={disabled}
+        title={disabled ? "Stop to change languages" : undefined}
         onChange={(event) => onChange(event.target.value as SupportedLanguage)}
         onMouseDown={(event) => event.stopPropagation()}
       >
