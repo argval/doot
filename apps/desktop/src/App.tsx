@@ -13,6 +13,7 @@ import {
   reduceCaptionEvent,
   selectVisibleCaptions,
 } from "./captions";
+import { captureShortcutLabel } from "./lib/shortcut";
 import {
   startCaptionSession,
   stopCaptionSession,
@@ -236,7 +237,11 @@ export function App() {
             className={session ? "capture-toggle active" : "capture-toggle"}
             disabled={isTransitioning}
             aria-label={session ? "Stop capturing" : "Start capturing"}
-            title={session ? "Stop capturing (⌘⇧D)" : "Start capturing (⌘⇧D)"}
+            title={
+              session
+                ? `Stop capturing (${captureShortcutLabel()})`
+                : `Start capturing (${captureShortcutLabel()})`
+            }
             onMouseDown={(event) => event.stopPropagation()}
             onClick={() => void toggleCapture()}
           >

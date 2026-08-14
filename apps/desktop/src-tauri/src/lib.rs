@@ -37,8 +37,16 @@ pub(crate) fn remember_provider(app: &AppHandle, provider: &str) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(all(
+        not(any(target_os = "android", target_os = "ios")),
+        target_os = "macos"
+    ))]
     let toggle_shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyD);
+    #[cfg(all(
+        not(any(target_os = "android", target_os = "ios")),
+        not(target_os = "macos")
+    ))]
+    let toggle_shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyD);
 
     let mut builder =
         tauri::Builder::default().plugin(tauri_plugin_store::Builder::default().build());

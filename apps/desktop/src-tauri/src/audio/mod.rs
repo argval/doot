@@ -1,4 +1,5 @@
 pub mod capture;
+pub mod convert;
 
 use crate::stream::{StreamManager, StreamSession};
 use serde::Serialize;

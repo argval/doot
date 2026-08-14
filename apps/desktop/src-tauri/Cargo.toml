@@ -32,3 +32,13 @@ tauri-plugin-window-state = "=2.2.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 screencapturekit = { version = "8.0.1", features = ["macos_13_0"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61.3", features = [
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_Media_KernelStreaming",
+    "Win32_Media_Multimedia",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+] }
