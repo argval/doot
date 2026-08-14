@@ -22,8 +22,8 @@ services/gateway
     └─ bounded PCM chunk handling seam
         │
 packages/protocol       Shared client/server message types
-packages/db             Drizzle schema and PostgreSQL client
-infra                    Local PostgreSQL compose setup
+packages/db             Drizzle schema and local Turso (SQLite) client
+infra                    Notes for a later production gateway layout
 ```
 
 ## Prerequisites
@@ -32,7 +32,7 @@ infra                    Local PostgreSQL compose setup
 - Rust stable and Cargo.
 - Tauri 2 system prerequisites for your operating system. Follow the [official Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
 - macOS 14 or newer for the current ScreenCaptureKit implementation.
-- Docker Desktop (only needed for PostgreSQL).
+- Optional: `npm run db:migrate` creates a local Turso SQLite file (no Docker).
 
 On macOS, the eventual ScreenCaptureKit implementation will need Screen Recording permission. On Windows, the WASAPI loopback implementation will use the default render endpoint and does not require microphone permission for system audio.
 
@@ -41,7 +41,7 @@ On macOS, the eventual ScreenCaptureKit implementation will need Screen Recordin
 ```bash
 npm install
 npm run setup
-docker compose up -d postgres
+npm run db:migrate
 ```
 
 No API key is needed to inspect the UI or exercise the mock caption path. For live captions, set `SARVAM_API_KEY` and/or `GEMINI_API_KEY` in the repo-root `.env` (see `.env.example`). Sarvam handles English and Indic speech; Gemini Live Translate handles other spoken languages. Text translation uses Sarvam for Indic pairs and Gemini text MT for everything else (so English→Spanish/French stays on Sarvam STT plus Gemini MT).
@@ -91,6 +91,7 @@ npm run build
 npm run test
 npm run lint --workspace @doot/desktop
 npm run db:generate
+npm run db:migrate
 npm run build:tauri
 ```
 
@@ -147,7 +148,7 @@ Provider-specific code is local to its directory under `services/gateway/src/spe
 - **Tauri 2 + Rust:** native audio and OS integration belong beside the UI, while React keeps the overlay easy to iterate on.
 - **Provider modules:** Sarvam owns English/Indic speech and Indic text translation. Gemini Live Translate covers international speech; Gemini text MT covers non-Indic pairs from Sarvam transcripts.
 - **WebSocket gateway:** streaming audio and partial captions need a long-lived, bidirectional connection. The gateway is intentionally stateless beyond each socket for the first version.
-- **Drizzle-ready PostgreSQL:** the schema stores sessions and finalized caption segments without forcing persistence into the live audio path.
+- **Drizzle + Turso:** sessions and finalized caption segments live in a local SQLite file (Rust-rewritten engine) without forcing persistence into the live audio path.
 - **Explicit platform stubs:** platform capture code is isolated behind a trait so macOS, Windows, and a future Linux backend can evolve independently.
 
 ## Current limitations
