@@ -35,6 +35,11 @@
 - Desktop chrome is two windows: the captions overlay stays captions-only, and a decorated Settings window opens from Doot → Settings… (⌘,), the tray, or `open_settings_window`.
 - Overlay prefs persist with `tauri-plugin-store` (languages, caption text size, idle opacity, open-at-login, last provider). Overlay position/size persist with `tauri-plugin-window-state`.
 - Overlay caption lines map 1:1 to gateway utterances: the last few turns stack as separate lines (previous turns slightly dimmer), instead of joining with spaces.
+- Overlay visuals share `apps/desktop/src/tokens.css`. Caption chrome lives in `CaptionPanel` (`apps/desktop/src/overlay/CaptionPanel.tsx`) so Settings can reuse the same panel later.
+- The caption panel sets `lang` / `dir` from the **target** language (protocol `od` → HTML `or`). Indic, CJK, and RTL scripts use looser line-height and no negative tracking; Latin keeps tighter display type.
+- Overlay shows a hover-only resize grip; caption font size stays a pref and does not scale with the window.
+- Non-Tauri overlay preview adds `web-preview` on `<html>` so glass shows against a backdrop. Tauri keeps a fully transparent window.
+- Browser-only UI checks: `http://localhost:1420/?preview=captions` (stacked lines), `/?preview=captions-indic` (Kannada metrics), `/?window=settings` (Settings). These query flags are ignored in Tauri.
 - Settings Connection is status-only in this phase (gateway reachability, capture backend, last provider). API keys and gateway process still live in `.env` / the terminal.
 - Windows Settings copy and overlay shortcut labels should stay OS-neutral (`this computer`, `Ctrl+Shift+D`); do not hardcode Mac-only chrome strings.
 
@@ -60,6 +65,6 @@ Environment: Linux VM with Node 22, npm 10, and Rust 1.83 preinstalled. Docker i
 - The **Tauri/Rust desktop app is macOS- and Windows-native** (ScreenCaptureKit / WASAPI). Do not try to run `npm run dev`, `npm run dev:tauri`, or `npm run build:tauri` here — they need the native OS layer and real audio capture. CI `native-check` covers macOS on `macos-latest`; `windows-native-check` covers Windows on `windows-latest`.
 - What runs on this VM:
   - Gateway: `npm run dev:gateway` → `ws://127.0.0.1:8787` with `GET /health`. Boots with no API keys.
-  - Web UI: `npm run dev:web` → Vite on **`http://localhost:1420`**. It binds IPv6 `localhost`, so `http://127.0.0.1:1420` may fail; use `localhost`. In a plain browser the overlay renders but audio capture throws a Tauri `transformCallback` error — expected without the native layer.
+  - Web UI: `npm run dev:web` → Vite on **`http://localhost:1420`**. It binds IPv6 `localhost`, so `http://127.0.0.1:1420` may fail; use `localhost`. In a plain browser the overlay renders but audio capture throws a Tauri `transformCallback` error — expected without the native layer. Overlay glass uses a `web-preview` backdrop. Caption chrome: `/?preview=captions` and `/?preview=captions-indic`. Settings: `/?window=settings`.
 - No-key end-to-end testing: the gateway has a built-in `mock` speech provider (always `configured`). Open a realtime session with `provider: "mock"` and equal source/target languages (e.g. `en`→`en`) to get full end-to-end captions without any API keys; the translation router is a passthrough when `source === target`. Live captions need `SARVAM_API_KEY` / `ELEVENLABS_API_KEY` / `TRANSLATION_API_KEY` in the repo-root `.env` (create via `npm run setup`, which copies `.env.example`).
 - Turso/SQLite (`npm run db:migrate`) is optional and not wired into the gateway yet (captions are not persisted). The local file defaults to `packages/db/data/doot.db`; override with `DOOT_DB_PATH`. Docker is not required for the database.

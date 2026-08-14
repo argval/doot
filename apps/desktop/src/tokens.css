@@ -1,0 +1,78 @@
+:root {
+  --font-sans: "SF Pro Text", "SF Pro Display", "Segoe UI", -apple-system,
+    BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --duration-micro: 120ms;
+  --duration-standard: 240ms;
+  --duration-ambient: 360ms;
+
+  --overlay-ink: #f5f4f7;
+  --overlay-ink-muted: rgb(245 244 247 / 70%);
+  --overlay-ink-placeholder: rgb(229 226 234 / 62%);
+  --overlay-ink-error: #ffaaa1;
+  --overlay-ink-notice: rgb(225 221 230 / 58%);
+  --overlay-ink-subtle: #91909a;
+  --overlay-ink-label: #7d7a84;
+  --overlay-fill: 25 24 31;
+  --overlay-radius: 18px;
+  --overlay-accent: #fd8058;
+  --overlay-accent-from: #ffa37f;
+  --overlay-accent-to: #fb7450;
+  --overlay-accent-ink: #2c1814;
+  --overlay-picker-bg: rgb(25 24 31 / 72%);
+  --overlay-picker-border: rgb(255 255 255 / 13%);
+  --caption-line-height: 1.25;
+  --caption-letter-spacing: -0.035em;
+  --caption-weight: 510;
+
+  --settings-ink: #1d1d1f;
+  --settings-ink-secondary: #6e6e73;
+  --settings-nav: #3a3a3c;
+  --settings-nav-selected: #111;
+  --settings-nav-hover: rgb(0 0 0 / 6%);
+  --settings-nav-selected-bg: rgb(0 0 0 / 8%);
+  --settings-bg: #e8e8ed;
+  --settings-sidebar-bg: rgb(255 255 255 / 42%);
+  --settings-sidebar-border: rgb(0 0 0 / 8%);
+  --settings-card: #fff;
+  --settings-row-border: rgb(0 0 0 / 6%);
+  --settings-control: rgb(120 120 128 / 12%);
+  --settings-control-ink: #1d1d1f;
+  --settings-switch: rgb(120 120 128 / 32%);
+  --settings-accent: #0a84ff;
+  --settings-ok: #34c759;
+  --settings-ok-ink: #0e7a32;
+  --settings-ok-bg: rgb(52 199 89 / 16%);
+  --settings-down-ink: #c43131;
+  --settings-down-bg: rgb(255 59 48 / 14%);
+  --settings-live-ink: #b54716;
+  --settings-live-bg: rgb(255 149 0 / 18%);
+  --settings-badge: rgb(120 120 128 / 12%);
+  --settings-badge-ink: #6e6e73;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --settings-ink: #f5f5f7;
+    --settings-ink-secondary: #a1a1a6;
+    --settings-nav: #e5e5ea;
+    --settings-nav-selected: #fff;
+    --settings-nav-hover: rgb(255 255 255 / 8%);
+    --settings-nav-selected-bg: rgb(255 255 255 / 12%);
+    --settings-bg: #1c1c1e;
+    --settings-sidebar-bg: rgb(255 255 255 / 4%);
+    --settings-sidebar-border: rgb(255 255 255 / 8%);
+    --settings-card: #2c2c2e;
+    --settings-row-border: rgb(255 255 255 / 8%);
+    --settings-control: rgb(120 120 128 / 28%);
+    --settings-control-ink: #f5f5f7;
+    --settings-ok-ink: #30d158;
+    --settings-ok-bg: rgb(48 209 88 / 16%);
+    --settings-down-ink: #ff6961;
+    --settings-down-bg: rgb(255 69 58 / 16%);
+    --settings-live-ink: #ffd60a;
+    --settings-live-bg: rgb(255 214 10 / 14%);
+    --settings-badge: rgb(120 120 128 / 24%);
+    --settings-badge-ink: #a1a1a6;
+  }
+}

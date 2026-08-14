@@ -13,6 +13,8 @@ import {
   reduceCaptionEvent,
   selectVisibleCaptions,
 } from "./captions";
+import { CaptionPanel } from "./overlay/CaptionPanel";
+import { webPreviewCaptionLines, webPreviewTargetLanguage } from "./overlay/web-preview";
 import { captureShortcutLabel } from "./lib/shortcut";
 import {
   startCaptionSession,
@@ -46,9 +48,10 @@ export function App() {
   const acceptedSessionIdRef = useRef<string | null>(null);
   const lastProviderRef = useRef<string | null>(DEFAULT_PREFS.lastProvider);
   const captionCopyRef = useRef<HTMLDivElement>(null);
-  const visibleLines = selectVisibleCaptions(captions).lines;
+  const previewLines = webPreviewCaptionLines();
+  const visibleLines = previewLines ?? selectVisibleCaptions(captions).lines;
   const sourceLanguage = prefs.sourceLanguage;
-  const targetLanguage = prefs.targetLanguage;
+  const targetLanguage = webPreviewTargetLanguage() ?? prefs.targetLanguage;
 
   const applyPrefs = useCallback((next: DesktopPrefs) => {
     lastProviderRef.current = next.lastProvider;
@@ -251,39 +254,20 @@ export function App() {
           </button>
         </div>
 
-        <section
-          className="caption-window"
-          aria-label="Doot live captions"
-          onMouseDown={(event) => {
+        <CaptionPanel
+          lines={visibleLines}
+          targetLanguage={targetLanguage}
+          error={error}
+          statusNotice={statusNotice}
+          placeholder={placeholder}
+          copyRef={captionCopyRef}
+          showResizeGrip
+          onDragStart={(event) => {
             if (event.button === 0) {
               void getCurrentWindow().startDragging().catch(() => undefined);
             }
           }}
-        >
-          <div ref={captionCopyRef} className="caption-copy">
-            {error ? (
-              <p className="caption-text error-text" aria-live="polite">{error}</p>
-            ) : visibleLines.length > 0 ? (
-              <div className="caption-lines" aria-live="polite">
-                {visibleLines.map((line) => (
-                  <p
-                    key={line.utteranceId}
-                    className={line.isActive
-                      ? "caption-text caption-turn live"
-                      : "caption-text caption-turn"}
-                  >
-                    {line.translatedText}
-                  </p>
-                ))}
-              </div>
-            ) : (
-              <p className="caption-text placeholder">{placeholder}</p>
-            )}
-          </div>
-          {!error && statusNotice && (
-            <p className="caption-notice" role="status">{statusNotice}</p>
-          )}
-        </section>
+        />
       </div>
     </main>
   );
