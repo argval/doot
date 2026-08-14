@@ -6,6 +6,7 @@ import { isRecord } from "../../util.js";
 import {
   isSarvamTranslationSource,
   isSarvamTranslationTarget,
+  SARVAM_TRANSLATION_TARGET_LANGUAGES,
   toSarvamTranslationLanguageCode,
 } from "./languages.js";
 
@@ -15,6 +16,7 @@ const TRANSLATION_TIMEOUT_MS = 12_000;
 export class SarvamTextTranslator implements TextTranslationProvider {
   id = "sarvam";
   configured: boolean;
+  readonly targetLanguages = SARVAM_TRANSLATION_TARGET_LANGUAGES;
 
   constructor(
     private readonly apiKey?: string,

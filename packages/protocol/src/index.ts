@@ -1,9 +1,73 @@
-export const SUPPORTED_LANGUAGES = [
-  "auto",
+/** Gemini Live Translate international set, common languages first. */
+export const INTERNATIONAL_LANGUAGES = [
   "en",
   "es",
   "fr",
   "de",
+  "it",
+  "pt",
+  "ja",
+  "ko",
+  "zh",
+  "ar",
+  "ru",
+  "nl",
+  "pl",
+  "tr",
+  "vi",
+  "th",
+  "id",
+  "af",
+  "ak",
+  "sq",
+  "am",
+  "hy",
+  "az",
+  "eu",
+  "be",
+  "bg",
+  "my",
+  "ca",
+  "hr",
+  "cs",
+  "da",
+  "et",
+  "fil",
+  "fi",
+  "gl",
+  "ka",
+  "el",
+  "ha",
+  "he",
+  "hu",
+  "is",
+  "jv",
+  "kk",
+  "km",
+  "rw",
+  "lo",
+  "lv",
+  "lt",
+  "mk",
+  "ms",
+  "mn",
+  "no",
+  "fa",
+  "ro",
+  "sr",
+  "si",
+  "sk",
+  "sl",
+  "su",
+  "sw",
+  "sv",
+  "uk",
+  "uz",
+  "zu",
+] as const;
+
+/** Sarvam Indic set (English lives in INTERNATIONAL_LANGUAGES). */
+export const INDIC_LANGUAGES = [
   "hi",
   "bn",
   "gu",
@@ -28,32 +92,16 @@ export const SUPPORTED_LANGUAGES = [
   "doi",
 ] as const;
 
+export const SUPPORTED_LANGUAGES = [
+  "auto",
+  ...INTERNATIONAL_LANGUAGES,
+  ...INDIC_LANGUAGES,
+] as const;
+
 export const SUPPORTED_SOURCE_LANGUAGES = SUPPORTED_LANGUAGES;
 export const SUPPORTED_TARGET_LANGUAGES = [
-  "en",
-  "es",
-  "hi",
-  "bn",
-  "gu",
-  "kn",
-  "ml",
-  "mr",
-  "od",
-  "pa",
-  "ta",
-  "te",
-  "as",
-  "ur",
-  "ne",
-  "kok",
-  "ks",
-  "sd",
-  "sa",
-  "sat",
-  "mni",
-  "brx",
-  "mai",
-  "doi",
+  ...INTERNATIONAL_LANGUAGES,
+  ...INDIC_LANGUAGES,
 ] as const satisfies readonly (typeof SUPPORTED_LANGUAGES)[number][];
 
 export const PROVIDER_IDS = ["sarvam", "gemini", "mock"] as const;
@@ -72,6 +120,66 @@ export const LANGUAGE_LABELS: Readonly<Record<SupportedLanguage, string>> = {
   es: "Spanish",
   fr: "French",
   de: "German",
+  it: "Italian",
+  pt: "Portuguese",
+  ja: "Japanese",
+  ko: "Korean",
+  zh: "Chinese",
+  ar: "Arabic",
+  ru: "Russian",
+  nl: "Dutch",
+  pl: "Polish",
+  tr: "Turkish",
+  vi: "Vietnamese",
+  th: "Thai",
+  id: "Indonesian",
+  af: "Afrikaans",
+  ak: "Akan",
+  sq: "Albanian",
+  am: "Amharic",
+  hy: "Armenian",
+  az: "Azerbaijani",
+  eu: "Basque",
+  be: "Belarusian",
+  bg: "Bulgarian",
+  my: "Burmese",
+  ca: "Catalan",
+  hr: "Croatian",
+  cs: "Czech",
+  da: "Danish",
+  et: "Estonian",
+  fil: "Filipino",
+  fi: "Finnish",
+  gl: "Galician",
+  ka: "Georgian",
+  el: "Greek",
+  ha: "Hausa",
+  he: "Hebrew",
+  hu: "Hungarian",
+  is: "Icelandic",
+  jv: "Javanese",
+  kk: "Kazakh",
+  km: "Khmer",
+  rw: "Kinyarwanda",
+  lo: "Lao",
+  lv: "Latvian",
+  lt: "Lithuanian",
+  mk: "Macedonian",
+  ms: "Malay",
+  mn: "Mongolian",
+  no: "Norwegian",
+  fa: "Persian",
+  ro: "Romanian",
+  sr: "Serbian",
+  si: "Sinhala",
+  sk: "Slovak",
+  sl: "Slovenian",
+  su: "Sundanese",
+  sw: "Swahili",
+  sv: "Swedish",
+  uk: "Ukrainian",
+  uz: "Uzbek",
+  zu: "Zulu",
   hi: "Hindi",
   bn: "Bengali",
   gu: "Gujarati",
@@ -95,6 +203,44 @@ export const LANGUAGE_LABELS: Readonly<Record<SupportedLanguage, string>> = {
   mai: "Maithili",
   doi: "Dogri",
 };
+
+export const LANGUAGE_GROUP_LABELS = {
+  international: "International",
+  indic: "Indic",
+} as const;
+
+export type LanguageGroupId = keyof typeof LANGUAGE_GROUP_LABELS;
+
+export interface LanguageGroup {
+  id: LanguageGroupId;
+  label: string;
+  languages: SupportedLanguage[];
+}
+
+/** Group caption languages for overlay/settings selects, preserving protocol order. */
+export function groupedCaptionLanguages(
+  languages: readonly SupportedLanguage[],
+): LanguageGroup[] {
+  const allowed = new Set<string>(languages);
+  const groups: LanguageGroup[] = [];
+  const international = INTERNATIONAL_LANGUAGES.filter((language) => allowed.has(language));
+  const indic = INDIC_LANGUAGES.filter((language) => allowed.has(language));
+  if (international.length > 0) {
+    groups.push({
+      id: "international",
+      label: LANGUAGE_GROUP_LABELS.international,
+      languages: [...international],
+    });
+  }
+  if (indic.length > 0) {
+    groups.push({
+      id: "indic",
+      label: LANGUAGE_GROUP_LABELS.indic,
+      languages: [...indic],
+    });
+  }
+  return groups;
+}
 
 export function isSupportedLanguage(value: unknown): value is SupportedLanguage {
   return typeof value === "string" && SUPPORTED_LANGUAGES.some((language) => language === value);

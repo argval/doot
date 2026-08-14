@@ -20,11 +20,12 @@
 - Active stack is a monorepo with Tauri 2 + Rust desktop (`apps/desktop`), React + TypeScript + Vite UI, Fastify/TypeScript WebSocket gateway, shared protocol package, and Drizzle/PostgreSQL-oriented persistence.
 - System audio capture uses ScreenCaptureKit-style paths and requires macOS Screen Recording permission for testing.
 - Sarvam Realtime STT is the primary gateway transport; the legacy streaming client remains an automatic fallback for initial and terminal Realtime failures.
-- Gemini 3.5 Live Translate (`GEMINI_API_KEY`) is a gateway-managed international POC/benchmark for Spanish/French/German sources→en/hi/es; the overlay has no provider toggle—Auto and many English pairs still route to Sarvam.
+- Gemini 3.5 Live Translate (`GEMINI_API_KEY`) covers international spoken sources (Gemini's Live Translate matrix, not a Spanish/French/German-only POC); the overlay has no provider toggle.
 - Gemini Live Translate is audio→audio first; captions come from correlated side-channel source/output transcription and bypass the text-translation router (weaker caption UX than Sarvam's STT+MT path).
-- Speech providers are modular gateway adapters under `services/gateway/src/speech/`; Sarvam owns the supported live-caption and Indic translation lanes.
+- English/Indic speech stays on Sarvam. Non-Indic targets from those transcripts use Gemini text MT (`GEMINI_API_KEY`); Indic targets stay on Sarvam Mayura. Auto→English/Indic uses Sarvam; Auto→Spanish/French/etc. uses Gemini Live.
+- Speech providers are modular gateway adapters under `services/gateway/src/speech/`; Sarvam owns the English/Indic live-caption and Indic translation lanes.
 - Speech adapter construction is centralized in `services/gateway/src/speech/registry.ts`; routing and health metadata derive from the registered adapters.
-- Supported live-caption languages include English, Sarvam's Indic set, and the Gemini POC's Spanish/French/German sources; Spanish is also exposed as a POC target.
+- Supported live-caption languages are the protocol union of Sarvam Indic + Gemini Live Translate; French/German/Japanese/etc. are valid targets, not just sources.
 - Unsupported translation pairs emit an unavailable error with blank translated text; source text must never be substituted into translated-only captions.
 - Local runs use npm workspace scripts (`npm run dev` / `scripts/dev.sh` starts gateway and desktop together); package manager is npm, not bun.
 - Caption pipeline aims for persistent Sarvam streaming with VAD-driven utterance boundaries and code-switch-tolerant Indic translation (including Kannada).

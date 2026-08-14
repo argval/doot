@@ -14,6 +14,7 @@ export type TranslateText = (request: TranslationRequest) => Promise<string>;
 export interface TextTranslationProvider {
   id: string;
   configured: boolean;
+  targetLanguages: readonly SupportedTargetLanguage[];
   supports(request: TranslationRequest): boolean;
   translate(request: TranslationRequest): Promise<string>;
 }

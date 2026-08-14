@@ -5,105 +5,32 @@ use serde::Serialize;
 use tauri::AppHandle;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Language {
-    Auto,
-    En,
-    Es,
-    Fr,
-    De,
-    Hi,
-    Bn,
-    Gu,
-    Kn,
-    Ml,
-    Mr,
-    Od,
-    Pa,
-    Ta,
-    Te,
-    As,
-    Ur,
-    Ne,
-    Kok,
-    Ks,
-    Sd,
-    Sa,
-    Sat,
-    Mni,
-    Brx,
-    Mai,
-    Doi,
-}
+// Keep in sync with packages/protocol INTERNATIONAL_LANGUAGES + INDIC_LANGUAGES.
+const SUPPORTED_LANGUAGES: &[&str] = &[
+    "auto", "en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh", "ar", "ru", "nl", "pl", "tr",
+    "vi", "th", "id", "af", "ak", "sq", "am", "hy", "az", "eu", "be", "bg", "my", "ca", "hr",
+    "cs", "da", "et", "fil", "fi", "gl", "ka", "el", "ha", "he", "hu", "is", "jv", "kk", "km",
+    "rw", "lo", "lv", "lt", "mk", "ms", "mn", "no", "fa", "ro", "sr", "si", "sk", "sl", "su",
+    "sw", "sv", "uk", "uz", "zu", "hi", "bn", "gu", "kn", "ml", "mr", "od", "pa", "ta", "te",
+    "as", "ur", "ne", "kok", "ks", "sd", "sa", "sat", "mni", "brx", "mai", "doi",
+];
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Language(String);
 
 impl Language {
     pub fn parse(value: &str) -> Result<Self, String> {
-        match value {
-            "auto" => Ok(Self::Auto),
-            "en" => Ok(Self::En),
-            "es" => Ok(Self::Es),
-            "fr" => Ok(Self::Fr),
-            "de" => Ok(Self::De),
-            "hi" => Ok(Self::Hi),
-            "bn" => Ok(Self::Bn),
-            "gu" => Ok(Self::Gu),
-            "kn" => Ok(Self::Kn),
-            "ml" => Ok(Self::Ml),
-            "mr" => Ok(Self::Mr),
-            "od" => Ok(Self::Od),
-            "pa" => Ok(Self::Pa),
-            "ta" => Ok(Self::Ta),
-            "te" => Ok(Self::Te),
-            "as" => Ok(Self::As),
-            "ur" => Ok(Self::Ur),
-            "ne" => Ok(Self::Ne),
-            "kok" => Ok(Self::Kok),
-            "ks" => Ok(Self::Ks),
-            "sd" => Ok(Self::Sd),
-            "sa" => Ok(Self::Sa),
-            "sat" => Ok(Self::Sat),
-            "mni" => Ok(Self::Mni),
-            "brx" => Ok(Self::Brx),
-            "mai" => Ok(Self::Mai),
-            "doi" => Ok(Self::Doi),
-            other => Err(format!("unsupported language: {other}")),
+        if SUPPORTED_LANGUAGES.contains(&value) {
+            Ok(Self(value.to_string()))
+        } else {
+            Err(format!("unsupported language: {value}"))
         }
     }
 }
 
 impl std::fmt::Display for Language {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let value = match self {
-            Self::Auto => "auto",
-            Self::En => "en",
-            Self::Es => "es",
-            Self::Fr => "fr",
-            Self::De => "de",
-            Self::Hi => "hi",
-            Self::Bn => "bn",
-            Self::Gu => "gu",
-            Self::Kn => "kn",
-            Self::Ml => "ml",
-            Self::Mr => "mr",
-            Self::Od => "od",
-            Self::Pa => "pa",
-            Self::Ta => "ta",
-            Self::Te => "te",
-            Self::As => "as",
-            Self::Ur => "ur",
-            Self::Ne => "ne",
-            Self::Kok => "kok",
-            Self::Ks => "ks",
-            Self::Sd => "sd",
-            Self::Sa => "sa",
-            Self::Sat => "sat",
-            Self::Mni => "mni",
-            Self::Brx => "brx",
-            Self::Mai => "mai",
-            Self::Doi => "doi",
-        };
-        formatter.write_str(value)
+        formatter.write_str(&self.0)
     }
 }
 
@@ -250,6 +177,10 @@ mod tests {
             "pa", "ta", "te", "as", "ur", "ne", "kok", "ks", "sd", "sa", "sat", "mni", "brx",
             "mai", "doi",
         ] {
+            let language = Language::parse(code).expect("language should parse");
+            assert_eq!(language.to_string(), code);
+        }
+        for code in ["it", "pt", "ja", "zh", "ar", "fil", "no"] {
             let language = Language::parse(code).expect("language should parse");
             assert_eq!(language.to_string(), code);
         }

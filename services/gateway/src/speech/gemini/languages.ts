@@ -1,25 +1,48 @@
-import type {
-  SupportedLanguage,
-  SupportedTargetLanguage,
+import {
+  INTERNATIONAL_LANGUAGES,
+  type SupportedLanguage,
+  type SupportedTargetLanguage,
 } from "@doot/protocol";
 
 export const GEMINI_LIVE_TRANSLATE_MODEL = "gemini-3.5-live-translate-preview";
 export const GEMINI_LIVE_TRANSLATE_WS =
   "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
 
-export const GEMINI_POC_SOURCE_LANGUAGES = [
-  "en",
+/** Indic languages Gemini Live Translate covers in addition to the international set. */
+const GEMINI_LIVE_INDIC_LANGUAGES = [
   "hi",
-  "es",
-  "fr",
-  "de",
+  "bn",
+  "gu",
+  "kn",
+  "ml",
+  "mr",
+  "pa",
+  "ta",
+  "te",
+  "ur",
+  "ne",
+  "sd",
 ] as const satisfies readonly SupportedLanguage[];
 
-export const GEMINI_POC_TARGET_LANGUAGES = [
-  "en",
-  "hi",
-  "es",
+export const GEMINI_LIVE_SOURCE_LANGUAGES = [
+  "auto",
+  ...INTERNATIONAL_LANGUAGES,
+  ...GEMINI_LIVE_INDIC_LANGUAGES,
+] as const satisfies readonly SupportedLanguage[];
+
+export const GEMINI_LIVE_TARGET_LANGUAGES = [
+  ...INTERNATIONAL_LANGUAGES,
+  ...GEMINI_LIVE_INDIC_LANGUAGES,
 ] as const satisfies readonly SupportedTargetLanguage[];
+
+/** Map doot language ids onto Gemini Live Translate BCP-47 codes. */
+export function toGeminiLanguageCode(
+  language: SupportedLanguage | SupportedTargetLanguage,
+): string {
+  if (language === "zh") return "zh-Hans";
+  if (language === "pt") return "pt-BR";
+  return language;
+}
 
 /** Normalize BCP-47 / Gemini codes down to doot language ids. */
 export function normalizeGeminiLanguageCode(code: string | undefined): string | undefined {
@@ -78,7 +101,7 @@ function splitGeminiCaptionParts(text: string): string[] {
 /**
  * Keep only caption segments that match the requested target language.
  * Gemini Live Translate often leaks source-language text into outputTranscription
- * for Spanish, French, German, and other POC pairs — not Spanish alone.
+ * for Spanish, French, German, and other international pairs — not Spanish alone.
  */
 export function filterGeminiTranslationToTarget(
   text: string,
@@ -88,6 +111,7 @@ export function filterGeminiTranslationToTarget(
   const normalized = text.replace(/\s+/g, " ").trim();
   if (!normalized) return "";
   if (source === target || source === "auto") return normalized;
+  if (!LANGUAGE_MARKERS[target]) return normalized;
 
   const parts = splitGeminiCaptionParts(normalized);
   const kept: string[] = [];

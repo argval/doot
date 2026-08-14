@@ -44,7 +44,7 @@ npm run setup
 docker compose up -d postgres
 ```
 
-No API key is needed to inspect the UI or exercise the mock caption path. For live captions, set `SARVAM_API_KEY` and/or `GEMINI_API_KEY` in the repo-root `.env` (see `.env.example`). Sarvam handles English and Indic routes; the Gemini Live Translate benchmark lane handles Spanish, French, and German sources plus explicitly requested English/Hindi comparisons.
+No API key is needed to inspect the UI or exercise the mock caption path. For live captions, set `SARVAM_API_KEY` and/or `GEMINI_API_KEY` in the repo-root `.env` (see `.env.example`). Sarvam handles English and Indic speech; Gemini Live Translate handles other spoken languages. Text translation uses Sarvam for Indic pairs and Gemini text MT for everything else (so English→Spanish/French stays on Sarvam STT plus Gemini MT).
 
 ## Run locally
 
@@ -77,9 +77,9 @@ npm run dev:gateway
 you launch the native desktop process by another route, start
 `npm run dev:gateway` alongside it.
 
-On macOS, start and stop capture from the overlay, the tray menu, or with `Cmd+Shift+D`. The first capture prompts for **Screen & System Audio Recording** permission. With `SARVAM_API_KEY` set, English and supported Indic-language routes use Sarvam Realtime with automatic legacy-streaming failover. Translation is routed independently; `TRANSLATION_API_KEY` can hold a separate Sarvam translation key and otherwise falls back to `SARVAM_API_KEY`.
+On macOS, start and stop capture from the overlay, the tray menu, or with `Cmd+Shift+D`. The first capture prompts for **Screen & System Audio Recording** permission. With `SARVAM_API_KEY` set, English and supported Indic-language routes use Sarvam Realtime with automatic legacy-streaming failover. Translation is routed independently: Indic pairs use Sarvam (`TRANSLATION_API_KEY` can hold a separate Sarvam translation key and otherwise falls back to `SARVAM_API_KEY`); other pairs use Gemini text translation when `GEMINI_API_KEY` is set.
 
-With `GEMINI_API_KEY` set, Spanish, French, and German sources route through `gemini-3.5-live-translate-preview`. Gemini's source and translated transcripts are correlated inside one provider session; translated updates bypass the separate text translator and remain translated-only in the overlay. English→Spanish and English→Hindi use Gemini only when explicitly requested by the benchmark client. Auto detection continues to prefer Sarvam and is intentionally unchanged for this POC.
+With `GEMINI_API_KEY` set, non-Indic spoken sources (Spanish, French, German, Japanese, and the rest of Gemini Live Translate's set) route through `gemini-3.5-live-translate-preview`. Gemini's source and translated transcripts are correlated inside one provider session and bypass the separate text translator. Auto detect uses Sarvam when the target is English or Indic, and Gemini when the target is another international language. English→Spanish and similar pairs keep Sarvam speech recognition and Gemini text MT unless the benchmark client requests `--provider gemini`.
 
 Windows still returns the explicit WASAPI scaffold error. Other platforms retain the stub backend for session-state development.
 
@@ -131,7 +131,7 @@ The shared protocol lives in `packages/protocol/src/index.ts`. A client first se
 }
 ```
 
-The gateway responds with `session_started`, followed by `caption` events. Without an explicit provider, Sarvam remains preferred for supported English/Indic pairs, Gemini handles configured Spanish/French/German source routes, and Auto retains Sarvam's automatic detection. Sarvam source transcripts use the independent text-translation router; Gemini emits provider-native translated revisions through the same caption stabilizer.
+The gateway responds with `session_started`, followed by `caption` events. Without an explicit provider, Sarvam remains preferred for English/Indic speech (including English→Spanish via Gemini text MT), Gemini Live Translate handles other spoken-language sources, and Auto uses Sarvam for English/Indic targets and Gemini otherwise. Sarvam source transcripts use the independent text-translation router; Gemini emits provider-native translated revisions through the same caption stabilizer.
 
 Provider-specific code is local to its directory under `services/gateway/src/speech/`. A new speech model implements the small interface in `services/gateway/src/speech/contract.ts` and adds one construction entry in `services/gateway/src/speech/registry.ts`; health reporting and routing derive from that registry. Translation providers follow the equivalent contract/router/registry seam under `services/gateway/src/translation/`.
 
@@ -145,7 +145,7 @@ Provider-specific code is local to its directory under `services/gateway/src/spe
 ## Design decisions
 
 - **Tauri 2 + Rust:** native audio and OS integration belong beside the UI, while React keeps the overlay easy to iterate on.
-- **Provider modules:** Sarvam owns the supported speech and independent Indic text-translation lanes. Gemini's benchmark adapter exposes its provider-native translated transcript through the shared speech-event contract.
+- **Provider modules:** Sarvam owns English/Indic speech and Indic text translation. Gemini Live Translate covers international speech; Gemini text MT covers non-Indic pairs from Sarvam transcripts.
 - **WebSocket gateway:** streaming audio and partial captions need a long-lived, bidirectional connection. The gateway is intentionally stateless beyond each socket for the first version.
 - **Drizzle-ready PostgreSQL:** the schema stores sessions and finalized caption segments without forcing persistence into the live audio path.
 - **Explicit platform stubs:** platform capture code is isolated behind a trait so macOS, Windows, and a future Linux backend can evolve independently.
@@ -154,7 +154,7 @@ Provider-specific code is local to its directory under `services/gateway/src/spe
 
 - Native system-audio capture is implemented on macOS only.
 - Sarvam Realtime STT is wired for English and Indic-language routes with legacy-streaming failover.
-- Gemini Live Translate is a preview benchmark lane limited in-product to Spanish, French, and German sources and Spanish, English, or Hindi targets; it has no cross-provider failover yet.
-- Progressive translated captions use Sarvam's text-translation API for supported English/Indic pairs; unsupported pairs return a translation error and never display source text as translated text.
+- Gemini Live Translate covers Gemini's international language matrix for non-Indic spoken sources; it has no cross-provider failover yet.
+- Progressive translated captions use Sarvam's text-translation API for English/Indic pairs and Gemini text MT for other pairs; unsupported pairs return a translation error and never display source text as translated text.
 - Finalized captions are not persisted yet.
 - Authentication, rate limiting, billing, and production secrets management are intentionally out of scope for this skeleton.

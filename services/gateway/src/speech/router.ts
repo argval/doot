@@ -1,9 +1,11 @@
-import type {
-  AudioSampleRate,
-  ChannelCount,
-  ProviderId,
-  SupportedLanguage,
-  SupportedTargetLanguage,
+import {
+  SUPPORTED_LANGUAGES,
+  SUPPORTED_TARGET_LANGUAGES,
+  type AudioSampleRate,
+  type ChannelCount,
+  type ProviderId,
+  type SupportedLanguage,
+  type SupportedTargetLanguage,
 } from "@doot/protocol";
 import {
   supportsSession,
@@ -19,6 +21,36 @@ export class ProviderRouter {
     return Object.fromEntries(
       this.providers.map((provider) => [provider.id, provider.configured]),
     );
+  }
+
+  languageCoverage(): {
+    sources: SupportedLanguage[];
+    targets: SupportedTargetLanguage[];
+  } {
+    const sources = new Set<SupportedLanguage>();
+    const targets = new Set<SupportedTargetLanguage>();
+    for (const provider of this.providers) {
+      if (!provider.configured) continue;
+      for (const language of provider.capabilities.sourceLanguages) {
+        sources.add(language);
+      }
+      if (provider.capabilities.targetLanguages) {
+        for (const language of provider.capabilities.targetLanguages) {
+          targets.add(language);
+        }
+        continue;
+      }
+      for (const language of provider.capabilities.sourceLanguages) {
+        if (language === "auto") continue;
+        if (SUPPORTED_TARGET_LANGUAGES.some((candidate) => candidate === language)) {
+          targets.add(language);
+        }
+      }
+    }
+    return {
+      sources: SUPPORTED_LANGUAGES.filter((language) => sources.has(language)),
+      targets: SUPPORTED_TARGET_LANGUAGES.filter((language) => targets.has(language)),
+    };
   }
 
   select(
@@ -54,7 +86,10 @@ export class ProviderRouter {
       return rightPriority - leftPriority;
     });
     const selected = compatible[0];
-    if (!selected) throw new Error(`No configured speech provider supports ${source}`);
+    if (!selected) {
+      const pair = target ? `${source} → ${target}` : source;
+      throw new Error(`No configured speech provider supports ${pair}`);
+    }
     return selected;
   }
 }

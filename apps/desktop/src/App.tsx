@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { ChevronDown, Circle, Languages, Square } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  groupedCaptionLanguages,
   LANGUAGE_LABELS,
   SUPPORTED_SOURCE_LANGUAGES,
   SUPPORTED_TARGET_LANGUAGES,
@@ -298,10 +299,14 @@ function LanguageSelect({
         onMouseDown={(event) => event.stopPropagation()}
       >
         {allowAuto && <option value="auto">{LANGUAGE_LABELS.auto}</option>}
-        {languages.map((language) => (
-          <option key={language} value={language}>
-            {LANGUAGE_LABELS[language]}
-          </option>
+        {groupedCaptionLanguages(languages).map((group) => (
+          <optgroup key={group.id} label={group.label}>
+            {group.languages.map((language) => (
+              <option key={language} value={language}>
+                {LANGUAGE_LABELS[language]}
+              </option>
+            ))}
+          </optgroup>
         ))}
       </select>
       <ChevronDown className="select-chevron" size={12} aria-hidden="true" />
