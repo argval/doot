@@ -17,7 +17,7 @@
 ## Learned Workspace Facts
 
 - doot is a macOS-first floating live-captions product: system audio → realtime speech/translation → always-on-top overlay.
-- Active stack is a monorepo with Tauri 2 + Rust desktop (`apps/desktop`), React + TypeScript + Vite UI, Fastify/TypeScript WebSocket gateway, shared protocol package, and Drizzle/PostgreSQL-oriented persistence.
+- Active stack is a monorepo with Tauri 2 + Rust desktop (`apps/desktop`), React + TypeScript + Vite UI, Fastify/TypeScript WebSocket gateway, shared protocol package, and Drizzle + Turso (embedded SQLite) persistence in `@doot/db`.
 - System audio capture uses ScreenCaptureKit-style paths and requires macOS Screen Recording permission for testing.
 - Sarvam Realtime STT is the primary gateway transport; the legacy streaming client remains an automatic fallback for initial and terminal Realtime failures.
 - Gemini 3.5 Live Translate (`GEMINI_API_KEY`) covers international spoken sources (Gemini's Live Translate matrix, not a Spanish/French/German-only POC); the overlay has no provider toggle.
@@ -57,4 +57,4 @@ Environment: Linux VM with Node 22, npm 10, and Rust 1.83 preinstalled. Docker i
   - Gateway: `npm run dev:gateway` → `ws://127.0.0.1:8787` with `GET /health`. Boots with no API keys.
   - Web UI: `npm run dev:web` → Vite on **`http://localhost:1420`**. It binds IPv6 `localhost`, so `http://127.0.0.1:1420` may fail; use `localhost`. In a plain browser the overlay renders but audio capture throws a Tauri `transformCallback` error — expected without the native layer.
 - No-key end-to-end testing: the gateway has a built-in `mock` speech provider (always `configured`). Open a realtime session with `provider: "mock"` and equal source/target languages (e.g. `en`→`en`) to get full end-to-end captions without any API keys; the translation router is a passthrough when `source === target`. Live captions need `SARVAM_API_KEY` / `ELEVENLABS_API_KEY` / `TRANSLATION_API_KEY` in the repo-root `.env` (create via `npm run setup`, which copies `.env.example`).
-- PostgreSQL (`docker compose up -d postgres` + `npm run db:migrate`) is optional and not wired into the gateway yet (captions are not persisted). Docker must be installed first if you need it.
+- Turso/SQLite (`npm run db:migrate`) is optional and not wired into the gateway yet (captions are not persisted). The local file defaults to `packages/db/data/doot.db`; override with `DOOT_DB_PATH`. Docker is not required for the database.

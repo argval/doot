@@ -10,5 +10,11 @@ target/
 .DS_Store
 apps/desktop/src-tauri/gen/
 
+# Local Turso / SQLite files
+*.db
+*.db-wal
+*.db-shm
+packages/db/data/
+
 # graphify knowledge graph (regenerable)
 graphify-out/

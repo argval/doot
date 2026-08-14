@@ -18,4 +18,4 @@ try {
   console.log("Created .env from .env.example. Add provider credentials when you are ready.");
 }
 
-console.log("Doot is set up. Start local PostgreSQL with `docker compose up -d postgres`, then run `npm run dev`.");
+console.log("Doot is set up. Run `npm run db:migrate` if you want a local Turso file, then `npm run dev`.");

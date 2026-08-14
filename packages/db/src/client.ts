@@ -1,8 +1,11 @@
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import * as schema from "./schema.js";
+import { drizzle } from "drizzle-orm/tursodatabase/database";
+import { ensureDbDirectory, resolveDefaultDbPath } from "./path.js";
 
-const connectionString = process.env.DATABASE_URL;
+export { resolveDefaultDbPath } from "./path.js";
 
-export const sql = connectionString ? postgres(connectionString, { max: 5 }) : null;
-export const db = sql ? drizzle(sql, { schema }) : null;
+export function createDb(filePath: string = resolveDefaultDbPath()) {
+  ensureDbDirectory(filePath);
+  return drizzle(filePath);
+}
+
+export type DootDb = ReturnType<typeof createDb>;
