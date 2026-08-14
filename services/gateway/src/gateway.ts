@@ -5,7 +5,6 @@ import {
   isChannelCount,
   isProviderId,
   isSupportedLanguage,
-  isSupportedTargetLanguage,
   type ClientMessage,
   type ProviderId,
   type ServerMessage,
@@ -787,7 +786,7 @@ export function parseClientMessage(
     if (
       !isSessionId(value.sessionId)
       || !isSupportedLanguage(value.sourceLanguage)
-      || !isSupportedTargetLanguage(value.targetLanguage)
+      || !isSupportedLanguage(value.targetLanguage)
       || !isAudioSampleRate(value.sampleRate)
       || !isChannelCount(value.channels)
       || (value.provider !== undefined && !isProviderId(value.provider))

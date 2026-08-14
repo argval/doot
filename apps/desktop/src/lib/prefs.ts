@@ -2,7 +2,9 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { load, type Store } from "@tauri-apps/plugin-store";
 import {
   isSupportedLanguage,
+  isSupportedTargetLanguage,
   type SupportedLanguage,
+  type SupportedTargetLanguage,
 } from "@doot/protocol";
 import { isTauriRuntime } from "./runtime";
 
@@ -15,6 +17,7 @@ export const OVERLAY_IDLE_OPACITY_MAX = 0.7;
 export interface DesktopPrefs {
   sourceLanguage: SupportedLanguage;
   targetLanguage: SupportedLanguage;
+  translateEnabled: boolean;
   captionFontSize: number;
   overlayIdleOpacity: number;
   openAtLogin: boolean;
@@ -24,6 +27,7 @@ export interface DesktopPrefs {
 export const DEFAULT_PREFS: DesktopPrefs = {
   sourceLanguage: "auto",
   targetLanguage: "en",
+  translateEnabled: true,
   captionFontSize: 28,
   overlayIdleOpacity: 0.42,
   openAtLogin: false,
@@ -51,6 +55,16 @@ export function hoverBoostFor(idleOpacity: number): number {
   return clamp(idleOpacity * 0.4 + 0.28, 0.2, 0.58);
 }
 
+/** Translate To cannot be Auto; fall back to English. */
+export function concreteCaptionLanguage(
+  language: SupportedLanguage,
+): SupportedTargetLanguage {
+  if (language === "auto" || !isSupportedTargetLanguage(language)) {
+    return "en";
+  }
+  return language;
+}
+
 export function normalizePrefs(value: unknown): DesktopPrefs {
   const record = asRecord(value);
   if (!record) {
@@ -60,8 +74,7 @@ export function normalizePrefs(value: unknown): DesktopPrefs {
   const sourceLanguage = isSupportedLanguage(record.sourceLanguage)
     ? record.sourceLanguage
     : DEFAULT_PREFS.sourceLanguage;
-  const targetLanguage = isSupportedLanguage(record.targetLanguage)
-    && record.targetLanguage !== "auto"
+  const rawTarget = isSupportedLanguage(record.targetLanguage)
     ? record.targetLanguage
     : DEFAULT_PREFS.targetLanguage;
   const captionFontSize = typeof record.captionFontSize === "number"
@@ -72,6 +85,9 @@ export function normalizePrefs(value: unknown): DesktopPrefs {
     && Number.isFinite(record.overlayIdleOpacity)
     ? clamp(record.overlayIdleOpacity, OVERLAY_IDLE_OPACITY_MIN, OVERLAY_IDLE_OPACITY_MAX)
     : DEFAULT_PREFS.overlayIdleOpacity;
+  const translateEnabled = typeof record.translateEnabled === "boolean"
+    ? record.translateEnabled
+    : DEFAULT_PREFS.translateEnabled;
   const openAtLogin = typeof record.openAtLogin === "boolean"
     ? record.openAtLogin
     : DEFAULT_PREFS.openAtLogin;
@@ -79,9 +95,14 @@ export function normalizePrefs(value: unknown): DesktopPrefs {
     ? record.lastProvider.trim()
     : null;
 
+  const targetLanguage = translateEnabled
+    ? concreteCaptionLanguage(rawTarget)
+    : rawTarget;
+
   return {
-    sourceLanguage,
+    sourceLanguage: translateEnabled ? sourceLanguage : targetLanguage,
     targetLanguage,
+    translateEnabled,
     captionFontSize,
     overlayIdleOpacity,
     openAtLogin,

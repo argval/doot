@@ -6,7 +6,7 @@ import type {
 export interface TranslationRequest {
   text: string;
   source: SupportedLanguage;
-  target: SupportedTargetLanguage;
+  target: SupportedLanguage;
 }
 
 export type TranslateText = (request: TranslationRequest) => Promise<string>;

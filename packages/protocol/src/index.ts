@@ -269,7 +269,7 @@ export interface StartSessionRequest {
   type: "start_session";
   sessionId: string;
   sourceLanguage: SupportedLanguage;
-  targetLanguage: SupportedTargetLanguage;
+  targetLanguage: SupportedLanguage;
   provider?: ProviderId;
   sampleRate: AudioSampleRate;
   channels: ChannelCount;
@@ -296,7 +296,7 @@ export interface SessionStartedEvent {
   sessionId: string;
   provider: ProviderId;
   sourceLanguage: SupportedLanguage;
-  targetLanguage: SupportedTargetLanguage;
+  targetLanguage: SupportedLanguage;
 }
 
 export interface CaptionEvent {

@@ -80,7 +80,7 @@ export class GeminiTextTranslator implements TextTranslationProvider {
 
 function translationPrompt(
   source: TranslationRequest["source"],
-  target: SupportedTargetLanguage,
+  target: TranslationRequest["target"],
   text: string,
 ): string {
   const targetLabel = LANGUAGE_LABELS[target];

@@ -105,7 +105,7 @@ function splitGeminiCaptionParts(text: string): string[] {
  */
 export function filterGeminiTranslationToTarget(
   text: string,
-  target: SupportedTargetLanguage,
+  target: SupportedLanguage,
   source: SupportedLanguage,
 ): string {
   const normalized = text.replace(/\s+/g, " ").trim();

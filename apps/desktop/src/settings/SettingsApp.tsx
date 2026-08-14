@@ -21,6 +21,7 @@ import {
   OVERLAY_IDLE_OPACITY_MAX,
   OVERLAY_IDLE_OPACITY_MIN,
   hoverBoostFor,
+  concreteCaptionLanguage,
   loadPrefs,
   subscribeToPrefs,
   updatePrefs,
@@ -373,38 +374,73 @@ function CaptionsSection({
       <section className="settings-group" aria-label="Languages">
         <label className="settings-row">
           <span>
-            <strong>From</strong>
-            <em>Spoken language. Auto uses Sarvam for English/Indic targets and Gemini otherwise.</em>
+            <strong>Translate</strong>
+            <em>When off, captions stay in one language. When on, pick From and To.</em>
           </span>
-          <select
-            value={prefs.sourceLanguage}
+          <input
+            type="checkbox"
+            role="switch"
+            checked={prefs.translateEnabled}
             onChange={(event) => {
-              onPatch({ sourceLanguage: event.target.value as SupportedLanguage });
+              const enabled = event.target.checked;
+              onPatch({
+                translateEnabled: enabled,
+                sourceLanguage: enabled ? "auto" : prefs.targetLanguage,
+                targetLanguage: enabled
+                  ? concreteCaptionLanguage(prefs.targetLanguage)
+                  : prefs.targetLanguage,
+              });
             }}
-          >
-            <option value="auto">{LANGUAGE_LABELS.auto}</option>
-            {groupedCaptionLanguages(SOURCE_LANGUAGES).map((group) => (
-              <optgroup key={group.id} label={group.label}>
-                {group.languages.map((language) => (
-                  <option key={language} value={language}>
-                    {LANGUAGE_LABELS[language]}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
+          />
         </label>
+        {prefs.translateEnabled && (
+          <label className="settings-row">
+            <span>
+              <strong>From</strong>
+              <em>Spoken language. Auto uses Sarvam for English/Indic targets and Gemini otherwise.</em>
+            </span>
+            <select
+              value={prefs.sourceLanguage}
+              onChange={(event) => {
+                onPatch({ sourceLanguage: event.target.value as SupportedLanguage });
+              }}
+            >
+              <option value="auto">{LANGUAGE_LABELS.auto}</option>
+              {groupedCaptionLanguages(SOURCE_LANGUAGES).map((group) => (
+                <optgroup key={group.id} label={group.label}>
+                  {group.languages.map((language) => (
+                    <option key={language} value={language}>
+                      {LANGUAGE_LABELS[language]}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="settings-row">
           <span>
-            <strong>To</strong>
-            <em>Translated captions only. Takes effect on the next capture.</em>
+            <strong>{prefs.translateEnabled ? "To" : "Language"}</strong>
+            <em>
+              {prefs.translateEnabled
+                ? "Translated captions only. Takes effect on the next capture."
+                : "Caption language, including Auto detect. Same spoken language, no translation."}
+            </em>
           </span>
           <select
             value={prefs.targetLanguage}
             onChange={(event) => {
-              onPatch({ targetLanguage: event.target.value as SupportedLanguage });
+              const language = event.target.value as SupportedLanguage;
+              onPatch(
+                prefs.translateEnabled
+                  ? { targetLanguage: language }
+                  : { sourceLanguage: language, targetLanguage: language },
+              );
             }}
           >
+            {!prefs.translateEnabled && (
+              <option value="auto">{LANGUAGE_LABELS.auto}</option>
+            )}
             {groupedCaptionLanguages(TARGET_LANGUAGES).map((group) => (
               <optgroup key={group.id} label={group.label}>
                 {group.languages.map((language) => (

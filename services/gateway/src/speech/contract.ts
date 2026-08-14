@@ -54,7 +54,7 @@ export interface SpeechProviderCapabilities {
 export interface OpenProviderSessionOptions {
   sessionId: string;
   source: SupportedLanguage;
-  target: SupportedTargetLanguage;
+  target: SupportedLanguage;
   sampleRate: AudioSampleRate;
   channels: ChannelCount;
   onEvent(event: ProviderStreamEvent): void;
@@ -79,7 +79,7 @@ export function supportsSession(
   source: SupportedLanguage,
   sampleRate?: AudioSampleRate,
   channels?: ChannelCount,
-  target?: SupportedTargetLanguage,
+  target?: SupportedLanguage,
 ): boolean {
   const capabilities = provider.capabilities;
   return capabilities.sourceLanguages.includes(source)
@@ -88,7 +88,7 @@ export function supportsSession(
     && (
       target === undefined
       || capabilities.targetLanguages === undefined
-      || capabilities.targetLanguages.includes(target)
+      || capabilities.targetLanguages.some((language) => language === target)
     )
     && (
       source !== "auto"

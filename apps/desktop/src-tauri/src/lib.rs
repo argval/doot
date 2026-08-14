@@ -91,11 +91,14 @@ pub fn run() {
             let settings_item = MenuItemBuilder::with_id("open-settings", "Settings…")
                 .accelerator("CmdOrCtrl+,")
                 .build(app)?;
-            let show_item = MenuItemBuilder::with_id("show-overlay", "Show Overlay").build(app)?;
+            let overlay_item =
+                MenuItemBuilder::with_id("toggle-overlay", "Show / Hide Overlay").build(app)?;
             let app_submenu = SubmenuBuilder::new(app, "Doot")
                 .about(None)
                 .separator()
                 .item(&settings_item)
+                .separator()
+                .item(&overlay_item)
                 .separator()
                 .hide()
                 .hide_others()
@@ -113,7 +116,7 @@ pub fn run() {
                 .select_all()
                 .build()?;
             let window_submenu = SubmenuBuilder::new(app, "Window")
-                .item(&show_item)
+                .item(&overlay_item)
                 .separator()
                 .minimize()
                 .build()?;
@@ -135,17 +138,19 @@ pub fn run() {
         .setup(move |app| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_always_on_top(true);
+                let _ = window.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
                 #[cfg(target_os = "macos")]
                 let _ = window.set_visible_on_all_workspaces(true);
             }
 
             let toggle_item =
                 MenuItemBuilder::with_id("toggle-capture", "Start / Stop Capturing").build(app)?;
-            let show_item = MenuItemBuilder::with_id("show-overlay", "Show Overlay").build(app)?;
+            let overlay_item =
+                MenuItemBuilder::with_id("toggle-overlay", "Show / Hide Overlay").build(app)?;
             let settings_item = MenuItemBuilder::with_id("open-settings", "Settings").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit Doot").build(app)?;
             let menu = MenuBuilder::new(app)
-                .items(&[&toggle_item, &show_item, &settings_item, &quit_item])
+                .items(&[&toggle_item, &overlay_item, &settings_item, &quit_item])
                 .build()?;
             let mut tray = TrayIconBuilder::new()
                 .menu(&menu)
@@ -178,7 +183,7 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
         "open-settings" => {
             let _ = open_settings(app);
         }
-        "show-overlay" => show_overlay(app),
+        "toggle-overlay" => toggle_overlay(app),
         "toggle-capture" => {
             let _ = app.emit(CAPTURE_TOGGLE_EVENT, ());
         }
@@ -228,6 +233,23 @@ fn restore_overlay_layer(app: &AppHandle) {
         let _ = window.set_always_on_top(true);
         #[cfg(target_os = "macos")]
         let _ = window.set_visible_on_all_workspaces(true);
+    }
+}
+
+fn toggle_overlay(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    if window.is_visible().unwrap_or(false) {
+        hide_overlay(app);
+    } else {
+        show_overlay(app);
+    }
+}
+
+fn hide_overlay(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
     }
 }
 

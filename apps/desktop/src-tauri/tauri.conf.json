@@ -24,7 +24,8 @@
         "alwaysOnTop": true,
         "visibleOnAllWorkspaces": true,
         "transparent": true,
-        "shadow": false
+        "shadow": false,
+        "backgroundColor": [0, 0, 0, 0]
       }
     ],
     "security": {
@@ -44,10 +45,5 @@
         "installMode": "currentUser"
       }
     }
-  },
-  "plugins": {
-    "store": {},
-    "autostart": {},
-    "window-state": {}
   }
 }

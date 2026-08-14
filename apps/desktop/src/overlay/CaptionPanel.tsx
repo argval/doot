@@ -1,4 +1,4 @@
-import type { MouseEvent, Ref } from "react";
+import type { MouseEvent, ReactNode, Ref } from "react";
 import { INDIC_LANGUAGES, type SupportedLanguage } from "@doot/protocol";
 import type { VisibleCaptionLine } from "../captions";
 
@@ -42,6 +42,7 @@ export function CaptionPanel({
   onDragStart,
   onOpenSettings,
   showResizeGrip = false,
+  captureControl,
 }: {
   lines: readonly VisibleCaptionLine[];
   targetLanguage: SupportedLanguage;
@@ -53,6 +54,7 @@ export function CaptionPanel({
   onDragStart?: (event: MouseEvent<HTMLElement>) => void;
   onOpenSettings?: () => void;
   showResizeGrip?: boolean;
+  captureControl?: ReactNode;
 }) {
   const script = captionScript(targetLanguage);
 
@@ -66,6 +68,7 @@ export function CaptionPanel({
       onMouseDown={onDragStart}
     >
       <span className="caption-grain" aria-hidden="true" />
+      {captureControl}
       <div ref={copyRef} className="caption-copy">
         {error ? (
           <div className="caption-error" aria-live="polite">

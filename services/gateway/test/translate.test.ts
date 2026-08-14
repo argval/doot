@@ -78,6 +78,27 @@ test("skips API translation on explicit same-language routes", async () => {
   assert.equal(called, false);
 });
 
+test("skips API translation for auto-detect transcription", async () => {
+  let called = false;
+  const fetcher: typeof fetch = async () => {
+    called = true;
+    return Response.json({ translated_text: "unexpected" });
+  };
+  const router = new TranslationRouter([
+    new SarvamTextTranslator("test-key", fetcher),
+  ]);
+
+  assert.equal(
+    await router.translate({
+      text: "hello",
+      source: "auto",
+      target: "auto",
+    }),
+    "hello",
+  );
+  assert.equal(called, false);
+});
+
 test("rejects unsupported routes without leaking source text as translation", async () => {
   let called = false;
   const fetcher: typeof fetch = async () => {

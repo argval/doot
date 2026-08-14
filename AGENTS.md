@@ -1,51 +1,31 @@
 ## Learned User Preferences
 
-- Prefer Claude/Raycast-style floating captions UI: small, minimal, translucent overlay with no white window chrome or decorative title bars.
-- Captions window must stay always-on-top when other apps are focused; it should not disappear behind the frontmost window.
-- Language controls should be a small disappearing overlay on/above the captions window, not a full-width top bar that wastes space.
-- Captions window should be draggable and resizable; resizing the window must not scale caption text size.
-- Prefer a single idle/hover opacity model with a smooth fade (more transparent when idle, more opaque on hover); avoid multi-level or flickering transparency.
+- Prefer Claude/Raycast-style floating captions: small, minimal, truly translucent glass with no opaque corner chrome, white window chrome, or decorative title bars; the captions window must stay always-on-top when other apps are focused.
+- Language controls should be a small disappearing overlay on/above the captions window (not a full-width top bar); the Languages icon toggles translate (From + To) vs same-language transcription, and a small capture/record control stays on the overlay.
+- Captions window should be draggable and resizable; resizing must not scale caption text size. Prefer a single idle/hover opacity model with a smooth fade (more transparent when idle, more opaque on hover).
 - When asked for approach or design, discuss first and do not start implementing until explicitly told to.
-- Prefer Sarvam speech models for captioning/translation, especially for Indian languages and code-switched speech (e.g. Hinglish, Kannada–English).
-- For non-Indic/international languages, prefer caption-native STT+MT (Sarvam-like progressive text) over audio→audio interpretation models whose captions are side-channel ASR.
+- Prefer Sarvam speech models for English/Indic captioning and translation, especially code-switched speech (e.g. Hinglish, Kannada–English). For non-Indic/international languages, prefer caption-native STT+MT (Sarvam-like progressive text) over audio→audio interpretation models whose captions are side-channel ASR.
 - Prefer TypeScript 7 configured consistently across the monorepo.
 - When committing agent work, include `AGENTS.md` updates in the same commit (do not leave them unstaged as unrelated).
-- Prefer translated-only captions; do not show source/original transcription under the translation.
+- Prefer translated-only captions (no source/original under the translation); update progressively in realtime (word-by-word feel) while staying sentence-aware; when the area fills, keep the latest caption visible and prefer continuous sentence flow over fragmented phrases.
+- Transcription (translate off) includes Auto detect; Translate To cannot be Auto. Turning translate on from Auto transcription sets To to English.
 - Captions start a new overlay line on each speaker turn, long pause, or section break (VAD-finalized utterance). Short pauses stay on the same line because the gateway coalesces them. Do not concatenate recent turns into one continuous string.
 - Settings belong in a separate decorated window, not on the captions overlay.
-- Translated captions should update progressively in realtime (word-by-word feel) while staying sentence-aware—not only after pause or finalization; when the captions area fills, keep the latest caption visible and prefer continuous sentence flow over fragmented short phrases.
 
 ## Learned Workspace Facts
 
 - doot is a macOS- and Windows-first floating live-captions product: system audio → realtime speech/translation → always-on-top overlay.
-- Active stack is a monorepo with Tauri 2 + Rust desktop (`apps/desktop`), React + TypeScript + Vite UI, Fastify/TypeScript WebSocket gateway, shared protocol package, and Drizzle + Turso (embedded SQLite) persistence in `@doot/db`.
-- System audio capture uses ScreenCaptureKit on macOS (Screen Recording permission) and WASAPI shared-mode loopback on Windows (default playback device, no microphone permission).
-- Capture backends push into a shared PCM converter (`apps/desktop/src-tauri/src/audio/convert.rs`) that emits 16 kHz mono S16LE for the gateway stream.
-- Global capture shortcut is `Cmd+Shift+D` on macOS and `Ctrl+Shift+D` on Windows.
-- Sarvam Realtime STT is the primary gateway transport; the legacy streaming client remains an automatic fallback for initial and terminal Realtime failures.
-- Gemini 3.5 Live Translate (`GEMINI_API_KEY`) covers international spoken sources (Gemini's Live Translate matrix, not a Spanish/French/German-only POC); the overlay has no provider toggle.
-- Gemini Live Translate is audio→audio first; captions come from correlated side-channel source/output transcription and bypass the text-translation router (weaker caption UX than Sarvam's STT+MT path).
-- English/Indic speech stays on Sarvam. Non-Indic targets from those transcripts use Gemini text MT (`GEMINI_API_KEY`); Indic targets stay on Sarvam Mayura. Auto→English/Indic uses Sarvam; Auto→Spanish/French/etc. uses Gemini Live.
-- Speech providers are modular gateway adapters under `services/gateway/src/speech/`; Sarvam owns the English/Indic live-caption and Indic translation lanes.
-- Speech adapter construction is centralized in `services/gateway/src/speech/registry.ts`; routing and health metadata derive from the registered adapters.
-- Supported live-caption languages are the protocol union of Sarvam Indic + Gemini Live Translate; French/German/Japanese/etc. are valid targets, not just sources.
-- Unsupported translation pairs emit an unavailable error with blank translated text; source text must never be substituted into translated-only captions.
-- Local runs use npm workspace scripts (`npm run dev` / `scripts/dev.sh` starts gateway and desktop together); package manager is npm, not bun.
+- Active stack is a monorepo with Tauri 2 + Rust desktop (`apps/desktop`), React + TypeScript + Vite UI, Fastify/TypeScript WebSocket gateway, shared protocol package, and Drizzle + Turso (embedded SQLite) in `@doot/db`. Local runs use npm workspaces (`npm run dev` / `scripts/dev.sh`), not bun.
+- System audio capture uses ScreenCaptureKit on macOS (Screen Recording permission) and WASAPI shared-mode loopback on Windows; backends push into a shared PCM converter that emits 16 kHz mono S16LE. Global shortcut is `Cmd+Shift+D` (macOS) / `Ctrl+Shift+D` (Windows).
+- Speech providers are modular gateway adapters under `services/gateway/src/speech/`; construction is centralized in `registry.ts`. Sarvam Realtime STT is primary (legacy streaming fallback); Sarvam owns English/Indic live-caption and Indic translation lanes.
+- Gemini 3.5 Live Translate (`GEMINI_API_KEY`) covers international spoken sources (audio→audio first; captions from side-channel transcription, bypassing text MT). English/Indic→Indic uses Sarvam Mayura; English/Indic→non-Indic uses Gemini text MT. Auto→English/Indic uses Sarvam; Auto→Spanish/French/etc. uses Gemini Live. Unsupported pairs emit an unavailable error with blank translated text—never substitute source into translated-only captions.
+- Supported live-caption languages are the protocol union of Sarvam Indic + Gemini Live Translate (French/German/Japanese/etc. are valid targets, not just sources). The overlay has no provider toggle.
+- Desktop chrome is two windows: captions-only overlay and a decorated Settings window (Doot → Settings… / tray / `open_settings_window`). Doot, Window, and the tray include Show / Hide Overlay (toggles caption-window visibility; does not stop capture). Overlay prefs use `tauri-plugin-store`; position/size use `tauri-plugin-window-state`.
+- Overlay visuals share `apps/desktop/src/tokens.css`; caption chrome lives in `CaptionPanel`. Utterance lines stack 1:1 with gateway turns; hover-only resize grip; capture pulse while live; language selects lock until stop; listening empty state uses audio bars; errors offer Open Settings. New turns fade/slide in; `prefers-reduced-motion` disables pulse/bars/slide.
+- Settings Captions embeds `CaptionPanel` as a live preview with Ghost / Balanced / Solid idle-opacity presets. The panel sets `lang` / `dir` from the target language (protocol `od` → HTML `or`); Indic/CJK/RTL use looser metrics than Latin.
+- Browser overlay preview adds `web-preview` on `<html>`; Tauri stays fully transparent. Caption/status listeners are skipped in the browser. Preview flags (`/?preview=…`, `/?window=settings`) are ignored in Tauri; starting capture in the browser shows a desktop-app error.
+- Settings Connection is status-only in this phase (gateway reachability, capture backend, last provider); API keys and gateway process still live in `.env` / the terminal. Windows Settings copy and shortcut labels should stay OS-neutral (`this computer`, `Ctrl+Shift+D`).
 - Caption pipeline aims for persistent Sarvam streaming with VAD-driven utterance boundaries and code-switch-tolerant Indic translation (including Kannada).
-- Desktop chrome is two windows: the captions overlay stays captions-only, and a decorated Settings window opens from Doot → Settings… (⌘,), the tray, or `open_settings_window`.
-- Overlay prefs persist with `tauri-plugin-store` (languages, caption text size, idle opacity, open-at-login, last provider). Overlay position/size persist with `tauri-plugin-window-state`.
-- Overlay caption lines map 1:1 to gateway utterances: the last few turns stack as separate lines (previous turns slightly dimmer), instead of joining with spaces.
-- Overlay visuals share `apps/desktop/src/tokens.css`. Caption chrome lives in `CaptionPanel` (`apps/desktop/src/overlay/CaptionPanel.tsx`); Settings Captions embeds the same panel as a live preview.
-- Settings Captions includes Ghost / Balanced / Solid idle-opacity presets that write the existing `overlayIdleOpacity` slider. The preview updates with text size, opacity, and target-language script (Latin / Indic / CJK / RTL samples).
-- The caption panel sets `lang` / `dir` from the **target** language (protocol `od` → HTML `or`). Indic, CJK, and RTL scripts use looser line-height and no negative tracking; Latin keeps tighter display type.
-- Overlay shows a hover-only resize grip; caption font size stays a pref and does not scale with the window.
-- Overlay capture pulse while a session is live; language selects stay locked until stop (`Stop to change languages` on the disabled controls).
-- Listening empty state shows a small audio-bar indicator. Caption errors keep red copy and an Open Settings action (`open_settings_window` in Tauri, `/?window=settings` in the browser).
-- New overlay turns fade and slide in (6px, 240ms). The live line keeps a one-line min-height so partial text doesn’t collapse; color settles when a turn finalizes. `prefers-reduced-motion` disables pulse, bars, and slide (hover opacity fade stays).
-- Browser overlay preview adds `web-preview` on `<html>` so glass shows against a backdrop. Tauri keeps a fully transparent window. Caption/status listeners are skipped in the browser so Tauri `transformCallback` errors do not replace captions. Starting capture in the browser shows a desktop-app error instead of invoking Tauri.
-- Browser-only UI checks: `/?preview=captions` (stacked lines), `/?preview=captions-indic` (Kannada metrics), `/?preview=listening` (pulse + audio bars), `/?preview=error` (Open Settings), `/?preview=progressive` (word-by-word then a new turn), `/?window=settings` (Settings). These query flags are ignored in Tauri.
-- Settings Connection is status-only in this phase (gateway reachability, capture backend, last provider). API keys and gateway process still live in `.env` / the terminal.
-- Windows Settings copy and overlay shortcut labels should stay OS-neutral (`this computer`, `Ctrl+Shift+D`); do not hardcode Mac-only chrome strings.
 
 ## graphify
 

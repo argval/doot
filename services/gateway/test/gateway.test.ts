@@ -45,6 +45,18 @@ test("accepts international translation targets", () => {
   }
 });
 
+test("accepts auto-detect transcription sessions", () => {
+  const result = parseClientMessage(JSON.stringify({
+    type: "start_session",
+    sessionId: "session-auto-transcribe",
+    sourceLanguage: "auto",
+    targetLanguage: "auto",
+    sampleRate: 16_000,
+    channels: 1,
+  }));
+  assert.equal(result.ok, true);
+});
+
 test("rejects malformed, unsupported, and oversized audio messages", () => {
   for (const payload of [
     "not json",
@@ -177,6 +189,7 @@ test("routes international sources through Gemini and Sarvam sources through Sar
   assert.equal(router.select("en", undefined, 16_000, 1, "fr").id, "sarvam");
   assert.equal(router.select("kn", undefined, 16_000, 1, "es").id, "sarvam");
   assert.equal(router.select("auto", undefined, 16_000, 1, "en").id, "sarvam");
+  assert.equal(router.select("auto", undefined, 16_000, 1, "auto").id, "sarvam");
   assert.equal(router.select("auto", undefined, 16_000, 1, "es").id, "gemini");
   assert.equal(router.select("en", "gemini", 16_000, 1, "es").id, "gemini");
   assert.equal(router.select("en", "gemini", 16_000, 1, "hi").id, "gemini");

@@ -92,13 +92,13 @@ export function isSarvamTranslationSource(
 }
 
 export function isSarvamTranslationTarget(
-  language: SupportedTargetLanguage,
+  language: SupportedLanguage,
 ): language is SarvamTranslationTargetLanguage {
   return SARVAM_TRANSLATION_TARGET_LANGUAGES.some((candidate) => candidate === language);
 }
 
 export function toSarvamTranslationLanguageCode(
-  language: SupportedTargetLanguage,
+  language: SupportedLanguage,
 ): string {
   if (!isSarvamTranslationTarget(language)) {
     throw new Error(`Sarvam translation does not support target language: ${language}`);

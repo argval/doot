@@ -58,7 +58,7 @@ export class ProviderRouter {
     requested?: ProviderId,
     sampleRate?: AudioSampleRate,
     channels?: ChannelCount,
-    target?: SupportedTargetLanguage,
+    target?: SupportedLanguage,
   ): SpeechProvider {
     if (requested) {
       const explicit = this.providers.find((provider) => provider.id === requested);

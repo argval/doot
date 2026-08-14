@@ -29,6 +29,7 @@ import {
 import {
   DEFAULT_PREFS,
   applyOverlayAppearance,
+  concreteCaptionLanguage,
   loadPrefs,
   subscribeToPrefs,
   updatePrefs,
@@ -58,6 +59,8 @@ export function App() {
   const overlayError = preview.error ?? error;
   const listening = capturing && visibleLines.length === 0 && !overlayError;
   const languagesLocked = capturing || isTransitioning;
+  const translating = prefs.translateEnabled;
+  const sessionSource = translating ? sourceLanguage : targetLanguage;
   const providerLabel = session?.provider || prefs.lastProvider;
   const captureHint = capturing
     ? `Stop capturing (${captureShortcutLabel()})${providerLabel ? ` · ${providerLabel}` : ""}`
@@ -73,13 +76,44 @@ export function App() {
     key: "sourceLanguage" | "targetLanguage",
     value: SupportedLanguage,
   ) => {
+    const syncBoth = !translating && key === "targetLanguage";
     setPrefs((current) => {
-      const next = { ...current, [key]: value };
+      const next = syncBoth
+        ? { ...current, sourceLanguage: value, targetLanguage: value }
+        : { ...current, [key]: value };
       applyOverlayAppearance(next);
       return next;
     });
-    await updatePrefs({ [key]: value });
-  }, []);
+    await updatePrefs(
+      syncBoth
+        ? { sourceLanguage: value, targetLanguage: value }
+        : { [key]: value },
+    );
+  }, [translating]);
+
+  const toggleTranslate = useCallback(async () => {
+    if (languagesLocked) {
+      return;
+    }
+    const enabling = !prefs.translateEnabled;
+    const nextTarget = enabling ? concreteCaptionLanguage(targetLanguage) : targetLanguage;
+    const nextSource = enabling ? "auto" : nextTarget;
+    setPrefs((current) => {
+      const next = {
+        ...current,
+        translateEnabled: enabling,
+        sourceLanguage: nextSource,
+        targetLanguage: nextTarget,
+      };
+      applyOverlayAppearance(next);
+      return next;
+    });
+    await updatePrefs({
+      translateEnabled: enabling,
+      sourceLanguage: nextSource,
+      targetLanguage: nextTarget,
+    });
+  }, [languagesLocked, prefs.translateEnabled, targetLanguage]);
 
   const toggleCapture = useCallback(async () => {
     if (isTransitioning) return;
@@ -102,7 +136,7 @@ export function App() {
         setSession(null);
       } else {
         setCaptions(EMPTY_CAPTION_STATE);
-        const next = await startCaptionSession(sourceLanguage, targetLanguage);
+        const next = await startCaptionSession(sessionSource, targetLanguage);
         acceptedSessionIdRef.current = next.sessionId;
         setSession(next);
         if (next.provider && next.provider !== lastProviderRef.current) {
@@ -115,7 +149,7 @@ export function App() {
     } finally {
       setIsTransitioning(false);
     }
-  }, [isTransitioning, session, sourceLanguage, targetLanguage]);
+  }, [isTransitioning, session, sessionSource, targetLanguage]);
 
   useEffect(() => {
     let disposed = false;
@@ -244,36 +278,47 @@ export function App() {
     <main className="overlay-shell">
       <div className="caption-overlay">
         <div className="language-picker" aria-label="Caption languages">
-          <LanguageSelect
-            label="From"
-            value={sourceLanguage}
-            onChange={(language) => void persistLanguage("sourceLanguage", language)}
-            languages={selectableSourceLanguages}
-            allowAuto
-            disabled={languagesLocked}
-          />
-          <span className="language-divider"><Languages size={13} /></span>
-          <LanguageSelect
-            label="To"
-            value={targetLanguage}
-            onChange={(language) => void persistLanguage("targetLanguage", language)}
-            languages={selectableTargetLanguages}
-            disabled={languagesLocked}
-          />
+          {translating
+            ? (
+              <LanguageSelect
+                label="From"
+                value={sourceLanguage}
+                onChange={(language) => void persistLanguage("sourceLanguage", language)}
+                languages={selectableSourceLanguages}
+                allowAuto
+                disabled={languagesLocked}
+              />
+            )
+            : (
+              <LanguageSelect
+                value={targetLanguage}
+                onChange={(language) => void persistLanguage("targetLanguage", language)}
+                languages={selectableTargetLanguages}
+                allowAuto
+                disabled={languagesLocked}
+              />
+            )}
           <button
             type="button"
-            className={capturing ? "capture-toggle active" : "capture-toggle"}
-            disabled={isTransitioning}
-            aria-pressed={capturing}
-            aria-label={capturing ? "Stop capturing" : "Start capturing"}
-            title={captureHint}
+            className={translating ? "language-translate active" : "language-translate"}
+            disabled={languagesLocked}
+            aria-pressed={translating}
+            aria-label={translating ? "Show captions in one language" : "Translate captions"}
+            title={translating ? "Captions in one language" : "Translate captions"}
             onMouseDown={(event) => event.stopPropagation()}
-            onClick={() => void toggleCapture()}
+            onClick={() => void toggleTranslate()}
           >
-            {capturing
-              ? <Square size={10} fill="currentColor" />
-              : <Circle size={11} fill="currentColor" />}
+            <Languages size={13} />
           </button>
+          {translating && (
+            <LanguageSelect
+              label="To"
+              value={targetLanguage}
+              onChange={(language) => void persistLanguage("targetLanguage", language)}
+              languages={selectableTargetLanguages}
+              disabled={languagesLocked}
+            />
+          )}
         </div>
 
         <CaptionPanel
@@ -286,6 +331,22 @@ export function App() {
           copyRef={captionCopyRef}
           showResizeGrip
           onOpenSettings={openSettings}
+          captureControl={(
+            <button
+              type="button"
+              className={capturing ? "capture-toggle active" : "capture-toggle"}
+              disabled={isTransitioning}
+              aria-pressed={capturing}
+              aria-label={capturing ? "Stop capturing" : "Start capturing"}
+              title={captureHint}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={() => void toggleCapture()}
+            >
+              {capturing
+                ? <Square size={10} fill="currentColor" />
+                : <Circle size={11} fill="currentColor" />}
+            </button>
+          )}
           onDragStart={(event) => {
             if (event.button !== 0 || !isTauriRuntime()) {
               return;
@@ -306,7 +367,7 @@ function LanguageSelect({
   allowAuto = false,
   disabled = false,
 }: {
-  label: string;
+  label?: string;
   value: SupportedLanguage;
   onChange: (value: SupportedLanguage) => void;
   languages: readonly SupportedLanguage[];
@@ -315,10 +376,11 @@ function LanguageSelect({
 }) {
   return (
     <label className="language-select">
-      <span>{label}</span>
+      {label ? <span>{label}</span> : null}
       <select
         value={value}
         disabled={disabled}
+        aria-label={label ?? "Caption language"}
         title={disabled ? "Stop to change languages" : undefined}
         onChange={(event) => onChange(event.target.value as SupportedLanguage)}
         onMouseDown={(event) => event.stopPropagation()}
