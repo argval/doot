@@ -3,16 +3,15 @@ body.settings-window,
 html.settings-window #root {
   min-width: 0;
   overflow: hidden;
-  color: #1d1d1f;
-  background: #e8e8ed;
+  color: var(--settings-ink);
+  background: var(--settings-bg);
 }
 
 .settings-shell {
   display: grid;
   grid-template-columns: 188px minmax(0, 1fr);
   height: 100%;
-  font-family: "SF Pro Text", "SF Pro Display", "Segoe UI", -apple-system,
-    BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  font-family: var(--font-sans);
 }
 
 .settings-sidebar {
@@ -20,8 +19,8 @@ html.settings-window #root {
   flex-direction: column;
   gap: 4px;
   padding: 18px 12px 16px;
-  border-right: 1px solid rgb(0 0 0 / 8%);
-  background: rgb(255 255 255 / 42%);
+  border-right: 1px solid var(--settings-sidebar-border);
+  background: var(--settings-sidebar-bg);
 }
 
 .settings-brand {
@@ -40,7 +39,7 @@ html.settings-window #root {
   width: 100%;
   padding: 7px 10px;
   border-radius: 8px;
-  color: #3a3a3c;
+  color: var(--settings-nav);
   background: transparent;
   font-size: 13px;
   font-weight: 510;
@@ -49,16 +48,16 @@ html.settings-window #root {
 }
 
 .settings-nav-item:hover {
-  background: rgb(0 0 0 / 6%);
+  background: var(--settings-nav-hover);
 }
 
 .settings-nav-item.selected {
-  color: #111;
-  background: rgb(0 0 0 / 8%);
+  color: var(--settings-nav-selected);
+  background: var(--settings-nav-selected-bg);
 }
 
 .settings-nav-item:focus-visible {
-  outline: 2px solid #0a84ff;
+  outline: 2px solid var(--settings-accent);
   outline-offset: 1px;
 }
 
@@ -79,7 +78,7 @@ html.settings-window #root {
   margin: 0 0 16px;
   overflow: hidden;
   border-radius: 10px;
-  background: #fff;
+  background: var(--settings-card);
 }
 
 .settings-row {
@@ -89,7 +88,7 @@ html.settings-window #root {
   gap: 18px;
   min-height: 52px;
   padding: 10px 14px;
-  border-bottom: 1px solid rgb(0 0 0 / 6%);
+  border-bottom: 1px solid var(--settings-row-border);
 }
 
 .settings-row:last-child {
@@ -105,13 +104,13 @@ html.settings-window #root {
 }
 
 .settings-row strong {
-  color: #1d1d1f;
+  color: var(--settings-ink);
   font-size: 13px;
   font-weight: 580;
 }
 
 .settings-row em {
-  color: #6e6e73;
+  color: var(--settings-ink-secondary);
   font-size: 11px;
   font-style: normal;
   line-height: 1.35;
@@ -125,8 +124,8 @@ html.settings-window #root {
   padding: 0 8px;
   border: 0;
   border-radius: 6px;
-  color: #1d1d1f;
-  background: rgb(120 120 128 / 12%);
+  color: var(--settings-control-ink);
+  background: var(--settings-control);
   font: inherit;
   font-size: 13px;
 }
@@ -138,9 +137,9 @@ html.settings-window #root {
   margin: 0;
   appearance: none;
   border-radius: 999px;
-  background: rgb(120 120 128 / 32%);
+  background: var(--settings-switch);
   cursor: pointer;
-  transition: background 160ms ease;
+  transition: background var(--duration-micro) var(--ease-out);
 }
 
 .settings-row input[type="checkbox"]::before {
@@ -151,11 +150,11 @@ html.settings-window #root {
   border-radius: 50%;
   background: #fff;
   content: "";
-  transition: transform 160ms ease;
+  transition: transform var(--duration-micro) var(--ease-out);
 }
 
 .settings-row input[type="checkbox"]:checked {
-  background: #34c759;
+  background: var(--settings-ok);
 }
 
 .settings-row input[type="checkbox"]:checked::before {
@@ -165,7 +164,7 @@ html.settings-window #root {
 .settings-row input[type="checkbox"]:focus-visible,
 .settings-row select:focus-visible,
 .settings-slider input:focus-visible {
-  outline: 2px solid #0a84ff;
+  outline: 2px solid var(--settings-accent);
   outline-offset: 2px;
 }
 
@@ -180,14 +179,14 @@ html.settings-window #root {
 .settings-slider input[type="range"] {
   flex: 1 1 auto;
   margin: 0;
-  accent-color: #0a84ff;
+  accent-color: var(--settings-accent);
 }
 
 .settings-slider-value,
 .settings-value,
 .settings-shortcut {
   flex: none;
-  color: #6e6e73;
+  color: var(--settings-ink-secondary);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -196,8 +195,8 @@ html.settings-window #root {
 .settings-shortcut {
   padding: 3px 8px;
   border-radius: 6px;
-  color: #1d1d1f;
-  background: rgb(120 120 128 / 12%);
+  color: var(--settings-control-ink);
+  background: var(--settings-control);
   font-family: inherit;
   font-size: 12px;
   font-weight: 590;
@@ -207,36 +206,36 @@ html.settings-window #root {
   flex: none;
   padding: 3px 8px;
   border-radius: 999px;
-  color: #6e6e73;
-  background: rgb(120 120 128 / 12%);
+  color: var(--settings-badge-ink);
+  background: var(--settings-badge);
   font-size: 11px;
   font-weight: 600;
 }
 
 .settings-badge.ok {
-  color: #0e7a32;
-  background: rgb(52 199 89 / 16%);
+  color: var(--settings-ok-ink);
+  background: var(--settings-ok-bg);
 }
 
 .settings-badge.down {
-  color: #c43131;
-  background: rgb(255 59 48 / 14%);
+  color: var(--settings-down-ink);
+  background: var(--settings-down-bg);
 }
 
 .settings-badge.live {
-  color: #b54716;
-  background: rgb(255 149 0 / 18%);
+  color: var(--settings-live-ink);
+  background: var(--settings-live-bg);
 }
 
 .settings-error {
   margin: -6px 2px 14px;
-  color: #c43131;
+  color: var(--settings-down-ink);
   font-size: 12px;
 }
 
 .settings-footnote {
   margin: 4px 2px 0;
-  color: #6e6e73;
+  color: var(--settings-ink-secondary);
   font-size: 12px;
   line-height: 1.45;
 }
@@ -264,84 +263,6 @@ html.settings-window #root {
 .settings-about-tag,
 .settings-about-version {
   margin: 0;
-  color: #6e6e73;
+  color: var(--settings-ink-secondary);
   font-size: 13px;
-}
-
-@media (prefers-color-scheme: dark) {
-  html.settings-window,
-  body.settings-window,
-  html.settings-window #root {
-    color: #f5f5f7;
-    background: #1c1c1e;
-  }
-
-  .settings-sidebar {
-    border-right-color: rgb(255 255 255 / 8%);
-    background: rgb(255 255 255 / 4%);
-  }
-
-  .settings-brand {
-    color: #8e8e93;
-  }
-
-  .settings-nav-item {
-    color: #e5e5ea;
-  }
-
-  .settings-nav-item:hover {
-    background: rgb(255 255 255 / 8%);
-  }
-
-  .settings-nav-item.selected {
-    color: #fff;
-    background: rgb(255 255 255 / 12%);
-  }
-
-  .settings-group {
-    background: #2c2c2e;
-  }
-
-  .settings-row {
-    border-bottom-color: rgb(255 255 255 / 8%);
-  }
-
-  .settings-row strong {
-    color: #f5f5f7;
-  }
-
-  .settings-row em,
-  .settings-slider-value,
-  .settings-value,
-  .settings-footnote,
-  .settings-about-tag,
-  .settings-about-version {
-    color: #a1a1a6;
-  }
-
-  .settings-row select,
-  .settings-shortcut {
-    color: #f5f5f7;
-    background: rgb(120 120 128 / 28%);
-  }
-
-  .settings-badge {
-    color: #a1a1a6;
-    background: rgb(120 120 128 / 24%);
-  }
-
-  .settings-badge.ok {
-    color: #30d158;
-    background: rgb(48 209 88 / 16%);
-  }
-
-  .settings-badge.down {
-    color: #ff6961;
-    background: rgb(255 69 58 / 16%);
-  }
-
-  .settings-badge.live {
-    color: #ffd60a;
-    background: rgb(255 214 10 / 14%);
-  }
 }
