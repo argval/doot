@@ -16,6 +16,7 @@ import {
 import { CaptionPanel } from "./overlay/CaptionPanel";
 import { webPreviewCaptionLines, webPreviewTargetLanguage } from "./overlay/web-preview";
 import { captureShortcutLabel } from "./lib/shortcut";
+import { isTauriRuntime } from "./lib/runtime";
 import {
   startCaptionSession,
   stopCaptionSession,
@@ -131,6 +132,9 @@ export function App() {
   }, [applyPrefs]);
 
   useEffect(() => {
+    if (!isTauriRuntime()) {
+      return;
+    }
     let disposed = false;
     const cleanups: Array<() => void> = [];
     const subscriptions = [
@@ -263,9 +267,10 @@ export function App() {
           copyRef={captionCopyRef}
           showResizeGrip
           onDragStart={(event) => {
-            if (event.button === 0) {
-              void getCurrentWindow().startDragging().catch(() => undefined);
+            if (event.button !== 0 || !isTauriRuntime()) {
+              return;
             }
+            void getCurrentWindow().startDragging().catch(() => undefined);
           }}
         />
       </div>
