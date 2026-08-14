@@ -268,16 +268,7 @@ button {
   border-color: rgb(255 255 255 / 10%);
   color: #e9e6eb;
   background: rgb(255 255 255 / 9%);
-}
-
-.capture-toggle.active::after {
-  position: absolute;
-  inset: -5px;
-  border: 1px solid rgb(253 128 88 / 55%);
-  border-radius: 11px;
-  content: "";
-  pointer-events: none;
-  animation: capture-pulse 1.7s var(--ease-out) infinite;
+  animation: capture-pulse 1.5s ease-out infinite;
 }
 
 .capture-toggle:disabled {
@@ -489,14 +480,12 @@ button {
 
 @keyframes capture-pulse {
   0% {
-    opacity: 0.8;
-    transform: scale(1);
+    box-shadow: 0 0 0 0 rgb(253 128 88 / 58%);
   }
 
   70%,
   100% {
-    opacity: 0;
-    transform: scale(1.38);
+    box-shadow: 0 0 0 8px rgb(253 128 88 / 0%);
   }
 }
 
@@ -512,9 +501,9 @@ button {
     animation: none;
   }
 
-  .capture-toggle.active::after {
+  .capture-toggle.active {
     animation: none;
-    opacity: 0.4;
+    box-shadow: 0 0 0 3px rgb(253 128 88 / 40%);
   }
 
   .audio-bars span {
