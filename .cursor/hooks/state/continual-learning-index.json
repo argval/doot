@@ -1,4 +1,9 @@
 {
+  "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/16f51498-c579-4ce0-b16f-8411db25c217/16f51498-c579-4ce0-b16f-8411db25c217.jsonl": {
+    "mtime": 1786626581.8158858,
+    "mtime_ns": 1786626581815885793,
+    "size": 175949
+  },
   "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/1a176132-f02d-4470-87f5-d8198fcf49d5/1a176132-f02d-4470-87f5-d8198fcf49d5.jsonl": {
     "mtime": 1786067857.3660116,
     "mtime_ns": 1786067857366011634,
@@ -40,9 +45,9 @@
     "size": 4478
   },
   "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/38c99732-8495-4448-b11d-db2afb4c2bac/38c99732-8495-4448-b11d-db2afb4c2bac.jsonl": {
-    "mtime": 1786201844.8068218,
-    "mtime_ns": 1786201844806821898,
-    "size": 796213
+    "mtime": 1786202611.0547104,
+    "mtime_ns": 1786202611054710446,
+    "size": 835389
   },
   "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/38c99732-8495-4448-b11d-db2afb4c2bac/subagents/0bf1b136-c180-4c27-8454-464cd4992871.jsonl": {
     "mtime": 1786197000.6067612,
@@ -50,9 +55,9 @@
     "size": 22507
   },
   "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/38c99732-8495-4448-b11d-db2afb4c2bac/subagents/6c84109d-7f0d-48ed-9970-c91666096925.jsonl": {
-    "mtime": 1786201865.0811563,
-    "mtime_ns": 1786201865081156147,
-    "size": 2961
+    "mtime": 1786201954.2636125,
+    "mtime_ns": 1786201954263612521,
+    "size": 19957
   },
   "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/38c99732-8495-4448-b11d-db2afb4c2bac/subagents/7c25724f-dd89-4ed1-bf46-427a27466052.jsonl": {
     "mtime": 1786199291.7559187,
@@ -64,6 +69,11 @@
     "mtime_ns": 1786196981452605584,
     "size": 14716
   },
+  "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/457a127e-175a-48ee-8064-2bc0d2f11571/457a127e-175a-48ee-8064-2bc0d2f11571.jsonl": {
+    "mtime": 1786637502.3479722,
+    "mtime_ns": 1786637502347972070,
+    "size": 4469
+  },
   "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/4a4ff9e6-0b78-467c-bdf0-4564c758b957/4a4ff9e6-0b78-467c-bdf0-4564c758b957.jsonl": {
     "mtime": 1785945472.9913695,
     "mtime_ns": 1785945472991369378,
@@ -73,6 +83,11 @@
     "mtime": 1785869310.427874,
     "mtime_ns": 1785869310427874115,
     "size": 39123
+  },
+  "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/88705968-256e-4f4b-bac5-25c6b3b9f25b/88705968-256e-4f4b-bac5-25c6b3b9f25b.jsonl": {
+    "mtime": 1786636992.821066,
+    "mtime_ns": 1786636992821065911,
+    "size": 26101
   },
   "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/95e9cc2c-fd8e-4017-8c9f-54e8af1b356a/95e9cc2c-fd8e-4017-8c9f-54e8af1b356a.jsonl": {
     "mtime": 1786194512.4596946,
@@ -84,10 +99,40 @@
     "mtime_ns": 1786194508330985403,
     "size": 13908
   },
+  "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/b6917951-6fe5-4a8b-8cc7-fa4232db243e/b6917951-6fe5-4a8b-8cc7-fa4232db243e.jsonl": {
+    "mtime": 1786625793.6134582,
+    "mtime_ns": 1786625793613458234,
+    "size": 165661
+  },
+  "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/b6917951-6fe5-4a8b-8cc7-fa4232db243e/subagents/22c2b041-8f54-43d1-b07f-d749614dafcc.jsonl": {
+    "mtime": 1786623963.8198419,
+    "mtime_ns": 1786623963819841747,
+    "size": 21930
+  },
+  "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/b6917951-6fe5-4a8b-8cc7-fa4232db243e/subagents/c7aa1337-a0be-4fa4-91a4-e1487c68c0f4.jsonl": {
+    "mtime": 1786622784.7229962,
+    "mtime_ns": 1786622784722996348,
+    "size": 10779
+  },
   "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/bf52f7f8-70e8-4d5f-a970-acbdd000a507/bf52f7f8-70e8-4d5f-a970-acbdd000a507.jsonl": {
     "mtime": 1786176587.7215843,
     "mtime_ns": 1786176587721584364,
     "size": 19318
+  },
+  "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/d59967b1-365e-45be-b15a-0969f5d4b2b6/d59967b1-365e-45be-b15a-0969f5d4b2b6.jsonl": {
+    "mtime": 1786631785.1142933,
+    "mtime_ns": 1786631785114293408,
+    "size": 14218
+  },
+  "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/d59967b1-365e-45be-b15a-0969f5d4b2b6/subagents/e1a3117e-1b7d-467d-b4f2-8af099f96ba0.jsonl": {
+    "mtime": 1786631625.581161,
+    "mtime_ns": 1786631625581160957,
+    "size": 28998
+  },
+  "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/dce2943a-fe72-47bb-9fae-56044935956c/dce2943a-fe72-47bb-9fae-56044935956c.jsonl": {
+    "mtime": 1786241871.7633326,
+    "mtime_ns": 1786241871763332708,
+    "size": 805680
   },
   "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/e1a0bfb2-8df3-435a-8fa4-b28ec937b2e4/e1a0bfb2-8df3-435a-8fa4-b28ec937b2e4.jsonl": {
     "mtime": 1786071649.7103534,
@@ -108,5 +153,15 @@
     "mtime": 1786071448.681694,
     "mtime_ns": 1786071448681694095,
     "size": 3084
+  },
+  "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/f3371036-4581-48a4-845f-1a2201559c9d/f3371036-4581-48a4-845f-1a2201559c9d.jsonl": {
+    "mtime": 1786639684.1651456,
+    "mtime_ns": 1786639684165145640,
+    "size": 8004
+  },
+  "/Users/argvalue/.cursor/projects/Users-argvalue-Developer-doot/agent-transcripts/f3371036-4581-48a4-845f-1a2201559c9d/subagents/4c685b59-866e-4460-8d07-ea10a397ae0d.jsonl": {
+    "mtime": 1786639703.2106152,
+    "mtime_ns": 1786639703210615093,
+    "size": 2016
   }
 }
