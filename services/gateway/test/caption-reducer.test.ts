@@ -31,7 +31,7 @@ test("replaces active revisions and commits only the final revision", () => {
   assert.equal(replaced.active?.sourceText, revised.sourceText);
   assert.equal(replaced.finalized.length, 0);
   assert.deepEqual(selectVisibleCaptions(replaced), {
-    translatedText: "",
+    lines: [],
   });
 
   const stale = reduceCaptionEvent(replaced, first);
@@ -41,13 +41,17 @@ test("replaces active revisions and commits only the final revision", () => {
   assert.equal(committed.active, null);
   assert.deepEqual(committed.finalized, [finalized]);
   assert.deepEqual(selectVisibleCaptions(committed), {
-    translatedText: "I use Cursor",
+    lines: [{
+      utteranceId: finalized.utteranceId,
+      translatedText: "I use Cursor",
+      isActive: false,
+    }],
   });
 });
 
-test("keeps the overlay focused on the newest couple of utterances", () => {
+test("keeps the overlay focused on the newest few utterance turns", () => {
   let state = EMPTY_CAPTION_STATE;
-  for (let index = 0; index < 4; index += 1) {
+  for (let index = 0; index < 6; index += 1) {
     state = reduceCaptionEvent(state, caption({
       sequence: index,
       utteranceId: `session:${index}:0`,
@@ -60,8 +64,84 @@ test("keeps the overlay focused on the newest couple of utterances", () => {
     }));
   }
 
-  assert.deepEqual(selectVisibleCaptions(state), {
-    translatedText: "english 2 english 3",
+  assert.deepEqual(
+    selectVisibleCaptions(state).lines.map((line) => line.translatedText),
+    ["english 2", "english 3", "english 4", "english 5"],
+  );
+});
+
+test("puts speaker turns and long-pause sections on separate overlay lines", () => {
+  let state = EMPTY_CAPTION_STATE;
+  state = reduceCaptionEvent(state, caption({
+    utteranceId: "session:100:0",
+    translatedText: "How was your day?",
+    isFinal: true,
+    startMs: 100,
+    endMs: 1_400,
+  }));
+  state = reduceCaptionEvent(state, caption({
+    utteranceId: "session:2200:1",
+    sequence: 1,
+    translatedText: "It was good, thanks.",
+    isFinal: true,
+    startMs: 2_200,
+    endMs: 3_400,
+  }));
+
+  const visible = selectVisibleCaptions(state);
+  assert.deepEqual(
+    visible.lines.map((line) => line.translatedText),
+    ["How was your day?", "It was good, thanks."],
+  );
+  assert.equal(visible.lines[0]?.utteranceId, "session:100:0");
+  assert.equal(visible.lines[1]?.utteranceId, "session:2200:1");
+  assert.equal(visible.lines.every((line) => !line.isActive), true);
+});
+
+test("starts a new overlay line when speech resumes after a pause", () => {
+  let state = reduceCaptionEvent(EMPTY_CAPTION_STATE, caption({
+    utteranceId: "session:100:0",
+    translatedText: "First section of the talk.",
+    isFinal: true,
+    startMs: 100,
+    endMs: 2_000,
+  }));
+  state = reduceCaptionEvent(state, caption({
+    utteranceId: "session:5000:1",
+    sequence: 1,
+    translatedText: "After a long pause.",
+    isFinal: false,
+    startMs: 5_000,
+    endMs: 5_400,
+  }));
+
+  const visible = selectVisibleCaptions(state);
+  assert.deepEqual(
+    visible.lines.map((line) => line.translatedText),
+    ["First section of the talk.", "After a long pause."],
+  );
+  assert.equal(visible.lines[0]?.isActive, false);
+  assert.equal(visible.lines[1]?.isActive, true);
+});
+
+test("keeps one overlay line while a single speaker's utterance revises", () => {
+  let state = reduceCaptionEvent(EMPTY_CAPTION_STATE, caption({
+    utteranceId: "session:100:0",
+    revision: 1,
+    translatedText: "I went to the",
+  }));
+  state = reduceCaptionEvent(state, caption({
+    utteranceId: "session:100:0",
+    revision: 2,
+    translatedText: "I went to the store today",
+  }));
+
+  const visible = selectVisibleCaptions(state);
+  assert.equal(visible.lines.length, 1);
+  assert.deepEqual(visible.lines[0], {
+    utteranceId: "session:100:0",
+    translatedText: "I went to the store today",
+    isActive: true,
   });
 });
 
@@ -170,7 +250,11 @@ test("hides consecutive duplicate translated captions in the visible window", ()
   }));
 
   assert.deepEqual(selectVisibleCaptions(state), {
-    translatedText: "Where is this",
+    lines: [{
+      utteranceId: "session:2:1",
+      translatedText: "Where is this",
+      isActive: false,
+    }],
   });
 });
 
