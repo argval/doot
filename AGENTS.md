@@ -17,9 +17,11 @@
 
 ## Learned Workspace Facts
 
-- doot is a macOS-first floating live-captions product: system audio → realtime speech/translation → always-on-top overlay.
+- doot is a macOS- and Windows-first floating live-captions product: system audio → realtime speech/translation → always-on-top overlay.
 - Active stack is a monorepo with Tauri 2 + Rust desktop (`apps/desktop`), React + TypeScript + Vite UI, Fastify/TypeScript WebSocket gateway, shared protocol package, and Drizzle + Turso (embedded SQLite) persistence in `@doot/db`.
-- System audio capture uses ScreenCaptureKit-style paths and requires macOS Screen Recording permission for testing.
+- System audio capture uses ScreenCaptureKit on macOS (Screen Recording permission) and WASAPI shared-mode loopback on Windows (default playback device, no microphone permission).
+- Capture backends push into a shared PCM converter (`apps/desktop/src-tauri/src/audio/convert.rs`) that emits 16 kHz mono S16LE for the gateway stream.
+- Global capture shortcut is `Cmd+Shift+D` on macOS and `Ctrl+Shift+D` on Windows.
 - Sarvam Realtime STT is the primary gateway transport; the legacy streaming client remains an automatic fallback for initial and terminal Realtime failures.
 - Gemini 3.5 Live Translate (`GEMINI_API_KEY`) covers international spoken sources (Gemini's Live Translate matrix, not a Spanish/French/German-only POC); the overlay has no provider toggle.
 - Gemini Live Translate is audio→audio first; captions come from correlated side-channel source/output transcription and bypass the text-translation router (weaker caption UX than Sarvam's STT+MT path).
@@ -34,6 +36,7 @@
 - Overlay prefs persist with `tauri-plugin-store` (languages, caption text size, idle opacity, open-at-login, last provider). Overlay position/size persist with `tauri-plugin-window-state`.
 - Overlay caption lines map 1:1 to gateway utterances: the last few turns stack as separate lines (previous turns slightly dimmer), instead of joining with spaces.
 - Settings Connection is status-only in this phase (gateway reachability, capture backend, last provider). API keys and gateway process still live in `.env` / the terminal.
+- Windows Settings copy and overlay shortcut labels should stay OS-neutral (`this computer`, `Ctrl+Shift+D`); do not hardcode Mac-only chrome strings.
 
 ## graphify
 
@@ -53,8 +56,8 @@ Rules:
 Environment: Linux VM with Node 22, npm 10, and Rust 1.83 preinstalled. Docker is NOT preinstalled. The startup update script runs `npm ci`.
 
 - Package manager is **npm** (npm workspaces), not bun. A stale `bun.lock` is committed, but CI (`.github/workflows/ci.yml`), the gateway `Dockerfile`, and `scripts/dev.sh` all use npm. Use `npm ci` / `npm run ...`.
-- Standard commands are in the root `package.json` and README "Useful checks": `npm run typecheck`, `npm run lint`, `npm run test`, `npm run build` all pass on Linux. Only `@doot/gateway` has tests (Node test runner via `tsx`); only `@doot/desktop` has a lint script (eslint).
-- The **Tauri/Rust desktop app is macOS-only** (ScreenCaptureKit). Do not try to run `npm run dev`, `npm run dev:tauri`, or `npm run build:tauri` here — they need the native macOS layer and real audio capture. The CI `native-check` job covers that on `macos-latest`.
+- Standard commands are in the root `package.json` and README "Useful checks": `npm run typecheck`, `npm run lint`, `npm run test`, `npm run build` all pass on Linux. Only `@doot/gateway` has tests (Node test runner via `tsx`); only `@doot/desktop` has a lint script (eslint). Desktop PCM conversion tests run with `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib`.
+- The **Tauri/Rust desktop app is macOS- and Windows-native** (ScreenCaptureKit / WASAPI). Do not try to run `npm run dev`, `npm run dev:tauri`, or `npm run build:tauri` here — they need the native OS layer and real audio capture. CI `native-check` covers macOS on `macos-latest`; `windows-native-check` covers Windows on `windows-latest`.
 - What runs on this VM:
   - Gateway: `npm run dev:gateway` → `ws://127.0.0.1:8787` with `GET /health`. Boots with no API keys.
   - Web UI: `npm run dev:web` → Vite on **`http://localhost:1420`**. It binds IPv6 `localhost`, so `http://127.0.0.1:1420` may fail; use `localhost`. In a plain browser the overlay renders but audio capture throws a Tauri `transformCallback` error — expected without the native layer.

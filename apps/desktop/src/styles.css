@@ -1,8 +1,8 @@
 :root {
   color: #f5f4f6;
   background: transparent;
-  font-family: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont,
-    "Helvetica Neue", sans-serif;
+  font-family: "SF Pro Text", "SF Pro Display", "Segoe UI", -apple-system,
+    BlinkMacSystemFont, "Helvetica Neue", sans-serif;
   font-synthesis: none;
 }
 

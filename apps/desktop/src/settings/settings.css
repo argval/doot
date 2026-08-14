@@ -11,8 +11,8 @@ html.settings-window #root {
   display: grid;
   grid-template-columns: 188px minmax(0, 1fr);
   height: 100%;
-  font-family: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont,
-    "Helvetica Neue", sans-serif;
+  font-family: "SF Pro Text", "SF Pro Display", "Segoe UI", -apple-system,
+    BlinkMacSystemFont, "Helvetica Neue", sans-serif;
 }
 
 .settings-sidebar {

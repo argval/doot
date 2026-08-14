@@ -2,7 +2,7 @@
 
 Doot is a cross-platform desktop application for live captions and translation of audio playing on a computer. The project is deliberately split into a native desktop engine, a replaceable provider layer, and a small realtime gateway.
 
-The current repository is a runnable skeleton. The UI, command/event boundaries, WebSocket protocol, provider routing, and database schema are present. OS audio capture and vendor streaming adapters are explicit implementation seams and return clear scaffold errors until their platform permissions and SDK wiring are added.
+The UI, command/event boundaries, WebSocket protocol, provider routing, and database schema are present. Native system-audio capture is implemented on macOS (ScreenCaptureKit) and Windows (WASAPI loopback). Other platforms keep a stub backend for session-state development.
 
 ## Architecture
 
@@ -11,7 +11,8 @@ apps/desktop
   React + TypeScript + Vite
         │ Tauri commands/events
   Rust audio engine
-    ├─ ScreenCaptureKit capture / WASAPI seam
+    ├─ ScreenCaptureKit (macOS) / WASAPI loopback (Windows)
+    ├─ shared PCM convert → 16 kHz mono S16LE
     ├─ provider router
     └─ caption session state
         │ bounded PCM chunks over WebSocket
@@ -31,10 +32,11 @@ infra                    Notes for a later production gateway layout
 - Node.js 20 or newer and npm 10 or newer.
 - Rust stable and Cargo.
 - Tauri 2 system prerequisites for your operating system. Follow the [official Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
-- macOS 14 or newer for the current ScreenCaptureKit implementation.
+- macOS 14 or newer for ScreenCaptureKit capture.
+- Windows 10 version 1903 or newer (or Windows 11), plus WebView2 and the MSVC build tools, for WASAPI capture and the Tauri app.
 - Optional: `npm run db:migrate` creates a local Turso SQLite file (no Docker).
 
-On macOS, the eventual ScreenCaptureKit implementation will need Screen Recording permission. On Windows, the WASAPI loopback implementation will use the default render endpoint and does not require microphone permission for system audio.
+On macOS, ScreenCaptureKit needs **Screen & System Audio Recording** permission. On Windows, WASAPI loopback uses the default playback device and does not require microphone permission. Exclusive-mode audio (some games, ASIO) is not visible to shared-mode loopback.
 
 ## Bootstrap
 
@@ -56,7 +58,7 @@ npm run dev
 ./scripts/dev.sh
 ```
 
-This opens the native Doot desktop app and starts the gateway. The gateway exposes:
+On Windows, use `npm run dev` from the repo root (the bash helper is optional). This opens the native Doot desktop app and starts the gateway. The gateway exposes:
 
 - `GET http://127.0.0.1:8787/health`
 - `ws://127.0.0.1:8787/v1/realtime`
@@ -77,11 +79,11 @@ npm run dev:gateway
 you launch the native desktop process by another route, start
 `npm run dev:gateway` alongside it.
 
-On macOS, start and stop capture from the overlay, the tray menu, or with `Cmd+Shift+D`. The first capture prompts for **Screen & System Audio Recording** permission. With `SARVAM_API_KEY` set, English and supported Indic-language routes use Sarvam Realtime with automatic legacy-streaming failover. Translation is routed independently: Indic pairs use Sarvam (`TRANSLATION_API_KEY` can hold a separate Sarvam translation key and otherwise falls back to `SARVAM_API_KEY`); other pairs use Gemini text translation when `GEMINI_API_KEY` is set.
+Start and stop capture from the overlay, the tray menu, or the global shortcut (`Cmd+Shift+D` on macOS, `Ctrl+Shift+D` on Windows). On macOS the first capture prompts for **Screen & System Audio Recording** permission. With `SARVAM_API_KEY` set, English and supported Indic-language routes use Sarvam Realtime with automatic legacy-streaming failover. Translation is routed independently: Indic pairs use Sarvam (`TRANSLATION_API_KEY` can hold a separate Sarvam translation key and otherwise falls back to `SARVAM_API_KEY`); other pairs use Gemini text translation when `GEMINI_API_KEY` is set.
 
 With `GEMINI_API_KEY` set, non-Indic spoken sources (Spanish, French, German, Japanese, and the rest of Gemini Live Translate's set) route through `gemini-3.5-live-translate-preview`. Gemini's source and translated transcripts are correlated inside one provider session and bypass the separate text translator. Auto detect uses Sarvam when the target is English or Indic, and Gemini when the target is another international language. English→Spanish and similar pairs keep Sarvam speech recognition and Gemini text MT unless the benchmark client requests `--provider gemini`.
 
-Windows still returns the explicit WASAPI scaffold error. Other platforms retain the stub backend for session-state development.
+Linux and other non-macOS/non-Windows hosts retain the stub capture backend for session-state development.
 
 ## Useful checks
 
@@ -90,6 +92,7 @@ npm run typecheck
 npm run build
 npm run test
 npm run lint --workspace @doot/desktop
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib
 npm run db:generate
 npm run db:migrate
 npm run build:tauri
@@ -140,8 +143,8 @@ Provider-specific code is local to its directory under `services/gateway/src/spe
 
 1. **Provider benchmarks:** measure Sarvam against representative desktop audio, tracking WER, partial latency, final latency, translation quality, and cost.
 2. **Caption persistence:** insert finalized segments through `@doot/db`; keep partial captions in memory only.
-3. **Windows capture:** replace the `WasapiBackend` error path with a COM/WASAPI loopback client and endpoint format conversion.
-4. **Production stream lifecycle:** add explicit backpressure telemetry and provider-level health measurements.
+3. **Production stream lifecycle:** add explicit backpressure telemetry and provider-level health measurements.
+4. **Linux capture:** replace the stub backend with a PulseAudio/PipeWire loopback client.
 
 ## Design decisions
 
@@ -149,11 +152,12 @@ Provider-specific code is local to its directory under `services/gateway/src/spe
 - **Provider modules:** Sarvam owns English/Indic speech and Indic text translation. Gemini Live Translate covers international speech; Gemini text MT covers non-Indic pairs from Sarvam transcripts.
 - **WebSocket gateway:** streaming audio and partial captions need a long-lived, bidirectional connection. The gateway is intentionally stateless beyond each socket for the first version.
 - **Drizzle + Turso:** sessions and finalized caption segments live in a local SQLite file (Rust-rewritten engine) without forcing persistence into the live audio path.
-- **Explicit platform stubs:** platform capture code is isolated behind a trait so macOS, Windows, and a future Linux backend can evolve independently.
+- **Explicit platform backends:** capture code is isolated behind a trait so macOS, Windows, and a future Linux backend can evolve independently. Shared PCM conversion lives in `audio/convert.rs` so mix formats can be tested without OS APIs.
 
 ## Current limitations
 
-- Native system-audio capture is implemented on macOS only.
+- Native system-audio capture is implemented on macOS and Windows. Linux still uses the stub backend.
+- Windows capture is shared-mode WASAPI loopback of the default render endpoint; exclusive-mode and per-app capture are out of scope.
 - Sarvam Realtime STT is wired for English and Indic-language routes with legacy-streaming failover.
 - Gemini Live Translate covers Gemini's international language matrix for non-Indic spoken sources; it has no cross-provider failover yet.
 - Progressive translated captions use Sarvam's text-translation API for English/Indic pairs and Gemini text MT for other pairs; unsupported pairs return a translation error and never display source text as translated text.

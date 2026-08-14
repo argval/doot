@@ -26,6 +26,7 @@ import {
   type DesktopPrefs,
 } from "../lib/prefs";
 import { isTauriRuntime } from "../lib/runtime";
+import { captureShortcutLabel } from "../lib/shortcut";
 import {
   getConnectionStatus,
   type ConnectionStatus,
@@ -62,11 +63,6 @@ function sectionTitle(section: SettingsSection): string {
       return exhaustive;
     }
   }
-}
-
-function captureShortcutLabel(): string {
-  const platform = navigator.platform.toLowerCase();
-  return platform.includes("mac") ? "⌘⇧D" : "Ctrl+Shift+D";
 }
 
 export function SettingsApp() {
@@ -237,7 +233,7 @@ function GeneralSection({
         <label className="settings-row">
           <span>
             <strong>Open at login</strong>
-            <em>Start Doot when you sign in to this Mac.</em>
+            <em>Start Doot when you sign in to this computer.</em>
           </span>
           <input
             type="checkbox"
