@@ -117,8 +117,8 @@ fn capture_loop(
     init_tx: std::sync::mpsc::SyncSender<Result<(), String>>,
 ) {
     let com = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
-    if let Err(error) = com {
-        let _ = init_tx.send(Err(format!("COM initialization failed: {error}")));
+    if com.is_err() {
+        let _ = init_tx.send(Err(format!("COM initialization failed: {com}")));
         return;
     }
     let _com = ComGuard;
@@ -322,14 +322,15 @@ fn parse_mix_format(format: &WAVEFORMATEX) -> Result<MixFormat, String> {
         }
         // SAFETY: cbSize says the extensible tail is present, matching GetMixFormat.
         let ext = unsafe { &*(std::ptr::from_ref(format) as *const WAVEFORMATEXTENSIBLE) };
-        if ext.SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT {
+        let sub_format = ext.SubFormat;
+        if sub_format == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT {
             SampleEncoding::F32
-        } else if ext.SubFormat == KSDATAFORMAT_SUBTYPE_PCM {
+        } else if sub_format == KSDATAFORMAT_SUBTYPE_PCM {
             pcm_encoding(bits)?
         } else {
             return Err(format!(
                 "unsupported WASAPI mix sub-format: {:?}",
-                ext.SubFormat
+                sub_format
             ));
         }
     } else {
