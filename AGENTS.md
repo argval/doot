@@ -27,6 +27,7 @@
 - Settings Connection is status-only in this phase (gateway reachability, capture backend, last provider); API keys and gateway process still live in `.env` / the terminal. Windows Settings copy and shortcut labels should stay OS-neutral (`this computer`, `Ctrl+Shift+D`).
 - Caption timing is audio-duration-aware: adapters derive speech-start and transcript/end timestamps from PCM interval boundaries. Provider VAD owns utterance boundaries; gateway grace only waits for late events, translation cadence does not define line identity, and only one draft translation runs per turn while the latest source revision is queued.
 - Caption pipeline aims for persistent Sarvam streaming with VAD-driven utterance boundaries and code-switch-tolerant Indic translation (including Kannada).
+- Gateway startup migrates the local Turso SQLite database; it stores one row per successfully opened session, finalized caption segments only, and the session stop time. Draft captions and raw audio stay in memory.
 
 ## graphify
 
@@ -52,4 +53,4 @@ Environment: Linux VM with Node 22, npm 10, and Rust 1.83 preinstalled. Docker i
   - Gateway: `npm run dev:gateway` → `ws://127.0.0.1:8787` with `GET /health`. Boots with no API keys.
   - Web UI: `npm run dev:web` → Vite on **`http://localhost:1420`**. It binds IPv6 `localhost`, so `http://127.0.0.1:1420` may fail; use `localhost`. Overlay glass uses a `web-preview` backdrop. Caption chrome: `/?preview=captions`, `/?preview=captions-indic`, `/?preview=listening`, `/?preview=error`. Settings: `/?window=settings` (Captions has a live overlay preview). Starting capture in the browser shows a desktop-app error; it does not call Tauri.
 - No-key end-to-end testing: the gateway has a built-in `mock` speech provider (always `configured`). Open a realtime session with `provider: "mock"` and equal source/target languages (e.g. `en`→`en`) to get full end-to-end captions without any API keys; the translation router is a passthrough when `source === target`. Live captions need `SARVAM_API_KEY` / `GEMINI_API_KEY` in the repo-root `.env` (create via `npm run setup`, which copies `.env.example`).
-- Turso/SQLite (`npm run db:migrate`) is optional and not wired into the gateway yet (captions are not persisted). The local file defaults to `packages/db/data/doot.db`; override with `DOOT_DB_PATH`. Docker is not required for the database.
+  - Turso/SQLite is migrated when the gateway starts; `npm run db:migrate` remains available for manual verification. The local file defaults to `packages/db/data/doot.db`; override with `DOOT_DB_PATH`. Docker is not required for the database.

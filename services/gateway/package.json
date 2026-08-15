@@ -12,6 +12,7 @@
     "benchmark:live": "tsx scripts/benchmark-live.ts"
   },
   "dependencies": {
+    "@doot/db": "0.1.0",
     "@doot/protocol": "0.1.0",
     "@fastify/websocket": "^11.0.2",
     "fastify": "^5.2.1",
