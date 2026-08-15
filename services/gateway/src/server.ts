@@ -9,6 +9,7 @@ import {
   registerRealtimeGateway,
   type RealtimeGatewayOptions,
 } from "./gateway.js";
+import { registerHistoryRoutes } from "./history.js";
 import { GeminiProvider } from "./speech/gemini/provider.js";
 import { MockProvider } from "./speech/mock/provider.js";
 import { ProviderRouter } from "./speech/router.js";
@@ -64,6 +65,7 @@ export async function buildServer(
       },
     };
   });
+  registerHistoryRoutes(app, gatewayOptions.db);
   registerRealtimeGateway(app, router, (request) => translation.translate(request), gatewayOptions);
   return app;
 }

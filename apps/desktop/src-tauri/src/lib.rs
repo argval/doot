@@ -207,8 +207,8 @@ pub(crate) fn open_settings(app: &AppHandle) -> Result<(), String> {
         WebviewUrl::App("index.html".into()),
     )
     .title("Settings")
-    .inner_size(680.0, 520.0)
-    .min_inner_size(560.0, 420.0)
+    .inner_size(720.0, 560.0)
+    .min_inner_size(600.0, 460.0)
     .resizable(true)
     .decorations(true)
     .always_on_top(false)

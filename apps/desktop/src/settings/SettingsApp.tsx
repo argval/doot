@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import {
   Activity,
   Captions,
+  History,
   Info,
   Settings2,
 } from "lucide-react";
@@ -26,9 +27,10 @@ import {
   type ConnectionStatus,
 } from "../lib/tauri";
 import { captionScript, CaptionPanel } from "../overlay/CaptionPanel";
+import { HistorySection } from "./HistorySection";
 import type { VisibleCaptionLine } from "../captions";
 
-type SettingsSection = "general" | "captions" | "connection" | "about";
+type SettingsSection = "general" | "captions" | "history" | "connection" | "about";
 
 const OPACITY_PRESETS = [
   { id: "ghost", label: "Ghost", value: 0.22 },
@@ -117,6 +119,7 @@ const SECTIONS: ReadonlyArray<{
 }> = [
   { id: "general", label: "General", icon: Settings2 },
   { id: "captions", label: "Captions", icon: Captions },
+  { id: "history", label: "History", icon: History },
   { id: "connection", label: "Connection", icon: Activity },
   { id: "about", label: "About", icon: Info },
 ];
@@ -248,7 +251,7 @@ export function SettingsApp() {
           );
         })}
       </nav>
-      <main className="settings-content">
+      <main className={section === "history" ? "settings-content history" : "settings-content"}>
         <h1>{SECTIONS.find((item) => item.id === section)?.label}</h1>
         {section === "general" && (
           <GeneralSection
@@ -260,6 +263,7 @@ export function SettingsApp() {
         {section === "captions" && (
           <CaptionsSection prefs={prefs} onPatch={(patch) => void patchPrefs(patch)} />
         )}
+        {section === "history" && <HistorySection />}
         {section === "connection" && (
           <ConnectionSection
             prefs={prefs}

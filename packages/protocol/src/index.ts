@@ -317,3 +317,17 @@ export interface ErrorEvent {
 }
 
 export type ServerMessage = SessionStartedEvent | CaptionEvent | SessionStoppedEvent | ErrorEvent;
+
+export {
+  HISTORY_EXPORT_FORMATS,
+  captionExportText,
+  formatHistoryExport,
+  historyExportFilename,
+  historyExportMime,
+  isHistoryExportFormat,
+  type HistoryExportFormat,
+  type HistorySegment,
+  type HistorySessionDetail,
+  type HistorySessionListResponse,
+  type HistorySessionSummary,
+} from "./history.js";

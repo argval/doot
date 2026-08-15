@@ -58,6 +58,7 @@ bun run dev
 On Windows, use `bun run dev` from the repo root. This opens the native Doot desktop app and starts the gateway. The gateway exposes:
 
 - `GET http://127.0.0.1:8787/health`
+- `GET http://127.0.0.1:8787/v1/history/sessions`
 - `ws://127.0.0.1:8787/v1/realtime`
 
 To work on the browser UI without Tauri:
@@ -139,9 +140,8 @@ Provider-specific code is local to its directory under `services/gateway/src/spe
 ## Where to implement the next pieces
 
 1. **Provider benchmarks:** measure Sarvam against representative desktop audio, tracking WER, partial latency, final latency, translation quality, and cost.
-2. **Caption history UI:** list, search, and delete locally persisted sessions and finalized caption segments.
-3. **Production stream lifecycle:** add explicit backpressure telemetry and provider-level health measurements.
-4. **Linux capture:** replace the stub backend with a PulseAudio/PipeWire loopback client.
+2. **Production stream lifecycle:** add explicit backpressure telemetry and provider-level health measurements.
+3. **Linux capture:** replace the stub backend with a PulseAudio/PipeWire loopback client.
 
 ## Design decisions
 
@@ -158,5 +158,5 @@ Provider-specific code is local to its directory under `services/gateway/src/spe
 - Sarvam Realtime STT is wired for English and Indic-language routes.
 - Gemini Live Translate covers Gemini's international language matrix for non-Indic spoken sources; it has no cross-provider failover yet.
 - Progressive translated captions use Sarvam's text-translation API for English/Indic pairs and Gemini text MT for other pairs; unsupported pairs return a translation error and never display source text as translated text.
-- The gateway stores finalized caption segments locally; partial revisions and audio are never stored.
+- The gateway stores finalized caption segments locally; partial revisions and audio are never stored. Settings → History lists those sessions, searches them, exports Text/SRT/JSON, and can delete them.
 - Authentication, rate limiting, billing, and production secrets management are intentionally out of scope for this skeleton.
