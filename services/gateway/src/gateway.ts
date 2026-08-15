@@ -27,10 +27,10 @@ import { mergeStreamingText } from "./merge-text.js";
 
 const maxAudioChunkBytes = 256 * 1024;
 const maxBase64Length = Math.ceil(maxAudioChunkBytes / 3) * 4;
+const MAX_COMPLETED_PROVIDER_TURNS = 32;
 
 export interface RealtimeGatewayOptions {
   utteranceGraceMs?: number;
-  maxUtteranceMs?: number;
 }
 
 interface ActiveUtterance {
@@ -40,10 +40,13 @@ interface ActiveUtterance {
   sourceText: string;
   startMs: number;
   endMs: number;
+  providerTurnId: string | null;
   graceTimer: NodeJS.Timeout | null;
-  safetyTimer: NodeJS.Timeout | null;
   draftTimer: NodeJS.Timeout | null;
   draftMaxWaitTimer: NodeJS.Timeout | null;
+  draftInFlight: boolean;
+  draftPending: boolean;
+  draftCompletion: Promise<void> | null;
   draftSourceText: string | null;
   draftTranslatedText: string | null;
   nativeTranslatedText: string | null;
@@ -58,6 +61,8 @@ interface SessionState {
   nextSequence: number;
   speechActive: boolean;
   pendingSpeechStartMs: number | null;
+  pendingSpeechTurnId: string | null;
+  completedProviderTurnIds: string[];
   lastAudioTimestampMs: number;
   lastAudioSequence: number;
   pendingFinalizations: Promise<void>;
@@ -67,7 +72,6 @@ interface SessionState {
 
 interface RequiredGatewayOptions {
   utteranceGraceMs: number;
-  maxUtteranceMs: number;
 }
 
 export function registerRealtimeGateway(
@@ -78,7 +82,6 @@ export function registerRealtimeGateway(
 ): void {
   const gatewayOptions: RequiredGatewayOptions = {
     utteranceGraceMs: options.utteranceGraceMs ?? 350,
-    maxUtteranceMs: options.maxUtteranceMs ?? 60_000,
   };
 
   app.get("/v1/realtime", { websocket: true }, (socket: WebSocket, request) => {
@@ -205,6 +208,8 @@ async function startSession(
       nextSequence: 0,
       speechActive: false,
       pendingSpeechStartMs: null,
+      pendingSpeechTurnId: null,
+      completedProviderTurnIds: [],
       lastAudioTimestampMs: 0,
       lastAudioSequence: -1,
       pendingFinalizations: Promise.resolve(),
@@ -263,12 +268,42 @@ function handleProviderEvent(
 
   switch (event.type) {
     case "speech_start": {
+      if (isCompletedProviderTurn(session, event.turnId)) return;
+      if (
+        event.turnId
+        && session.pendingSpeechTurnId
+        && event.turnId !== session.pendingSpeechTurnId
+        && !session.activeUtterance
+      ) {
+        // ponytail: real adapters preserve late finals; discard a generic
+        // textless interval rather than letting it corrupt the newer turn.
+        rememberCompletedProviderTurn(session, session.pendingSpeechTurnId);
+      }
+      const activeTurnId = session.activeUtterance?.providerTurnId;
+      const changedTurn = Boolean(
+        event.turnId && activeTurnId && event.turnId !== activeTurnId,
+      );
+      if (session.activeUtterance && (!session.speechActive || changedTurn)) {
+        void finalizeActiveUtterance(translator, socket, session);
+      }
       session.speechActive = true;
       session.pendingSpeechStartMs = event.timestampMs;
+      session.pendingSpeechTurnId = event.turnId ?? null;
       cancelGraceTimer(session.activeUtterance);
       return;
     }
     case "speech_end": {
+      if (isCompletedProviderTurn(session, event.turnId)) {
+        if (!session.activeUtterance && !session.pendingSpeechTurnId) {
+          session.speechActive = false;
+        }
+        return;
+      }
+      if (
+        event.turnId
+        && session.activeUtterance?.providerTurnId
+        && event.turnId !== session.activeUtterance.providerTurnId
+      ) return;
       session.speechActive = false;
       if (session.activeUtterance) {
         session.activeUtterance.endMs = Math.max(
@@ -276,14 +311,23 @@ function handleProviderEvent(
           event.timestampMs,
         );
         scheduleGraceFinalization(translator, options, socket, session);
-      } else {
-        session.pendingSpeechStartMs = null;
       }
       return;
     }
     case "transcript": {
-      updateActiveUtterance(translator, options, socket, session, event);
-      if (event.isFinal && !session.nativeTranslation && session.activeUtterance) {
+      const accepted = updateActiveUtterance(
+        translator,
+        options,
+        socket,
+        session,
+        event,
+      );
+      if (
+        accepted
+        && event.isFinal
+        && !session.nativeTranslation
+        && session.activeUtterance
+      ) {
         session.speechActive = false;
         session.activeUtterance.endMs = Math.max(
           session.activeUtterance.endMs,
@@ -330,34 +374,25 @@ function updateActiveUtterance(
   socket: WebSocket,
   session: SessionState,
   event: Extract<ProviderStreamEvent, { type: "transcript" }>,
-): void {
+): boolean {
   const transcript = normalizeTranscript(event.text);
-  if (!transcript) return;
+  if (!transcript) return false;
+  if (isCompletedProviderTurn(session, event.turnId)) return false;
 
   let utterance = session.activeUtterance;
+  if (
+    utterance
+    && event.turnId
+    && utterance.providerTurnId
+    && event.turnId !== utterance.providerTurnId
+  ) {
+    void finalizeActiveUtterance(translator, socket, session);
+    utterance = null;
+  }
   if (!utterance) {
-    const sequence = session.nextSequence;
-    session.nextSequence += 1;
-    utterance = {
-      id: `${session.request.sessionId}:${event.timestampMs}:${sequence}`,
-      sequence,
-      revision: 0,
-      sourceText: "",
-      startMs: session.pendingSpeechStartMs ?? event.timestampMs,
-      endMs: event.timestampMs,
-      graceTimer: null,
-      safetyTimer: null,
-      draftTimer: null,
-      draftMaxWaitTimer: null,
-      draftSourceText: null,
-      draftTranslatedText: null,
-      nativeTranslatedText: null,
-    };
-    session.activeUtterance = utterance;
-    session.pendingSpeechStartMs = null;
-    utterance.safetyTimer = setTimeout(() => {
-      void finalizeActiveUtterance(translator, socket, session);
-    }, options.maxUtteranceMs);
+    utterance = openActiveUtterance(session, event.timestampMs, event.turnId);
+  } else if (!utterance.providerTurnId && event.turnId) {
+    utterance.providerTurnId = event.turnId;
   }
 
   // Realtime `transcript.final` is the provider's authoritative complete
@@ -366,7 +401,7 @@ function updateActiveUtterance(
     ? transcript
     : mergeStreamingText(utterance.sourceText, transcript);
   utterance.endMs = Math.max(utterance.endMs, event.timestampMs);
-  if (mergedText === utterance.sourceText) return;
+  if (mergedText === utterance.sourceText) return true;
 
   utterance.sourceText = mergedText;
   utterance.revision += 1;
@@ -393,6 +428,46 @@ function updateActiveUtterance(
   if (!session.speechActive) {
     scheduleGraceFinalization(translator, options, socket, session);
   }
+  return true;
+}
+
+function openActiveUtterance(
+  session: SessionState,
+  timestampMs: number,
+  providerTurnId?: string,
+): ActiveUtterance {
+  const sequence = session.nextSequence;
+  session.nextSequence += 1;
+  const pendingStartMatches = session.pendingSpeechStartMs !== null
+    && (
+      !providerTurnId
+      || !session.pendingSpeechTurnId
+      || providerTurnId === session.pendingSpeechTurnId
+    );
+  const utterance: ActiveUtterance = {
+    id: `${session.request.sessionId}:${timestampMs}:${sequence}`,
+    sequence,
+    revision: 0,
+    sourceText: "",
+    startMs: pendingStartMatches ? session.pendingSpeechStartMs! : timestampMs,
+    endMs: timestampMs,
+    providerTurnId: providerTurnId ?? null,
+    graceTimer: null,
+    draftTimer: null,
+    draftMaxWaitTimer: null,
+    draftInFlight: false,
+    draftPending: false,
+    draftCompletion: null,
+    draftSourceText: null,
+    draftTranslatedText: null,
+    nativeTranslatedText: null,
+  };
+  session.activeUtterance = utterance;
+  if (pendingStartMatches) {
+    session.pendingSpeechStartMs = null;
+    session.pendingSpeechTurnId = null;
+  }
+  return utterance;
 }
 
 function updateNativeTranslation(
@@ -404,32 +479,23 @@ function updateNativeTranslation(
 ): void {
   const translated = normalizeTranscript(event.text);
   if (!translated) return;
+  if (isCompletedProviderTurn(session, event.turnId)) return;
 
   let utterance = session.activeUtterance;
+  if (
+    utterance
+    && event.turnId
+    && utterance.providerTurnId
+    && event.turnId !== utterance.providerTurnId
+  ) {
+    void finalizeActiveUtterance(translator, socket, session);
+    utterance = null;
+  }
   if (!utterance) {
     // Native providers (Gemini) can emit translated text before source text.
-    const sequence = session.nextSequence;
-    session.nextSequence += 1;
-    utterance = {
-      id: `${session.request.sessionId}:${event.timestampMs}:${sequence}`,
-      sequence,
-      revision: 0,
-      sourceText: "",
-      startMs: session.pendingSpeechStartMs ?? event.timestampMs,
-      endMs: event.timestampMs,
-      graceTimer: null,
-      safetyTimer: null,
-      draftTimer: null,
-      draftMaxWaitTimer: null,
-      draftSourceText: null,
-      draftTranslatedText: null,
-      nativeTranslatedText: null,
-    };
-    session.activeUtterance = utterance;
-    session.pendingSpeechStartMs = null;
-    utterance.safetyTimer = setTimeout(() => {
-      void finalizeActiveUtterance(translator, socket, session);
-    }, options.maxUtteranceMs);
+    utterance = openActiveUtterance(session, event.timestampMs, event.turnId);
+  } else if (!utterance.providerTurnId && event.turnId) {
+    utterance.providerTurnId = event.turnId;
   }
 
   // Native translation events are provider-normalized cumulative snapshots.
@@ -471,7 +537,7 @@ function scheduleDraftTranslation(
   utterance.draftTimer = setTimeout(() => {
     utterance.draftTimer = null;
     clearDraftMaxWait(utterance);
-    void runDraftTranslation(translator, socket, session, utterance);
+    queueDraftTranslation(translator, socket, session, utterance);
   }, DRAFT_TRANSLATE_MS);
 
   // Continuous speech keeps resetting the trailing timer; force a draft at least
@@ -483,7 +549,7 @@ function scheduleDraftTranslation(
         clearTimeout(utterance.draftTimer);
         utterance.draftTimer = null;
       }
-      void runDraftTranslation(translator, socket, session, utterance);
+      queueDraftTranslation(translator, socket, session, utterance);
     }, DRAFT_MAX_WAIT_MS);
   }
 }
@@ -500,18 +566,11 @@ async function runDraftTranslation(
   session: SessionState,
   utterance: ActiveUtterance,
 ): Promise<void> {
-  if (
-    session.closed
-    || session.closing
-    || session.activeUtterance !== utterance
-    || !utterance.sourceText
-  ) {
-    return;
-  }
-
+  utterance.draftInFlight = true;
+  utterance.draftPending = false;
   const sourceText = utterance.sourceText;
   const request = session.request;
-  let translatedText = "";
+  let translatedText: string | null = null;
   try {
     translatedText = await translator({
       text: sourceText,
@@ -520,28 +579,65 @@ async function runDraftTranslation(
     });
   } catch {
     // Draft misses are fine; the final pass still reports translation errors.
-    return;
+  } finally {
+    utterance.draftInFlight = false;
   }
 
   if (
-    session.closed
-    || session.activeUtterance !== utterance
+    translatedText === null
+    || session.closed
     || utterance.sourceText !== sourceText
   ) {
+    if (
+      utterance.draftPending
+      && !session.closed
+      && !session.closing
+      && session.activeUtterance === utterance
+    ) {
+      queueDraftTranslation(translator, socket, session, utterance);
+    }
     return;
   }
 
-  utterance.revision += 1;
   utterance.draftSourceText = sourceText;
   utterance.draftTranslatedText = translatedText;
-  sendCaption(
-    socket,
-    session,
-    utterance,
-    utterance.draftTranslatedText,
-    false,
-    utterance.revision,
-  );
+  if (session.activeUtterance === utterance) {
+    utterance.revision += 1;
+    sendCaption(
+      socket,
+      session,
+      utterance,
+      utterance.draftTranslatedText,
+      false,
+      utterance.revision,
+    );
+  }
+}
+
+function queueDraftTranslation(
+  translator: TranslateText,
+  socket: WebSocket,
+  session: SessionState,
+  utterance: ActiveUtterance,
+): void {
+  if (
+    session.closed
+    || session.closing
+    || session.activeUtterance !== utterance
+    || !utterance.sourceText
+  ) {
+    return;
+  }
+  if (utterance.draftInFlight) {
+    utterance.draftPending = true;
+    return;
+  }
+
+  const completion = runDraftTranslation(translator, socket, session, utterance);
+  utterance.draftCompletion = completion;
+  void completion.finally(() => {
+    if (utterance.draftCompletion === completion) utterance.draftCompletion = null;
+  });
 }
 
 function scheduleGraceFinalization(
@@ -565,13 +661,20 @@ function finalizeActiveUtterance(
   session: SessionState,
 ): Promise<void> {
   const utterance = session.activeUtterance;
-  if (!utterance || !utterance.sourceText) return session.pendingFinalizations;
+  if (
+    !utterance
+    || (!utterance.sourceText && !utterance.nativeTranslatedText)
+  ) return session.pendingFinalizations;
 
   session.activeUtterance = null;
+  if (utterance.providerTurnId) {
+    rememberCompletedProviderTurn(session, utterance.providerTurnId);
+  }
   clearUtteranceTimers(utterance);
   session.providerSession?.commitAudioThrough(utterance.endMs);
   const request = session.request;
   const finalize = async () => {
+    if (utterance.draftCompletion) await utterance.draftCompletion;
     let translatedText = session.nativeTranslation
       ? utterance.nativeTranslatedText ?? ""
       : utterance.draftTranslatedText ?? "";
@@ -699,6 +802,21 @@ function normalizeTranscript(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function isCompletedProviderTurn(
+  session: SessionState,
+  turnId: string | undefined,
+): boolean {
+  return Boolean(turnId && session.completedProviderTurnIds.includes(turnId));
+}
+
+function rememberCompletedProviderTurn(session: SessionState, turnId: string): void {
+  if (session.completedProviderTurnIds.includes(turnId)) return;
+  session.completedProviderTurnIds.push(turnId);
+  if (session.completedProviderTurnIds.length > MAX_COMPLETED_PROVIDER_TURNS) {
+    session.completedProviderTurnIds.shift();
+  }
+}
+
 function cancelGraceTimer(utterance: ActiveUtterance | null): void {
   if (!utterance?.graceTimer) return;
   clearTimeout(utterance.graceTimer);
@@ -708,11 +826,9 @@ function cancelGraceTimer(utterance: ActiveUtterance | null): void {
 function clearUtteranceTimers(utterance: ActiveUtterance | null): void {
   if (!utterance) return;
   if (utterance.graceTimer) clearTimeout(utterance.graceTimer);
-  if (utterance.safetyTimer) clearTimeout(utterance.safetyTimer);
   if (utterance.draftTimer) clearTimeout(utterance.draftTimer);
   if (utterance.draftMaxWaitTimer) clearTimeout(utterance.draftMaxWaitTimer);
   utterance.graceTimer = null;
-  utterance.safetyTimer = null;
   utterance.draftTimer = null;
   utterance.draftMaxWaitTimer = null;
 }

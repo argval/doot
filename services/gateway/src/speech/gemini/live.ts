@@ -1,7 +1,8 @@
 import { WebSocket, type RawData } from "ws";
-import type {
-  OpenProviderSessionOptions,
-  ProviderStreamSession,
+import {
+  pcmS16leDurationMs,
+  type OpenProviderSessionOptions,
+  type ProviderStreamSession,
 } from "../contract.js";
 import { isRecord } from "../../util.js";
 import { mergeStreamingText } from "../../merge-text.js";
@@ -15,8 +16,6 @@ import {
 
 const SETUP_TIMEOUT_MS = 8_000;
 const END_TIMEOUT_MS = 3_000;
-/** Match Sarvam's endpointing so Gemini does not finalize mid-phrase. */
-const TRANSCRIPT_SETTLE_MS = 500;
 /** Soft coalesce target — desktop already emits ~100 ms frames. */
 const PCM_BYTES_PER_100_MS = 3_200;
 /** Same silence window Sarvam Realtime uses (`silence_duration_ms=500`). */
@@ -26,8 +25,6 @@ export interface GeminiLiveRuntime {
   endpoint?: string;
   setupTimeoutMs?: number;
   endTimeoutMs?: number;
-  /** Wait after turnComplete because transcription messages have no ordering guarantee. */
-  settleMs?: number;
 }
 
 interface Waiter {
@@ -45,17 +42,18 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
   private socket: WebSocket | null = null;
   private setupWaiter: Waiter | null = null;
   private readonly endWaiters = new Set<Waiter>();
-  private settleTimer: NodeJS.Timeout | null = null;
   private sourceText = "";
   private translatedText = "";
   private sourceLanguageCode: string | undefined;
   private targetLanguageCode: string | undefined;
   private lastEmittedTranslation = "";
-  private lastTimestampMs = 0;
+  private lastAudioEndMs = 0;
+  private turnAudioStartMs: number | null = null;
   private pendingAudio = Buffer.alloc(0);
   private pendingAudioTimestampMs: number | null = null;
   private speechStarted = false;
-  private turnCompleteSeen = false;
+  private turnId: string | null = null;
+  private turnSequence = 0;
   private awaitingTurn = false;
   private setupComplete = false;
   private ending = false;
@@ -165,6 +163,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
       return;
     }
 
+    if (!this.awaitingTurn) this.turnAudioStartMs = timestampMs;
     this.awaitingTurn = true;
     // Mirror Sarvam: forward live PCM as it arrives. Only coalesce undersized
     // leftovers toward ~100 ms — never invent silence by zero-padding.
@@ -215,7 +214,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
       this.sendAudioFrame(
         socket,
         this.pendingAudio,
-        this.pendingAudioTimestampMs ?? this.lastTimestampMs,
+        this.pendingAudioTimestampMs ?? this.lastAudioEndMs,
       );
       this.pendingAudio = Buffer.alloc(0);
       this.pendingAudioTimestampMs = null;
@@ -228,8 +227,6 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    if (this.settleTimer) clearTimeout(this.settleTimer);
-    this.settleTimer = null;
     this.setupWaiter?.reject(new Error("Gemini Live Translate closed during setup"));
     this.rejectEndWaiters(new Error("Gemini Live Translate closed during flush"));
 
@@ -334,10 +331,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     if (input) this.handleInputTranscription(input.text, input.languageCode);
     const output = readTranscription(content.outputTranscription);
     if (output) this.handleOutputTranscription(output.text, output.languageCode);
-    if (content.turnComplete === true) {
-      this.turnCompleteSeen = true;
-      this.scheduleFinalization();
-    }
+    if (content.turnComplete === true) this.finalizeTurn();
   }
 
   private handleInputTranscription(text: string, languageCode?: string): void {
@@ -349,12 +343,12 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     this.options.onEvent({
       type: "transcript",
       text: this.sourceText,
-      timestampMs: this.lastTimestampMs,
+      timestampMs: this.lastAudioEndMs,
+      ...(this.turnId ? { turnId: this.turnId } : {}),
       ...(this.sourceLanguageCode ? { languageCode: this.sourceLanguageCode } : {}),
       isFinal: false,
     });
     this.emitTranslation(false);
-    if (this.turnCompleteSeen) this.scheduleFinalization();
   }
 
   private handleOutputTranscription(text: string, languageCode?: string): void {
@@ -380,13 +374,18 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     // Translated-only overlay: do not wait for the source transcript stream.
     this.markSpeechStarted();
     this.emitTranslation(false);
-    if (this.turnCompleteSeen) this.scheduleFinalization();
   }
 
   private markSpeechStarted(): void {
     if (this.speechStarted) return;
     this.speechStarted = true;
-    this.options.onEvent({ type: "speech_start", timestampMs: this.lastTimestampMs });
+    this.turnId = `${this.options.sessionId}:${this.turnSequence}`;
+    this.turnSequence += 1;
+    this.options.onEvent({
+      type: "speech_start",
+      timestampMs: this.turnAudioStartMs ?? this.lastAudioEndMs,
+      turnId: this.turnId,
+    });
   }
 
   private emitTranslation(isFinal: boolean): void {
@@ -396,18 +395,11 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     this.options.onEvent({
       type: "translation",
       text: this.translatedText,
-      timestampMs: this.lastTimestampMs,
+      timestampMs: this.lastAudioEndMs,
+      ...(this.turnId ? { turnId: this.turnId } : {}),
       ...(this.targetLanguageCode ? { languageCode: this.targetLanguageCode } : {}),
       isFinal,
     });
-  }
-
-  private scheduleFinalization(): void {
-    if (this.settleTimer) clearTimeout(this.settleTimer);
-    this.settleTimer = setTimeout(() => {
-      this.settleTimer = null;
-      this.finalizeTurn();
-    }, this.runtime.settleMs ?? TRANSCRIPT_SETTLE_MS);
   }
 
   private finalizeTurn(): void {
@@ -421,7 +413,11 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
       });
     }
     if (this.speechStarted) {
-      this.options.onEvent({ type: "speech_end", timestampMs: this.lastTimestampMs });
+      this.options.onEvent({
+        type: "speech_end",
+        timestampMs: this.lastAudioEndMs,
+        ...(this.turnId ? { turnId: this.turnId } : {}),
+      });
     }
     this.sourceText = "";
     this.translatedText = "";
@@ -429,8 +425,9 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     this.targetLanguageCode = undefined;
     this.lastEmittedTranslation = "";
     this.speechStarted = false;
-    this.turnCompleteSeen = false;
+    this.turnId = null;
     this.awaitingTurn = false;
+    this.turnAudioStartMs = null;
     this.resolveEndWaiters();
   }
 
@@ -477,7 +474,14 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
   }
 
   private sendAudioFrame(socket: WebSocket, frame: Uint8Array, timestampMs: number): void {
-    this.lastTimestampMs = timestampMs;
+    this.lastAudioEndMs = Math.max(
+      this.lastAudioEndMs,
+      timestampMs + pcmS16leDurationMs(
+        frame.byteLength,
+        this.options.sampleRate,
+        this.options.channels,
+      ),
+    );
     this.send(socket, {
       realtimeInput: {
         audio: {

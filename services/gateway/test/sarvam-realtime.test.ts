@@ -59,16 +59,65 @@ test("uses the Realtime API protocol and forwards partial and final transcripts"
       language: "kn-IN",
     });
     server.send(0, {
-      event: "transcript.final",
-      text: "ಒಂದು Cursor ಬಳಸಿ",
+      event: "vad.speech_end",
+    });
+    await waitForCondition(() => events.some((event) => (
+      event.type === "speech_end" && event.timestampMs === 200
+    )));
+    session.pushAudio(Buffer.alloc(3_200, 8), 300);
+    await waitForCondition(() => (
+      server.connections[0]?.messages.filter(isRealtimeAudioInput).length === 2
+    ));
+    server.send(0, { event: "vad.speech_start" });
+    server.send(0, {
+      event: "transcript.partial",
+      text: "ಎರಡನೇ turn",
+      language: "kn-IN",
+    });
+    server.send(0, {
+      event: "vad.speech_end",
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    session.pushAudio(Buffer.alloc(3_200, 9), 500);
+    await waitForCondition(() => (
+      server.connections[0]?.messages.filter(isRealtimeAudioInput).length === 3
+    ));
+    server.send(0, { event: "vad.speech_start" });
+    server.send(0, {
+      event: "transcript.partial",
+      text: "ಮೂರನೇ turn",
       language: "kn-IN",
     });
     server.send(0, { event: "vad.speech_end" });
-    await waitForCondition(() => events.some((event) => (
-      event.type === "transcript" && event.isFinal
-    )));
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
 
-    assert.ok(events.some((event) => event.type === "speech_start"));
+    let flushResolved = false;
+    const flush = session.flush().then(() => {
+      flushResolved = true;
+    });
+    await waitForCondition(() => Boolean(
+      server.connections[0]?.messages.some(isEndMessage),
+    ));
+    for (const [index, text] of [
+      "ಒಂದು Cursor ಬಳಸಿ",
+      "ಎರಡನೇ turn ಮುಗಿದಿದೆ",
+      "ಮೂರನೇ turn ಮುಗಿದಿದೆ",
+    ].entries()) {
+      server.send(0, { event: "transcript.final", text, language: "kn-IN" });
+      await waitForCondition(() => events.filter((event) => (
+        event.type === "transcript" && event.isFinal
+      )).length === index + 1);
+      if (index < 2) assert.equal(flushResolved, false);
+    }
+    await flush;
+    assert.equal(flushResolved, true);
+    assert.equal(events.filter((event) => (
+      event.type === "transcript" && event.isFinal
+    )).length, 3);
+
+    assert.ok(events.some((event) => (
+      event.type === "speech_start" && event.timestampMs === 100
+    )));
     assert.ok(events.some((event) => (
       event.type === "transcript"
       && event.text === "ಒಂದು Cursor"
@@ -80,14 +129,37 @@ test("uses the Realtime API protocol and forwards partial and final transcripts"
       && event.text === "ಒಂದು Cursor ಬಳಸಿ"
       && event.isFinal === true
     )));
-    assert.ok(events.some((event) => event.type === "speech_end"));
-
-    const flush = session.flush();
-    await waitForCondition(() => Boolean(
-      server.connections[0]?.messages.some(isEndMessage),
+    assert.ok(events.some((event) => (
+      event.type === "speech_end" && event.timestampMs === 200
+    )));
+    const starts = events.filter((event) => event.type === "speech_start");
+    const firstFinal = events.find((event) => (
+      event.type === "transcript" && event.text === "ಒಂದು Cursor ಬಳಸಿ"
     ));
-    server.send(0, { event: "session.end", audio_duration_s: 0.1 });
-    await flush;
+    const secondPartial = events.find((event) => (
+      event.type === "transcript" && event.text === "ಎರಡನೇ turn"
+    ));
+    const secondFinal = events.find((event) => (
+      event.type === "transcript" && event.text === "ಎರಡನೇ turn ಮುಗಿದಿದೆ"
+    ));
+    const thirdPartial = events.find((event) => (
+      event.type === "transcript" && event.text === "ಮೂರನೇ turn"
+    ));
+    assert.equal(starts.length, 3);
+    assert.ok(firstFinal?.type === "transcript");
+    assert.ok(secondPartial?.type === "transcript");
+    assert.ok(secondFinal?.type === "transcript");
+    assert.ok(thirdPartial?.type === "transcript");
+    assert.equal(firstFinal.timestampMs, 200);
+    assert.equal(firstFinal.turnId, starts[0]?.turnId);
+    assert.equal(secondPartial.timestampMs, 400);
+    assert.equal(secondPartial.turnId, starts[1]?.turnId);
+    assert.equal(secondFinal.turnId, starts[1]?.turnId);
+    assert.equal(thirdPartial.timestampMs, 600);
+    assert.equal(thirdPartial.turnId, starts[2]?.turnId);
+    assert.ok(events.indexOf(firstFinal) < events.indexOf(starts[1]!));
+    assert.ok(events.indexOf(secondFinal) < events.indexOf(starts[2]!));
+
   } finally {
     await session.close();
     await server.close();

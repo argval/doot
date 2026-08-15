@@ -1,4 +1,7 @@
-use super::{push_latest_frame, AudioCaptureBackend, AudioFrame, AudioFrameQueue, CaptureConfig};
+use super::{
+    audio_frame_start_ms, push_latest_frame, AudioCaptureBackend, AudioFrame, AudioFrameQueue,
+    CaptureConfig,
+};
 use crate::audio::convert::{to_mono_i16, PcmFormat, SampleEncoding};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{sync_channel, RecvTimeoutError};
@@ -295,13 +298,19 @@ fn pump_packets(
             if samples.is_empty() {
                 continue;
             }
+            let timestamp_ms = audio_frame_start_ms(
+                started_at.elapsed().as_millis() as u64,
+                samples.len(),
+                config.sample_rate,
+                config.channels,
+            );
             push_latest_frame(
                 frames,
                 AudioFrame {
                     samples,
                     sample_rate: config.sample_rate,
                     channels: config.channels,
-                    timestamp_ms: started_at.elapsed().as_millis() as u64,
+                    timestamp_ms,
                 },
             );
         }

@@ -29,7 +29,7 @@ test("replaces active revisions and commits only the final revision", () => {
   const active = reduceCaptionEvent(EMPTY_CAPTION_STATE, first);
   const replaced = reduceCaptionEvent(active, revised);
   assert.equal(replaced.active?.sourceText, revised.sourceText);
-  assert.equal(replaced.finalized.length, 0);
+  assert.equal(replaced.history.length, 0);
   assert.deepEqual(selectVisibleCaptions(replaced), {
     lines: [],
   });
@@ -39,7 +39,7 @@ test("replaces active revisions and commits only the final revision", () => {
 
   const committed = reduceCaptionEvent(replaced, finalized);
   assert.equal(committed.active, null);
-  assert.deepEqual(committed.finalized, [finalized]);
+  assert.deepEqual(committed.history, [finalized]);
   assert.deepEqual(selectVisibleCaptions(committed), {
     lines: [{
       utteranceId: finalized.utteranceId,
@@ -150,11 +150,13 @@ test("keeps a newer active utterance when an older translation finishes", () => 
     utteranceId: "session:100:0",
     revision: 1,
     sourceText: "older",
+    translatedText: "older draft",
   });
   const newer = caption({
     utteranceId: "session:500:1",
     revision: 1,
     sourceText: "newer",
+    translatedText: "newer draft",
     startMs: 500,
     endMs: 600,
   });
@@ -168,10 +170,14 @@ test("keeps a newer active utterance when an older translation finishes", () => 
 
   const withOlder = reduceCaptionEvent(EMPTY_CAPTION_STATE, older);
   const withNewer = reduceCaptionEvent(withOlder, newer);
+  assert.deepEqual(
+    selectVisibleCaptions(withNewer).lines.map((line) => line.translatedText),
+    ["older draft", "newer draft"],
+  );
   const finalized = reduceCaptionEvent(withNewer, olderFinal);
 
   assert.equal(finalized.active?.utteranceId, newer.utteranceId);
-  assert.deepEqual(finalized.finalized, [olderFinal]);
+  assert.deepEqual(finalized.history, [olderFinal]);
 });
 
 test("deduplicates stale reconnect revisions for the same utterance identity", () => {
@@ -204,9 +210,9 @@ test("deduplicates stale reconnect revisions for the same utterance identity", (
   assert.equal(ignoredPartial, committed);
 
   const deduplicated = reduceCaptionEvent(ignoredPartial, replayedFinal);
-  assert.equal(deduplicated.finalized.length, 1);
+  assert.equal(deduplicated.history.length, 1);
   assert.equal(
-    deduplicated.finalized[0]?.utteranceId,
+    deduplicated.history[0]?.utteranceId,
     replayedFinal.utteranceId,
   );
 });
@@ -226,10 +232,10 @@ test("bounds finalized utterances during long-running sessions", () => {
     }));
   }
 
-  assert.ok(state.finalized.length <= 18);
+  assert.ok(state.history.length <= 18);
 });
 
-test("hides consecutive duplicate translated captions in the visible window", () => {
+test("keeps identical translated text on distinct utterance lines", () => {
   let state = EMPTY_CAPTION_STATE;
   state = reduceCaptionEvent(state, caption({
     utteranceId: "session:1:0",
@@ -250,11 +256,18 @@ test("hides consecutive duplicate translated captions in the visible window", ()
   }));
 
   assert.deepEqual(selectVisibleCaptions(state), {
-    lines: [{
-      utteranceId: "session:2:1",
-      translatedText: "Where is this",
-      isActive: false,
-    }],
+    lines: [
+      {
+        utteranceId: "session:1:0",
+        translatedText: "Where is this",
+        isActive: false,
+      },
+      {
+        utteranceId: "session:2:1",
+        translatedText: "Where is this",
+        isActive: false,
+      },
+    ],
   });
 });
 

@@ -19,6 +19,17 @@ pub struct AudioFrame {
 
 pub type AudioFrameQueue = Arc<ArrayQueue<AudioFrame>>;
 
+pub fn audio_frame_start_ms(
+    captured_at_ms: u64,
+    sample_count: usize,
+    sample_rate: u32,
+    channels: u16,
+) -> u64 {
+    let samples_per_second = u64::from(sample_rate) * u64::from(channels.max(1));
+    let duration_ms = (sample_count as u64 * 1_000).div_ceil(samples_per_second);
+    captured_at_ms.saturating_sub(duration_ms)
+}
+
 pub fn push_latest_frame(queue: &AudioFrameQueue, frame: AudioFrame) {
     if let Err(frame) = queue.push(frame) {
         let _ = queue.pop();
@@ -89,6 +100,17 @@ impl AudioCapture {
 
     pub fn config(&self) -> &CaptureConfig {
         &self.config
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::audio_frame_start_ms;
+
+    #[test]
+    fn derives_pcm_interval_start_from_capture_time() {
+        assert_eq!(audio_frame_start_ms(500, 1_600, 16_000, 1), 400);
+        assert_eq!(audio_frame_start_ms(50, 1_600, 16_000, 1), 0);
     }
 }
 
