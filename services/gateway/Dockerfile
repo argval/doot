@@ -1,4 +1,4 @@
-FROM node:22-alpine AS build
+FROM node:22 AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/desktop/package.json apps/desktop/package.json
@@ -9,7 +9,7 @@ RUN npm ci
 COPY . .
 RUN npm run build --workspace @doot/gateway
 
-FROM node:22-alpine
+FROM node:22
 WORKDIR /app
 ENV GATEWAY_HOST=0.0.0.0
 ENV GATEWAY_PORT=8787
