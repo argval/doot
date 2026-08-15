@@ -5,6 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/client.ts",
+    "./captions": "./src/captions.ts",
+    "./migrate": "./src/migrate.ts",
     "./schema": "./src/schema.ts"
   },
   "scripts": {

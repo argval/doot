@@ -1,5 +1,11 @@
 import "@fastify/websocket";
 import type { FastifyInstance } from "fastify";
+import type { DootDb } from "@doot/db";
+import {
+  createCaptionSession,
+  saveCaptionSegment,
+  stopCaptionSession,
+} from "@doot/db/captions";
 import {
   isAudioSampleRate,
   isChannelCount,
@@ -30,6 +36,7 @@ const maxBase64Length = Math.ceil(maxAudioChunkBytes / 3) * 4;
 const MAX_COMPLETED_PROVIDER_TURNS = 32;
 
 export interface RealtimeGatewayOptions {
+  db?: DootDb;
   utteranceGraceMs?: number;
 }
 
@@ -55,6 +62,9 @@ interface ActiveUtterance {
 interface SessionState {
   request: StartSessionRequest;
   providerId: ProviderId;
+  db: DootDb | null;
+  storedSessionId: string | null;
+  reportPersistenceError: (error: unknown, operation: string) => void;
   nativeTranslation: boolean;
   providerSession: ProviderStreamSession | null;
   activeUtterance: ActiveUtterance | null;
@@ -66,12 +76,19 @@ interface SessionState {
   lastAudioTimestampMs: number;
   lastAudioSequence: number;
   pendingFinalizations: Promise<void>;
+  pendingPersistence: Promise<void>;
   closing: boolean;
   closed: boolean;
 }
 
 interface RequiredGatewayOptions {
+  db: DootDb | null;
   utteranceGraceMs: number;
+  onPersistenceError: (
+    error: unknown,
+    sessionId: string,
+    operation: string,
+  ) => void;
 }
 
 export function registerRealtimeGateway(
@@ -81,7 +98,11 @@ export function registerRealtimeGateway(
   options: RealtimeGatewayOptions = {},
 ): void {
   const gatewayOptions: RequiredGatewayOptions = {
+    db: options.db ?? null,
     utteranceGraceMs: options.utteranceGraceMs ?? 350,
+    onPersistenceError: (error, sessionId, operation) => {
+      app.log.error({ err: error, operation, sessionId }, "caption persistence failed");
+    },
   };
 
   app.get("/v1/realtime", { websocket: true }, (socket: WebSocket, request) => {
@@ -117,6 +138,9 @@ export function registerRealtimeGateway(
     socket.on("close", () => {
       for (const session of sessions.values()) {
         disposeSession(session);
+        void finishStoredSession(session).catch((error) => {
+          session.reportPersistenceError(error, "close session");
+        });
       }
       sessions.clear();
       app.log.info("realtime client disconnected");
@@ -188,9 +212,13 @@ async function startSession(
   const previous = sessions.get(request.sessionId);
   if (previous) {
     disposeSession(previous);
+    void finishStoredSession(previous).catch((error) => {
+      previous.reportPersistenceError(error, "replace session");
+    });
     sessions.delete(request.sessionId);
   }
 
+  let session: SessionState | null = null;
   try {
     const provider = router.select(
       request.sourceLanguage,
@@ -199,9 +227,14 @@ async function startSession(
       request.channels,
       request.targetLanguage,
     );
-    const session: SessionState = {
+    const openedSession: SessionState = {
       request,
       providerId: provider.id,
+      db: options.db,
+      storedSessionId: null,
+      reportPersistenceError: (error, operation) => {
+        options.onPersistenceError(error, request.sessionId, operation);
+      },
       nativeTranslation: provider.capabilities.nativeTranslation === true,
       providerSession: null,
       activeUtterance: null,
@@ -213,10 +246,12 @@ async function startSession(
       lastAudioTimestampMs: 0,
       lastAudioSequence: -1,
       pendingFinalizations: Promise.resolve(),
+      pendingPersistence: Promise.resolve(),
       closing: false,
       closed: false,
     };
-    sessions.set(request.sessionId, session);
+    session = openedSession;
+    sessions.set(request.sessionId, openedSession);
     const providerSession = await provider.openSession({
       sessionId: request.sessionId,
       source: request.sourceLanguage,
@@ -224,29 +259,25 @@ async function startSession(
       sampleRate: request.sampleRate,
       channels: request.channels,
       onEvent: (event) => {
-        handleProviderEvent(translator, options, socket, session, event);
+        handleProviderEvent(translator, options, socket, openedSession, event);
       },
     });
     if (
-      session.closed
-      || sessions.get(request.sessionId) !== session
+      openedSession.closed
+      || sessions.get(request.sessionId) !== openedSession
       || socket.readyState !== WebSocket.OPEN
     ) {
       await providerSession.close();
       return;
     }
-    session.providerSession = providerSession;
-    send(socket, {
-      type: "session_started",
-      sessionId: request.sessionId,
-      provider: provider.id,
-      sourceLanguage: request.sourceLanguage,
-      targetLanguage: request.targetLanguage,
-    });
+    openedSession.providerSession = providerSession;
   } catch (error) {
-    const session = sessions.get(request.sessionId);
-    if (session) disposeSession(session);
-    sessions.delete(request.sessionId);
+    if (session) {
+      disposeSession(session);
+      if (sessions.get(request.sessionId) === session) {
+        sessions.delete(request.sessionId);
+      }
+    }
     send(socket, {
       type: "error",
       sessionId: request.sessionId,
@@ -254,7 +285,39 @@ async function startSession(
       message: error instanceof Error ? error.message : "Requested provider is unavailable",
       retryable: false,
     });
+    return;
   }
+
+  if (!session) return;
+
+  try {
+    await persistSession(session);
+  } catch (error) {
+    session.reportPersistenceError(error, "create session");
+  }
+
+  if (
+    session.closed
+    || sessions.get(request.sessionId) !== session
+    || socket.readyState !== WebSocket.OPEN
+  ) {
+    disposeSession(session);
+    if (sessions.get(request.sessionId) === session) {
+      sessions.delete(request.sessionId);
+    }
+    void finishStoredSession(session).catch((error) => {
+      session.reportPersistenceError(error, "close abandoned session");
+    });
+    return;
+  }
+
+  send(socket, {
+    type: "session_started",
+    sessionId: request.sessionId,
+    provider: session.providerId,
+    sourceLanguage: request.sourceLanguage,
+    targetLanguage: request.targetLanguage,
+  });
 }
 
 function handleProviderEvent(
@@ -678,45 +741,37 @@ function finalizeActiveUtterance(
     let translatedText = session.nativeTranslation
       ? utterance.nativeTranslatedText ?? ""
       : utterance.draftTranslatedText ?? "";
-    if (session.nativeTranslation) {
-      if (session.closed) return;
-      sendCaption(
-        socket,
-        session,
-        utterance,
-        translatedText,
-        true,
-        utterance.revision + 1,
+    if (!session.nativeTranslation) {
+      const canReuseDraft = Boolean(
+        utterance.draftTranslatedText
+        && utterance.draftSourceText === utterance.sourceText,
       );
-      return;
-    }
-    const canReuseDraft = Boolean(
-      utterance.draftTranslatedText
-      && utterance.draftSourceText === utterance.sourceText,
-    );
-    if (canReuseDraft && utterance.draftTranslatedText) {
-      translatedText = utterance.draftTranslatedText;
-    } else {
-      try {
-        translatedText = await translator({
-          text: utterance.sourceText,
-          source: request.sourceLanguage,
-          target: request.targetLanguage,
-        });
-      } catch (error) {
-        if (!session.closed) {
-          send(socket, {
-            type: "error",
-            sessionId: request.sessionId,
-            code: error instanceof TranslationUnavailableError
-              ? "TRANSLATION_UNAVAILABLE"
-              : "TRANSLATION_ERROR",
-            message: error instanceof Error ? error.message : "Caption translation failed",
-            retryable: !(error instanceof TranslationUnavailableError),
+      if (canReuseDraft && utterance.draftTranslatedText) {
+        translatedText = utterance.draftTranslatedText;
+      } else {
+        try {
+          translatedText = await translator({
+            text: utterance.sourceText,
+            source: request.sourceLanguage,
+            target: request.targetLanguage,
           });
+        } catch (error) {
+          if (!session.closed) {
+            send(socket, {
+              type: "error",
+              sessionId: request.sessionId,
+              code: error instanceof TranslationUnavailableError
+                ? "TRANSLATION_UNAVAILABLE"
+                : "TRANSLATION_ERROR",
+              message: error instanceof Error ? error.message : "Caption translation failed",
+              retryable: !(error instanceof TranslationUnavailableError),
+            });
+          }
         }
       }
     }
+    if (session.closed) return;
+    queueFinalizedCaption(session, utterance, translatedText);
     if (session.closed) return;
     sendCaption(
       socket,
@@ -770,9 +825,66 @@ async function stopSession(
   }
   await finalizeActiveUtterance(translator, socket, session);
   await session.pendingFinalizations;
+  try {
+    await finishStoredSession(session);
+  } catch (error) {
+    session.reportPersistenceError(error, "stop session");
+  }
   session.closed = true;
   clearUtteranceTimers(session.activeUtterance);
   session.activeUtterance = null;
+}
+
+async function persistSession(session: SessionState): Promise<void> {
+  if (!session.db) return;
+  session.storedSessionId = await createCaptionSession(session.db, {
+    sourceLanguage: session.request.sourceLanguage,
+    targetLanguage: session.request.targetLanguage,
+    provider: session.providerId,
+  });
+}
+
+async function persistFinalizedCaption(
+  session: SessionState,
+  utterance: ActiveUtterance,
+  translatedText: string,
+): Promise<void> {
+  if (!session.db || !session.storedSessionId) return;
+  await saveCaptionSegment(session.db, {
+    sessionId: session.storedSessionId,
+    sequence: utterance.sequence,
+    sourceText: utterance.sourceText,
+    translatedText,
+    startMs: utterance.startMs,
+    endMs: utterance.endMs,
+  });
+}
+
+function queueFinalizedCaption(
+  session: SessionState,
+  utterance: ActiveUtterance,
+  translatedText: string,
+): void {
+  if (!session.db || !session.storedSessionId) return;
+  const persist = async () => {
+    try {
+      await persistFinalizedCaption(session, utterance, translatedText);
+    } catch (error) {
+      // ponytail: log without a retry queue; add an outbox if local writes prove unreliable.
+      session.reportPersistenceError(error, "save finalized caption");
+    }
+  };
+  session.pendingPersistence = session.pendingPersistence.then(persist, persist);
+}
+
+async function stopStoredSession(session: SessionState): Promise<void> {
+  if (!session.db || !session.storedSessionId) return;
+  await stopCaptionSession(session.db, session.storedSessionId);
+}
+
+async function finishStoredSession(session: SessionState): Promise<void> {
+  await session.pendingPersistence;
+  await stopStoredSession(session);
 }
 
 function sendCaption(

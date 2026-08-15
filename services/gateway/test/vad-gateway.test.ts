@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdtemp } from "node:fs/promises";
 import test from "node:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { DootDb } from "@doot/db";
+import { migrateDb } from "@doot/db/migrate";
+import { captionSegments, sessions } from "@doot/db/schema";
 import {
   AUDIO_SAMPLE_RATES,
   CHANNEL_COUNTS,
@@ -739,6 +745,69 @@ test("flushes, translates, and emits the final caption before session_stopped", 
   }
 });
 
+test("persists only finalized captions and closes their session", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "doot-gateway-db-"));
+  const db = await migrateDb(join(dir, "doot.db"));
+  const harness = await createHarness(5, false, db);
+  try {
+    const stream = harness.provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 100 });
+    stream.emit({
+      type: "transcript",
+      text: "first draft",
+      timestampMs: 150,
+      isFinal: false,
+    });
+    stream.emit({
+      type: "transcript",
+      text: "final caption",
+      timestampMs: 220,
+      isFinal: true,
+    });
+    stream.emit({ type: "speech_end", timestampMs: 220 });
+    await harness.client.waitForFinalCount(1);
+
+    harness.client.send({ type: "stop_session", sessionId: harness.sessionId });
+    await harness.client.waitForMessage((message) => message.type === "session_stopped");
+
+    const [storedSession] = await db.select().from(sessions);
+    const storedSegments = await db.select().from(captionSegments);
+    assert.ok(storedSession);
+    assert.ok(storedSession.stoppedAt instanceof Date);
+    assert.equal(storedSegments.length, 1);
+    const [segment] = storedSegments;
+    assert.ok(segment);
+    assert.equal(segment.sessionId, storedSession.id);
+    assert.equal(segment.sequence, 0);
+    assert.equal(segment.sourceText, "final caption");
+    assert.equal(segment.translatedText, "English: final caption");
+    assert.equal(segment.startMs, 100);
+    assert.equal(segment.endMs, 220);
+    assert.ok(segment.createdAt instanceof Date);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("closes a persisted session when the WebSocket disconnects", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "doot-gateway-db-"));
+  const db = await migrateDb(join(dir, "doot.db"));
+  const harness = await createHarness(5, false, db);
+  try {
+    await harness.client.close();
+
+    let storedSession: typeof sessions.$inferSelect | undefined;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      [storedSession] = await db.select().from(sessions);
+      if (storedSession?.stoppedAt) break;
+      await delay(5);
+    }
+    assert.ok(storedSession?.stoppedAt instanceof Date);
+  } finally {
+    await harness.close();
+  }
+});
+
 test("never substitutes source text when translation is unavailable", async () => {
   const provider = new ControlledProvider();
   const app = await buildServer(
@@ -799,6 +868,7 @@ interface Harness {
 async function createHarness(
   utteranceGraceMs = 25,
   nativeTranslation = false,
+  db?: DootDb,
 ): Promise<Harness> {
   const sessionId = `test-${Math.random().toString(16).slice(2)}`;
   const provider = new ControlledProvider(nativeTranslation);
@@ -807,7 +877,7 @@ async function createHarness(
   const app = await buildServer(
     router,
     asTranslationRouter((request) => translator.translate(request)),
-    { utteranceGraceMs },
+    { utteranceGraceMs, db },
   );
   const address = await app.listen({ host: "127.0.0.1", port: 0 });
   const client = await RealtimeClient.connect(
