@@ -16,6 +16,7 @@ ENV GATEWAY_PORT=8787
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/services/gateway/dist ./services/gateway/dist
 COPY --from=build /app/services/gateway/package.json ./services/gateway/package.json
+COPY --from=build /app/packages/db ./packages/db
 COPY --from=build /app/packages/protocol ./packages/protocol
 EXPOSE 8787
 CMD ["node", "services/gateway/dist/main.js"]
