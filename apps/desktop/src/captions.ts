@@ -1,11 +1,12 @@
 import type { CaptionEvent } from "@doot/protocol";
 
-const MAX_FINALIZED_UTTERANCES = 18;
+const MAX_HISTORY_UTTERANCES = 18;
 /** Recent speaker turns / pause-separated sections kept on-screen. */
 const MAX_VISIBLE_UTTERANCES = 4;
 
 export interface CaptionState {
-  finalized: CaptionEvent[];
+  /** Completed turns plus an older turn whose final translation is still settling. */
+  history: CaptionEvent[];
   active: CaptionEvent | null;
 }
 
@@ -16,7 +17,7 @@ export interface VisibleCaptionLine {
 }
 
 export const EMPTY_CAPTION_STATE: CaptionState = {
-  finalized: [],
+  history: [],
   active: null,
 };
 
@@ -27,27 +28,30 @@ export function reduceCaptionEvent(
   const knownRevision = revisionFor(current, event.utteranceId);
   if (event.revision <= knownRevision) return current;
 
-  const finalizedIndex = current.finalized.findIndex(
+  const historyIndex = current.history.findIndex(
     (utterance) => utterance.utteranceId === event.utteranceId,
   );
-  if (!event.isFinal && finalizedIndex >= 0) {
-    return current;
+  if (!event.isFinal && historyIndex >= 0) {
+    if (current.history[historyIndex]?.isFinal) return current;
+    return {
+      history: upsertUtterance(current.history, event),
+      active: current.active,
+    };
   }
 
   if (!event.isFinal) {
+    const history = current.active && current.active.utteranceId !== event.utteranceId
+      ? upsertUtterance(current.history, current.active)
+      : current.history;
     return {
-      finalized: current.finalized,
+      history: history.slice(-MAX_HISTORY_UTTERANCES),
       active: event,
     };
   }
 
-  const finalized = finalizedIndex >= 0
-    ? current.finalized.map((utterance, index) => (
-      index === finalizedIndex ? event : utterance
-    ))
-    : [...current.finalized, event];
+  const history = upsertUtterance(current.history, event);
   return {
-    finalized: finalized.slice(-MAX_FINALIZED_UTTERANCES),
+    history: history.slice(-MAX_HISTORY_UTTERANCES),
     active: current.active?.utteranceId === event.utteranceId
       ? null
       : current.active,
@@ -55,33 +59,21 @@ export function reduceCaptionEvent(
 }
 
 /**
- * Overlay turns: each VAD-finalized utterance is its own line.
- * Short pauses stay on one line because the gateway coalesces them into
- * a single utterance. Speaker changes and long pauses become new lines.
+ * Overlay turns: each provider-finalized speech interval is its own line.
+ * Pauses below the provider's VAD threshold remain in the active interval.
  */
 export function selectVisibleCaptions(state: CaptionState): {
   lines: VisibleCaptionLine[];
 } {
   const utterances = state.active
-    ? [...state.finalized, state.active]
-    : state.finalized;
+    ? [...state.history, state.active]
+    : state.history;
   const recent = utterances.slice(-MAX_VISIBLE_UTTERANCES);
   const lines: VisibleCaptionLine[] = [];
 
   for (const utterance of recent) {
     const translatedText = utterance.translatedText.trim();
     if (!translatedText) continue;
-
-    const previous = lines[lines.length - 1];
-    if (
-      previous
-      && normalizeVisible(previous.translatedText) === normalizeVisible(translatedText)
-    ) {
-      // Avoid "where is this / where is this" when consecutive Gemini turns stutter.
-      lines[lines.length - 1] = toVisibleLine(state, utterance, translatedText);
-      continue;
-    }
-
     lines.push(toVisibleLine(state, utterance, translatedText));
   }
 
@@ -100,14 +92,23 @@ function toVisibleLine(
   };
 }
 
-function normalizeVisible(value: string): string {
-  return value.replace(/\s+/g, " ").trim().toLocaleLowerCase();
-}
-
 function revisionFor(state: CaptionState, utteranceId: string): number {
   if (state.active?.utteranceId === utteranceId) return state.active.revision;
-  const finalized = state.finalized.find(
+  const finalized = state.history.find(
     (utterance) => utterance.utteranceId === utteranceId,
   );
   return finalized?.revision ?? -1;
+}
+
+function upsertUtterance(
+  utterances: CaptionEvent[],
+  event: CaptionEvent,
+): CaptionEvent[] {
+  const index = utterances.findIndex(
+    (utterance) => utterance.utteranceId === event.utteranceId,
+  );
+  if (index < 0) return [...utterances, event];
+  return utterances.map((utterance, currentIndex) => (
+    currentIndex === index ? event : utterance
+  ));
 }

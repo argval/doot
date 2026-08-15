@@ -18,7 +18,7 @@ test("configures Live Translate, sends 100 ms PCM frames, and correlates transcr
       channels: 1,
       onEvent: (event) => events.push(event),
     },
-    { endpoint, setupTimeoutMs: 250, endTimeoutMs: 250, settleMs: 10 },
+    { endpoint, setupTimeoutMs: 250, endTimeoutMs: 250 },
   );
 
   try {
@@ -131,8 +131,72 @@ test("configures Live Translate, sends 100 ms PCM frames, and correlates transcr
       && event.languageCode === "en"
       && event.isFinal
     )));
-    assert.ok(events.some((event) => event.type === "speech_start"));
-    assert.ok(events.some((event) => event.type === "speech_end"));
+    assert.ok(events.some((event) => (
+      event.type === "speech_start" && event.timestampMs === 100
+    )));
+    assert.ok(events.some((event) => (
+      event.type === "speech_end" && event.timestampMs === 425
+    )));
+    assert.ok(events.filter((event) => (
+      event.type === "transcript" || event.type === "translation"
+    )).every((event) => event.timestampMs === 425));
+  } finally {
+    await session.close();
+    await server.close();
+  }
+});
+
+test("uses Gemini turnComplete as the caption boundary", async () => {
+  const server = new FakeGeminiServer();
+  const endpoint = await server.endpoint();
+  const events: ProviderStreamEvent[] = [];
+  const session = new GeminiLiveTranslateSession(
+    "test-gemini-key",
+    {
+      sessionId: "gemini-turns",
+      source: "es",
+      target: "en",
+      sampleRate: 16_000,
+      channels: 1,
+      onEvent: (event) => events.push(event),
+    },
+    { endpoint, setupTimeoutMs: 250, endTimeoutMs: 250 },
+  );
+
+  try {
+    const opening = session.open();
+    await server.waitForMessage(isSetupMessage);
+    server.send({ setupComplete: {} });
+    await opening;
+
+    server.send({
+      serverContent: {
+        inputTranscription: { text: "Hola", languageCode: "es" },
+        outputTranscription: { text: "Hello", languageCode: "en" },
+        turnComplete: true,
+      },
+    });
+    server.send({
+      serverContent: {
+        inputTranscription: { text: "Adiós", languageCode: "es" },
+        outputTranscription: { text: "Goodbye", languageCode: "en" },
+        turnComplete: true,
+      },
+    });
+
+    await waitForGemini(() => (
+      events.filter((event) => event.type === "translation" && event.isFinal).length === 2
+        ? true
+        : undefined
+    ));
+    const starts = events.filter((event) => event.type === "speech_start");
+    const transcripts = events.filter((event) => event.type === "transcript");
+    assert.equal(starts.length, 2);
+    assert.deepEqual(transcripts.map((event) => event.text), ["Hola", "Adiós"]);
+    assert.deepEqual(
+      transcripts.map((event) => event.turnId),
+      starts.map((event) => event.turnId),
+    );
   } finally {
     await session.close();
     await server.close();
@@ -153,7 +217,7 @@ test("does not stutter when Gemini re-emits the same Spanish translation fragmen
       channels: 1,
       onEvent: (event) => events.push(event),
     },
-    { endpoint, setupTimeoutMs: 250, endTimeoutMs: 250, settleMs: 10 },
+    { endpoint, setupTimeoutMs: 250, endTimeoutMs: 250 },
   );
 
   try {
@@ -213,7 +277,7 @@ test("strips Spanish source leaks from Gemini English captions", async () => {
       channels: 1,
       onEvent: (event) => events.push(event),
     },
-    { endpoint, setupTimeoutMs: 250, endTimeoutMs: 250, settleMs: 10 },
+    { endpoint, setupTimeoutMs: 250, endTimeoutMs: 250 },
   );
 
   try {

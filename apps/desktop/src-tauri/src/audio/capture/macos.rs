@@ -1,4 +1,7 @@
-use super::{push_latest_frame, AudioCaptureBackend, AudioFrame, AudioFrameQueue, CaptureConfig};
+use super::{
+    audio_frame_start_ms, push_latest_frame, AudioCaptureBackend, AudioFrame, AudioFrameQueue,
+    CaptureConfig,
+};
 use screencapturekit::prelude::*;
 use std::time::Instant;
 
@@ -103,6 +106,12 @@ impl SCStreamOutputTrait for SystemAudioHandler {
         if samples.is_empty() {
             return;
         }
+        let timestamp_ms = audio_frame_start_ms(
+            self.started_at.elapsed().as_millis() as u64,
+            samples.len(),
+            self.sample_rate,
+            self.channels,
+        );
 
         push_latest_frame(
             &self.frames,
@@ -110,7 +119,7 @@ impl SCStreamOutputTrait for SystemAudioHandler {
                 samples,
                 sample_rate: self.sample_rate,
                 channels: self.channels,
-                timestamp_ms: self.started_at.elapsed().as_millis() as u64,
+                timestamp_ms,
             },
         );
     }

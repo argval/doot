@@ -141,13 +141,13 @@ test("streams revisioned mock captions after receiving PCM", async (context) => 
     type: "caption",
     sessionId: "mock-session",
     sequence: 0,
-    utteranceId: "mock-session:0:0",
+    utteranceId: "mock-session:1500:0",
     revision: 2,
     sourceText: "Received 1500 ms of system audio.",
     translatedText: "Received 1500 ms of system audio.",
     isFinal: true,
     startMs: 0,
-    endMs: 0,
+    endMs: 1_500,
     provider: "mock",
   });
 });

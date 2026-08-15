@@ -3,10 +3,11 @@ import {
   CHANNEL_COUNTS,
   SUPPORTED_LANGUAGES,
 } from "@doot/protocol";
-import type {
-  OpenProviderSessionOptions,
-  ProviderStreamSession,
-  SpeechProvider,
+import {
+  pcmS16leDurationMs,
+  type OpenProviderSessionOptions,
+  type ProviderStreamSession,
+  type SpeechProvider,
 } from "../contract.js";
 
 const MOCK_UTTERANCE_BYTES = 48_000;
@@ -34,6 +35,8 @@ class MockStreamingSession implements ProviderStreamSession {
   private started = false;
   private lastTimestampMs = 0;
   private closed = false;
+  private turnId: string | null = null;
+  private turnSequence = 0;
 
   constructor(private readonly options: OpenProviderSessionOptions) {}
 
@@ -41,10 +44,20 @@ class MockStreamingSession implements ProviderStreamSession {
     if (this.closed) return;
     if (!this.started) {
       this.started = true;
-      this.options.onEvent({ type: "speech_start", timestampMs });
+      this.turnId = `${this.options.sessionId}:${this.turnSequence}`;
+      this.turnSequence += 1;
+      this.options.onEvent({
+        type: "speech_start",
+        timestampMs,
+        turnId: this.turnId,
+      });
     }
     this.audioBytes += audio.byteLength;
-    this.lastTimestampMs = timestampMs;
+    this.lastTimestampMs = timestampMs + pcmS16leDurationMs(
+      audio.byteLength,
+      this.options.sampleRate,
+      this.options.channels,
+    );
     if (this.audioBytes >= MOCK_UTTERANCE_BYTES) this.emitTranscript();
   }
 
@@ -64,14 +77,17 @@ class MockStreamingSession implements ProviderStreamSession {
       type: "transcript",
       text: `Received ${durationMs} ms of system audio.`,
       timestampMs: this.lastTimestampMs,
+      ...(this.turnId ? { turnId: this.turnId } : {}),
       languageCode: "en-IN",
       isFinal: true,
     });
     this.options.onEvent({
       type: "speech_end",
       timestampMs: this.lastTimestampMs,
+      ...(this.turnId ? { turnId: this.turnId } : {}),
     });
     this.audioBytes = 0;
     this.started = false;
+    this.turnId = null;
   }
 }

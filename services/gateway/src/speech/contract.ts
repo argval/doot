@@ -7,12 +7,14 @@ import type {
 } from "@doot/protocol";
 
 export type ProviderStreamEvent =
-  | { type: "speech_start"; timestampMs: number }
-  | { type: "speech_end"; timestampMs: number }
+  | { type: "speech_start"; timestampMs: number; turnId?: string }
+  | { type: "speech_end"; timestampMs: number; turnId?: string }
   | {
     type: "transcript";
     text: string;
     timestampMs: number;
+    /** Provider-session identity for correlating late events to a speech interval. */
+    turnId?: string;
     languageCode?: string;
     /** True only when the provider emitted a complete utterance transcript. */
     isFinal: boolean;
@@ -22,6 +24,7 @@ export type ProviderStreamEvent =
     /** Cumulative translated text for the active provider utterance. */
     text: string;
     timestampMs: number;
+    turnId?: string;
     languageCode?: string;
     /** True when the provider has settled the translated utterance. */
     isFinal: boolean;
@@ -67,6 +70,14 @@ export interface SpeechProvider {
   configured: boolean;
   capabilities: SpeechProviderCapabilities;
   openSession(options: OpenProviderSessionOptions): Promise<ProviderStreamSession>;
+}
+
+export function pcmS16leDurationMs(
+  byteLength: number,
+  sampleRate: AudioSampleRate,
+  channels: ChannelCount,
+): number {
+  return Math.round(byteLength * 1_000 / (sampleRate * channels * 2));
 }
 
 export function supportsSession(

@@ -149,7 +149,7 @@ test("opens one provider stream and forwards every desktop audio frame", async (
   }
 });
 
-test("coalesces a short pause when START_SPEECH cancels the grace timer", async () => {
+test("starts a new utterance when speech resumes after provider speech_end", async () => {
   const harness = await createHarness(50);
   try {
     const stream = harness.provider.sessions[0]!;
@@ -173,24 +173,101 @@ test("coalesces a short pause when START_SPEECH cancels the grace timer", async 
     });
     stream.emit({ type: "speech_end", timestampMs: 320 });
 
-    const final = await harness.client.waitForMessage(
-      (message) => message.type === "caption" && message.isFinal,
+    const finals = await harness.client.waitForFinalCount(2);
+    assert.deepEqual(
+      finals.map((caption) => caption.sourceText),
+      ["ನಾನು Cursor", "use ಮಾಡುತ್ತೇನೆ 42"],
     );
-    assert.equal(final.type, "caption");
-    assert.equal(final.sourceText, "ನಾನು Cursor use ಮಾಡುತ್ತೇನೆ 42");
-    assert.equal(final.translatedText, "English: ನಾನು Cursor use ಮಾಡುತ್ತೇನೆ 42");
-    assert.equal(final.revision, 3);
-    assert.equal(harness.translator.requests.length, 1);
-    assert.match(final.translatedText, /Cursor/);
-    assert.match(final.translatedText, /42/);
+    assert.notEqual(finals[0]?.utteranceId, finals[1]?.utteranceId);
+    assert.equal(harness.translator.requests.length, 2);
+  } finally {
+    await harness.close();
+  }
+});
 
-    const partials = harness.client.messages.filter(
-      (message) => message.type === "caption" && !message.isFinal,
+test("does not attach a late finalized turn to resumed speech", async () => {
+  const harness = await createHarness(50);
+  try {
+    const stream = harness.provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 100, turnId: "turn-a" });
+    stream.emit({
+      type: "transcript",
+      text: "first speaker",
+      timestampMs: 180,
+      turnId: "turn-a",
+      isFinal: false,
+    });
+    stream.emit({ type: "speech_end", timestampMs: 200, turnId: "turn-a" });
+    stream.emit({ type: "speech_start", timestampMs: 240, turnId: "turn-b" });
+    stream.emit({
+      type: "transcript",
+      text: "second speaker",
+      timestampMs: 320,
+      turnId: "turn-b",
+      isFinal: false,
+    });
+    stream.emit({
+      type: "transcript",
+      text: "late old final",
+      timestampMs: 200,
+      turnId: "turn-a",
+      isFinal: true,
+    });
+    stream.emit({ type: "speech_end", timestampMs: 340, turnId: "turn-b" });
+
+    await harness.client.waitForFinalCount(2);
+    stream.emit({ type: "speech_start", timestampMs: 400, turnId: "turn-c" });
+    stream.emit({
+      type: "transcript",
+      text: "third speaker",
+      timestampMs: 460,
+      turnId: "turn-c",
+      isFinal: false,
+    });
+    stream.emit({
+      type: "transcript",
+      text: "replayed first final",
+      timestampMs: 200,
+      turnId: "turn-a",
+      isFinal: true,
+    });
+    stream.emit({ type: "speech_end", timestampMs: 480, turnId: "turn-c" });
+
+    const finals = await harness.client.waitForFinalCount(3);
+    assert.deepEqual(
+      finals.map((caption) => caption.sourceText),
+      ["first speaker", "second speaker", "third speaker"],
     );
-    assert.equal(partials.length, 2);
-    assert.ok(partials.every((partial) => (
-      partial.type === "caption" && partial.utteranceId === final.utteranceId
-    )));
+  } finally {
+    await harness.close();
+  }
+});
+
+test("does not let a delayed textless turn close newer speech", async () => {
+  const harness = await createHarness(25);
+  try {
+    const stream = harness.provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 100, turnId: "turn-a" });
+    stream.emit({ type: "speech_end", timestampMs: 180, turnId: "turn-a" });
+    stream.emit({ type: "speech_start", timestampMs: 220, turnId: "turn-b" });
+    stream.emit({
+      type: "transcript",
+      text: "current speaker",
+      timestampMs: 280,
+      turnId: "turn-b",
+      isFinal: false,
+    });
+    stream.emit({
+      type: "transcript",
+      text: "late textless final",
+      timestampMs: 180,
+      turnId: "turn-a",
+      isFinal: true,
+    });
+    stream.emit({ type: "speech_end", timestampMs: 300, turnId: "turn-b" });
+
+    const [final] = await harness.client.waitForFinalCount(1);
+    assert.equal(final?.sourceText, "current speaker");
   } finally {
     await harness.close();
   }
@@ -299,6 +376,116 @@ test("publishes a draft translation before the utterance finalizes", async () =>
   }
 });
 
+test("keeps only the latest draft queued while translation is in flight", async () => {
+  const provider = new ControlledProvider();
+  const translator = new DeferredTranslator();
+  const app = await buildServer(
+    new ProviderRouter([provider]),
+    asTranslationRouter((request) => translator.translate(request)),
+    { utteranceGraceMs: 2_000 },
+  );
+  const address = await app.listen({ host: "127.0.0.1", port: 0 });
+  const client = await RealtimeClient.connect(
+    address.replace("http", "ws") + "/v1/realtime",
+  );
+
+  try {
+    client.send({
+      type: "start_session",
+      sessionId: "latest-draft",
+      sourceLanguage: "kn",
+      targetLanguage: "en",
+      provider: "mock",
+      sampleRate: 16_000,
+      channels: 1,
+    });
+    await client.waitForMessage((message) => message.type === "session_started");
+    const stream = provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 100 });
+    stream.emit({ type: "transcript", text: "first", timestampMs: 150, isFinal: false });
+    await waitFor(() => translator.requests.length === 1 ? true : undefined);
+
+    stream.emit({
+      type: "transcript",
+      text: "first second",
+      timestampMs: 250,
+      isFinal: false,
+    });
+    stream.emit({
+      type: "transcript",
+      text: "first second third",
+      timestampMs: 350,
+      isFinal: false,
+    });
+    await delay(500);
+    assert.equal(translator.requests.length, 1);
+
+    translator.resolveNext("stale draft");
+    await waitFor(() => translator.requests.length === 2 ? true : undefined);
+    assert.equal(translator.requests[1]?.text, "first second third");
+    translator.resolveNext("latest draft");
+  } finally {
+    translator.resolveNext("cleanup");
+    await client.close();
+    await app.close();
+  }
+});
+
+test("waits for an in-flight draft before finalizing the same source text", async () => {
+  const provider = new ControlledProvider();
+  const translator = new DeferredTranslator();
+  const app = await buildServer(
+    new ProviderRouter([provider]),
+    asTranslationRouter((request) => translator.translate(request)),
+    { utteranceGraceMs: 10 },
+  );
+  const address = await app.listen({ host: "127.0.0.1", port: 0 });
+  const client = await RealtimeClient.connect(
+    address.replace("http", "ws") + "/v1/realtime",
+  );
+
+  try {
+    client.send({
+      type: "start_session",
+      sessionId: "final-waits-for-draft",
+      sourceLanguage: "kn",
+      targetLanguage: "en",
+      provider: "mock",
+      sampleRate: 16_000,
+      channels: 1,
+    });
+    await client.waitForMessage((message) => message.type === "session_started");
+    const stream = provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 100 });
+    stream.emit({
+      type: "transcript",
+      text: "one frozen turn",
+      timestampMs: 200,
+      isFinal: false,
+    });
+    await waitFor(() => translator.requests.length === 1 ? true : undefined);
+    stream.emit({ type: "speech_end", timestampMs: 220 });
+    await delay(30);
+    assert.equal(translator.requests.length, 1);
+    assert.equal(
+      client.messages.some((message) => message.type === "caption" && message.isFinal),
+      false,
+    );
+
+    translator.resolveNext("one translated turn");
+    const final = await client.waitForMessage(
+      (message) => message.type === "caption" && message.isFinal,
+    );
+    assert.equal(final.type, "caption");
+    assert.equal(final.translatedText, "one translated turn");
+    assert.equal(translator.requests.length, 1);
+  } finally {
+    translator.resolveNext("cleanup");
+    await client.close();
+    await app.close();
+  }
+});
+
 test("publishes provider-native translations without calling the text translator", async () => {
   const harness = await createHarness(2_000, true);
   try {
@@ -378,6 +565,31 @@ test("publishes native translations that arrive before source transcripts", asyn
     assert.equal(final.translatedText, "Hello world.");
     assert.equal(final.sourceText, "Hola mundo");
     assert.equal(harness.translator.requests.length, 0);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("finalizes a native translated-only turn without a source transcript", async () => {
+  const harness = await createHarness(2_000, true);
+  try {
+    const stream = harness.provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 100, turnId: "native-only" });
+    stream.emit({
+      type: "translation",
+      text: "Translated without source text",
+      timestampMs: 220,
+      turnId: "native-only",
+      languageCode: "en",
+      isFinal: true,
+    });
+
+    const final = await harness.client.waitForMessage(
+      (message) => message.type === "caption" && message.isFinal,
+    );
+    assert.equal(final.type, "caption");
+    assert.equal(final.sourceText, "");
+    assert.equal(final.translatedText, "Translated without source text");
   } finally {
     await harness.close();
   }
@@ -595,7 +807,7 @@ async function createHarness(
   const app = await buildServer(
     router,
     asTranslationRouter((request) => translator.translate(request)),
-    { utteranceGraceMs, maxUtteranceMs: 5_000 },
+    { utteranceGraceMs },
   );
   const address = await app.listen({ host: "127.0.0.1", port: 0 });
   const client = await RealtimeClient.connect(

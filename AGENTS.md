@@ -9,7 +9,7 @@
 - When committing agent work, include `AGENTS.md` updates in the same commit (do not leave them unstaged as unrelated).
 - Prefer translated-only captions (no source/original under the translation); update progressively in realtime (word-by-word feel) while staying sentence-aware; when the area fills, keep the latest caption visible and prefer continuous sentence flow over fragmented phrases.
 - Transcription (translate off) includes Auto detect; Translate To cannot be Auto. Turning translate on from Auto transcription sets To to English.
-- Captions start a new overlay line on each speaker turn, long pause, or section break (VAD-finalized utterance). Short pauses stay on the same line because the gateway coalesces them. Do not concatenate recent turns into one continuous string.
+- Captions start a new overlay line for each provider-finalized speech interval. Pauses below the provider's VAD threshold stay on the same line; once the provider emits `speech_end`, resumed speech starts a new line even while late transcript/translation work settles. Do not concatenate recent turns or deduplicate distinct `utteranceId`s.
 - Settings belong in a separate decorated window, not on the captions overlay.
 
 ## Learned Workspace Facts
@@ -25,6 +25,7 @@
 - Settings Captions embeds `CaptionPanel` as a live preview with Ghost / Balanced / Solid idle-opacity presets. Language From/To live on the overlay, not in Settings. The panel sets `lang` / `dir` from the target language (protocol `od` → HTML `or`); Indic/CJK/RTL use looser metrics than Latin.
 - Browser overlay preview adds `web-preview` on `<html>`; Tauri stays fully transparent. Caption/status listeners are skipped in the browser. Preview flags (`/?preview=…`, `/?window=settings`) are ignored in Tauri; starting capture in the browser shows a desktop-app error.
 - Settings Connection is status-only in this phase (gateway reachability, capture backend, last provider); API keys and gateway process still live in `.env` / the terminal. Windows Settings copy and shortcut labels should stay OS-neutral (`this computer`, `Ctrl+Shift+D`).
+- Caption timing is audio-duration-aware: adapters derive speech-start and transcript/end timestamps from PCM interval boundaries. Provider VAD owns utterance boundaries; gateway grace only waits for late events, translation cadence does not define line identity, and only one draft translation runs per turn while the latest source revision is queued.
 - Caption pipeline aims for persistent Sarvam streaming with VAD-driven utterance boundaries and code-switch-tolerant Indic translation (including Kannada).
 
 ## graphify

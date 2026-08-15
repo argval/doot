@@ -1,7 +1,9 @@
 import { WebSocket, type RawData } from "ws";
-import type {
-  OpenProviderSessionOptions,
-  ProviderStreamSession,
+import {
+  pcmS16leDurationMs,
+  type OpenProviderSessionOptions,
+  type ProviderStreamEvent,
+  type ProviderStreamSession,
 } from "../contract.js";
 import {
   SARVAM_REALTIME_STT_WS,
@@ -62,8 +64,16 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
   private closed = false;
   private terminal = false;
   private ending = false;
-  private lastSentTimestampMs = 0;
+  private lastSentAudioStartMs = 0;
+  private lastSentAudioEndMs = 0;
   private lastVadTimestampMs: number | null = null;
+  private speechActive = false;
+  private currentTurnId: string | null = null;
+  private currentTurnFinalSeen = false;
+  private readonly pendingFinalTurns: Array<{ turnId: string; timestampMs: number }> = [];
+  private readonly queuedTurnEvents: ProviderStreamEvent[] = [];
+  private turnEnded = false;
+  private turnSequence = 0;
   private committedThroughTimestampMs = -1;
   private finalTranscriptCount = 0;
   private endFinalBarrierCount = 0;
@@ -339,18 +349,30 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
     }
 
     if (event === "vad.speech_start") {
-      this.lastVadTimestampMs = this.lastSentTimestampMs;
-      this.options.onEvent({
+      const turnId = this.startSpeechTurn();
+      this.speechActive = true;
+      this.lastVadTimestampMs = this.lastSentAudioStartMs;
+      this.emitTurnEvent({
         type: "speech_start",
-        timestampMs: this.lastSentTimestampMs,
+        timestampMs: this.lastSentAudioStartMs,
+        turnId,
       });
       return;
     }
 
     if (event === "vad.speech_end") {
-      const timestampMs = this.lastSentTimestampMs;
+      const turnId = this.ensureTurn();
+      const timestampMs = this.lastSentAudioEndMs;
+      this.speechActive = false;
+      this.turnEnded = true;
+      if (
+        !this.currentTurnFinalSeen
+        && !this.pendingFinalTurns.some((turn) => turn.turnId === turnId)
+      ) {
+        this.pendingFinalTurns.push({ turnId, timestampMs });
+      }
       this.lastVadTimestampMs = timestampMs;
-      this.options.onEvent({ type: "speech_end", timestampMs });
+      this.emitTurnEvent({ type: "speech_end", timestampMs, turnId });
       return;
     }
 
@@ -361,28 +383,98 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
         ? payload.language
         : undefined;
       const isFinal = event === "transcript.final";
+      const pendingTurn = isFinal ? this.pendingFinalTurns[0] : undefined;
+      const turnId = pendingTurn?.turnId ?? this.ensureTurn();
+      const timestampMs = pendingTurn
+        ? pendingTurn.timestampMs
+        : this.speechActive
+          ? this.lastSentAudioEndMs
+          : this.lastVadTimestampMs ?? this.lastSentAudioEndMs;
       if (isFinal) {
+        if (turnId === this.currentTurnId) this.currentTurnFinalSeen = true;
         this.finalTranscriptCount += 1;
-        if (this.ending && this.finalTranscriptCount > this.endFinalBarrierCount) {
-          this.resolveEndWaiters();
-        }
       }
-      this.options.onEvent({
+      const transcriptEvent: ProviderStreamEvent = {
         type: "transcript",
         text,
-        timestampMs: this.lastVadTimestampMs ?? this.lastSentTimestampMs,
+        timestampMs,
+        turnId,
         ...(languageCode ? { languageCode } : {}),
         isFinal,
-      });
+      };
+      if (pendingTurn) {
+        this.options.onEvent(transcriptEvent);
+        this.pendingFinalTurns.shift();
+        this.flushQueuedTurnEvents();
+      } else {
+        this.emitTurnEvent(transcriptEvent);
+      }
+      if (
+        isFinal
+        && this.ending
+        && this.finalTranscriptCount > this.endFinalBarrierCount
+        && this.pendingFinalTurns.length === 0
+        && this.currentTurnFinalSeen
+      ) {
+        this.resolveEndWaiters();
+      }
       return;
     }
 
     if (event === "session.end") {
       if (this.ending) {
+        this.pendingFinalTurns.splice(0);
+        this.flushQueuedTurnEvents();
         this.resolveEndWaiters();
       } else {
         this.failTerminal("Sarvam Realtime ended the session unexpectedly");
       }
+    }
+  }
+
+  private startSpeechTurn(): string {
+    if (!this.currentTurnId || this.turnEnded) {
+      this.currentTurnId = `${this.options.sessionId}:${this.turnSequence}`;
+      this.turnSequence += 1;
+      this.currentTurnFinalSeen = false;
+      this.turnEnded = false;
+    }
+    return this.currentTurnId;
+  }
+
+  private ensureTurn(): string {
+    if (!this.currentTurnId) return this.startSpeechTurn();
+    return this.currentTurnId;
+  }
+
+  private emitTurnEvent(event: ProviderStreamEvent): void {
+    const pendingTurnId = this.pendingFinalTurns[0]?.turnId;
+    if (
+      pendingTurnId
+      && "turnId" in event
+      && event.turnId
+      && event.turnId !== pendingTurnId
+    ) {
+      this.queuedTurnEvents.push(event);
+      return;
+    }
+    this.options.onEvent(event);
+  }
+
+  private flushQueuedTurnEvents(): void {
+    const pendingTurnId = this.pendingFinalTurns[0]?.turnId;
+    while (this.queuedTurnEvents.length > 0) {
+      const event = this.queuedTurnEvents[0];
+      if (
+        pendingTurnId
+        && event
+        && "turnId" in event
+        && event.turnId
+        && event.turnId !== pendingTurnId
+      ) break;
+      this.queuedTurnEvents.shift();
+      if (!event) continue;
+      this.options.onEvent(event);
     }
   }
 
@@ -393,7 +485,15 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
       return;
     }
 
-    this.lastSentTimestampMs = frame.timestampMs;
+    this.lastSentAudioStartMs = frame.timestampMs;
+    this.lastSentAudioEndMs = Math.max(
+      this.lastSentAudioEndMs,
+      frame.timestampMs + pcmS16leDurationMs(
+        frame.audio.byteLength,
+        this.options.sampleRate,
+        this.options.channels,
+      ),
+    );
     try {
       socket.send(JSON.stringify({
         event: "audio_input",
