@@ -101,11 +101,13 @@ export function HistorySection() {
       <SessionDetail
         detail={detail}
         loading={loadingDetail}
+        error={error}
         confirmingDelete={confirmingDelete}
         deleting={deleting}
         onBack={() => {
           setSelectedId(null);
           setConfirmingDelete(false);
+          setError(null);
         }}
         onConfirmingDelete={setConfirmingDelete}
         onDelete={async () => {
@@ -169,6 +171,7 @@ export function HistorySection() {
 function SessionDetail({
   detail,
   loading,
+  error,
   confirmingDelete,
   deleting,
   onBack,
@@ -177,6 +180,7 @@ function SessionDetail({
 }: {
   detail: HistorySessionDetail | null;
   loading: boolean;
+  error: string | null;
   confirmingDelete: boolean;
   deleting: boolean;
   onBack: () => void;
@@ -192,6 +196,7 @@ function SessionDetail({
       <button type="button" className="settings-history-back" onClick={onBack}>
         Back to sessions
       </button>
+      {error && <p className="settings-error">{error}</p>}
       {loading || !detail ? (
         <p className="settings-footnote">Loading session…</p>
       ) : (
@@ -262,16 +267,13 @@ function SessionDetail({
 
 function HistoryCaption({ segment }: { segment: HistorySegment }) {
   const translated = captionExportText(segment);
-  const source = segment.sourceText.replace(/\s+/g, " ").trim();
-  const showSource = source.length > 0 && source !== translated;
-  if (!translated && !showSource) {
+  if (!translated) {
     return null;
   }
   return (
     <p>
       <time dateTime={srtClock(segment.startMs)}>{formatCueTime(segment.startMs)}</time>
-      {translated ? <span>{translated}</span> : null}
-      {showSource ? <em>{source}</em> : null}
+      <span>{translated}</span>
     </p>
   );
 }
@@ -299,6 +301,7 @@ function historyErrorMessage(caught: unknown): string {
 
 function formatSessionWhen(ms: number): string {
   return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
     month: "short",
     day: "numeric",
     hour: "numeric",

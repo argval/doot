@@ -515,10 +515,3 @@ html.settings-window #root {
   font-size: 14px;
   line-height: 1.4;
 }
-
-.settings-history-transcript em {
-  color: var(--settings-ink-secondary);
-  font-size: 12px;
-  font-style: normal;
-  line-height: 1.35;
-}
