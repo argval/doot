@@ -20,17 +20,28 @@ const END_TIMEOUT_MS = 3_000;
 const PCM_BYTES_PER_100_MS = 3_200;
 /** Same silence window Sarvam Realtime uses (`silence_duration_ms=500`). */
 const GEMINI_SILENCE_DURATION_MS = 500;
+const MAX_RECONNECT_ATTEMPTS = 6;
+const MAX_RECONNECT_DELAY_MS = 4_000;
+const MAX_QUEUED_AUDIO_BYTES = 192_000;
+const GO_AWAY_RECONNECT_LEAD_MS = 1_000;
 
 export interface GeminiLiveRuntime {
   endpoint?: string;
   setupTimeoutMs?: number;
   endTimeoutMs?: number;
+  reconnectBaseDelayMs?: number;
+  maxReconnectDelayMs?: number;
 }
 
 interface Waiter {
   timeout: NodeJS.Timeout;
   resolve(): void;
   reject(error: Error): void;
+}
+
+interface QueuedAudioFrame {
+  audio: Buffer;
+  timestampMs: number;
 }
 
 /**
@@ -42,6 +53,12 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
   private socket: WebSocket | null = null;
   private setupWaiter: Waiter | null = null;
   private readonly endWaiters = new Set<Waiter>();
+  private readonly queuedAudio: QueuedAudioFrame[] = [];
+  private queuedAudioBytes = 0;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private goAwayTimer: NodeJS.Timeout | null = null;
+  private reconnectAttempts = 0;
+  private resumptionHandle: string | null = null;
   private sourceText = "";
   private translatedText = "";
   private sourceLanguageCode: string | undefined;
@@ -74,10 +91,21 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
 
   open(): Promise<void> {
     if (this.closed) return Promise.reject(new Error("Gemini session is closed"));
+    return this.connect(true);
+  }
+
+  private connect(initial: boolean): Promise<void> {
+    if (this.closed || this.ending) {
+      return Promise.reject(new Error("Gemini session is closed"));
+    }
+    // Without a resumable handle Gemini starts a new provider session. Close
+    // any abandoned local turn so its cumulative text cannot bleed into it.
+    if (!initial && !this.resumptionHandle) this.finalizeTurn();
     const url = new URL(this.runtime.endpoint ?? GEMINI_LIVE_TRANSLATE_WS);
     url.searchParams.set("key", this.apiKey);
     const socket = new WebSocket(url);
     this.socket = socket;
+    this.setupComplete = false;
 
     return new Promise<void>((resolve, reject) => {
       const waiter: Waiter = {
@@ -108,7 +136,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
         }
         this.sendSetup(socket, waiter);
       });
-      socket.on("message", (raw) => this.handleMessage(raw));
+      socket.on("message", (raw) => this.handleMessage(socket, raw));
       socket.once("unexpected-response", (_request, response) => {
         waiter.reject(new Error(
           `Gemini Live Translate WebSocket rejected the connection (HTTP ${response.statusCode})`,
@@ -116,29 +144,35 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
         socket.terminate();
       });
       socket.once("error", (error) => {
-        if (!this.setupComplete) {
+        if (!this.setupComplete || this.socket !== socket) {
           waiter.reject(error);
           return;
         }
         this.options.onEvent({
-          type: "error",
+          type: "warning",
           message: `Gemini Live Translate stream error: ${error.message}`,
-          retryable: true,
         });
       });
       socket.once("close", (code, reason) => {
-        if (this.socket === socket) this.socket = null;
-        if (!this.setupComplete) {
-          const detail = reason.length > 0 ? reason.toString() : `code ${code}`;
-          waiter.reject(new Error(`Gemini Live Translate closed before setup (${detail})`));
-        } else if (!this.closed) {
+        const current = this.socket === socket;
+        const wasReady = current && this.setupComplete;
+        if (current) {
+          this.socket = null;
+          this.setupComplete = false;
+          this.clearGoAwayTimer();
+          this.queuePendingAudio();
+        }
+        if (this.closed || !current) return;
+        if (this.ending) {
           this.rejectEndWaiters(new Error("Gemini Live Translate disconnected during flush"));
-          const detail = reason.length > 0 ? reason.toString() : `code ${code}`;
-          this.options.onEvent({
-            type: "error",
-            message: `Gemini Live Translate disconnected (${detail})`,
-            retryable: true,
-          });
+          return;
+        }
+        const detail = reason.length > 0 ? reason.toString() : `code ${code}`;
+        if (!wasReady) {
+          waiter.reject(new Error(`Gemini Live Translate closed before setup (${detail})`));
+        }
+        if (wasReady || !initial) {
+          this.scheduleReconnect(`Gemini Live Translate disconnected (${detail})`);
         }
       });
     });
@@ -146,20 +180,17 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
 
   pushAudio(audio: Uint8Array, timestampMs: number): void {
     if (this.closed || this.ending || audio.byteLength === 0) return;
-    const socket = this.socket;
-    if (!this.setupComplete || !socket || socket.readyState !== WebSocket.OPEN) {
-      this.options.onEvent({
-        type: "warning",
-        message: "Gemini Live Translate dropped audio before setup completed",
-      });
-      return;
-    }
     if (audio.byteLength % 2 !== 0) {
       this.options.onEvent({
         type: "error",
         message: "Gemini Live Translate received an incomplete PCM16 sample",
         retryable: false,
       });
+      return;
+    }
+    const socket = this.socket;
+    if (!this.setupComplete || !socket || socket.readyState !== WebSocket.OPEN) {
+      this.enqueueAudio(audio, timestampMs);
       return;
     }
 
@@ -227,6 +258,8 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.clearReconnectTimer();
+    this.clearGoAwayTimer();
     this.setupWaiter?.reject(new Error("Gemini Live Translate closed during setup"));
     this.rejectEndWaiters(new Error("Gemini Live Translate closed during flush"));
 
@@ -263,11 +296,15 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
           model: `models/${GEMINI_LIVE_TRANSLATE_MODEL}`,
           inputAudioTranscription: {},
           outputAudioTranscription: {},
+          sessionResumption: this.resumptionHandle
+            ? { handle: this.resumptionHandle }
+            : {},
+          contextWindowCompression: { slidingWindow: {} },
           realtimeInputConfig: {
             automaticActivityDetection: {
               disabled: false,
               startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
-              endOfSpeechSensitivity: "END_SENSITIVITY_LOW",
+              endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
               prefixPaddingMs: 20,
               silenceDurationMs: GEMINI_SILENCE_DURATION_MS,
             },
@@ -286,7 +323,8 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     }
   }
 
-  private handleMessage(raw: RawData): void {
+  private handleMessage(socket: WebSocket, raw: RawData): void {
+    if (this.socket !== socket) return;
     let payload: unknown;
     try {
       payload = JSON.parse(raw.toString());
@@ -301,7 +339,16 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
 
     if ("setupComplete" in payload) {
       this.setupComplete = true;
+      this.reconnectAttempts = 0;
       this.setupWaiter?.resolve();
+      this.drainQueuedAudio();
+      return;
+    }
+    if (isRecord(payload.sessionResumptionUpdate)) {
+      const update = payload.sessionResumptionUpdate;
+      this.resumptionHandle = update.resumable === true && typeof update.newHandle === "string"
+        ? update.newHandle
+        : null;
       return;
     }
     if (isRecord(payload.error)) {
@@ -322,6 +369,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
         type: "warning",
         message: "Gemini Live Translate announced an upcoming disconnect",
       });
+      this.scheduleGoAwayReconnect(socket, parseDurationMs(payload.goAway.timeLeft));
       return;
     }
     if (!isRecord(payload.serverContent)) return;
@@ -461,6 +509,82 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     for (const waiter of [...this.endWaiters]) waiter.reject(error);
   }
 
+  private enqueueAudio(audio: Uint8Array, timestampMs: number): void {
+    this.queuedAudio.push({ audio: Buffer.from(audio), timestampMs });
+    this.queuedAudioBytes += audio.byteLength;
+    let droppedBytes = 0;
+    while (this.queuedAudioBytes > MAX_QUEUED_AUDIO_BYTES && this.queuedAudio.length > 1) {
+      const dropped = this.queuedAudio.shift();
+      if (!dropped) break;
+      this.queuedAudioBytes -= dropped.audio.byteLength;
+      droppedBytes += dropped.audio.byteLength;
+    }
+    if (droppedBytes > 0) {
+      this.options.onEvent({
+        type: "warning",
+        message: "Gemini Live Translate reconnect buffer filled; oldest audio was dropped",
+      });
+    }
+  }
+
+  private drainQueuedAudio(): void {
+    while (this.queuedAudio.length > 0 && this.setupComplete && !this.closed && !this.ending) {
+      const frame = this.queuedAudio.shift();
+      if (!frame) break;
+      this.queuedAudioBytes -= frame.audio.byteLength;
+      this.pushAudio(frame.audio, frame.timestampMs);
+    }
+  }
+
+  private queuePendingAudio(): void {
+    if (this.pendingAudio.byteLength === 0) return;
+    this.enqueueAudio(this.pendingAudio, this.pendingAudioTimestampMs ?? this.lastAudioEndMs);
+    this.pendingAudio = Buffer.alloc(0);
+    this.pendingAudioTimestampMs = null;
+  }
+
+  private scheduleReconnect(message: string): void {
+    if (this.closed || this.ending || this.reconnectTimer) return;
+    this.reconnectAttempts += 1;
+    if (this.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+      this.options.onEvent({
+        type: "error",
+        message: `${message}; reconnect limit reached`,
+        retryable: false,
+      });
+      return;
+    }
+    this.options.onEvent({ type: "warning", message });
+    const delayMs = Math.min(
+      (this.runtime.reconnectBaseDelayMs ?? 250) * (2 ** (this.reconnectAttempts - 1)),
+      this.runtime.maxReconnectDelayMs ?? MAX_RECONNECT_DELAY_MS,
+    );
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.connect(false).catch(() => undefined);
+    }, delayMs);
+  }
+
+  private scheduleGoAwayReconnect(socket: WebSocket, timeLeftMs: number | null): void {
+    if (timeLeftMs === null || this.goAwayTimer || this.closed || this.ending) return;
+    this.goAwayTimer = setTimeout(() => {
+      this.goAwayTimer = null;
+      if (this.socket === socket && socket.readyState === WebSocket.OPEN) socket.terminate();
+    }, Math.max(0, timeLeftMs - GO_AWAY_RECONNECT_LEAD_MS));
+  }
+
+  private clearReconnectTimer(): void {
+    if (!this.reconnectTimer) return;
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+  }
+
+  private clearGoAwayTimer(): void {
+    if (!this.goAwayTimer) return;
+    clearTimeout(this.goAwayTimer);
+    this.goAwayTimer = null;
+  }
+
   private send(socket: WebSocket, message: unknown): void {
     try {
       socket.send(JSON.stringify(message));
@@ -510,6 +634,16 @@ function readTranscription(value: unknown): {
 
 function normalizeText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function parseDurationMs(value: unknown): number | null {
+  if (typeof value === "string") {
+    const seconds = Number.parseFloat(value.replace(/s$/i, ""));
+    return Number.isFinite(seconds) ? Math.max(0, Math.round(seconds * 1_000)) : null;
+  }
+  if (!isRecord(value) || typeof value.seconds !== "number") return null;
+  const nanos = typeof value.nanos === "number" ? value.nanos : 0;
+  return Math.max(0, Math.round(value.seconds * 1_000 + nanos / 1_000_000));
 }
 
 function asError(value: unknown): Error {

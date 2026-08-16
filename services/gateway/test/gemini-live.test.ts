@@ -33,11 +33,13 @@ test("configures Live Translate, sends 100 ms PCM frames, and correlates transcr
         model: "models/gemini-3.5-live-translate-preview",
         inputAudioTranscription: {},
         outputAudioTranscription: {},
+        sessionResumption: {},
+        contextWindowCompression: { slidingWindow: {} },
         realtimeInputConfig: {
           automaticActivityDetection: {
             disabled: false,
             startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
-            endOfSpeechSensitivity: "END_SENSITIVITY_LOW",
+            endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
             prefixPaddingMs: 20,
             silenceDurationMs: 500,
           },
@@ -140,6 +142,176 @@ test("configures Live Translate, sends 100 ms PCM frames, and correlates transcr
     assert.ok(events.filter((event) => (
       event.type === "transcript" || event.type === "translation"
     )).every((event) => event.timestampMs === 425));
+  } finally {
+    await session.close();
+    await server.close();
+  }
+});
+
+test("resumes Gemini after a provider disconnect without replaying sent audio", async () => {
+  const server = new FakeGeminiServer();
+  const endpoint = await server.endpoint();
+  const events: ProviderStreamEvent[] = [];
+  const session = new GeminiLiveTranslateSession(
+    "test-gemini-key",
+    {
+      sessionId: "gemini-resume",
+      source: "es",
+      target: "en",
+      sampleRate: 16_000,
+      channels: 1,
+      onEvent: (event) => events.push(event),
+    },
+    {
+      endpoint,
+      setupTimeoutMs: 250,
+      reconnectBaseDelayMs: 5,
+      maxReconnectDelayMs: 10,
+    },
+  );
+
+  try {
+    const opening = session.open();
+    await server.waitForMessage(isSetupMessage);
+    server.send({ setupComplete: {} });
+    await opening;
+
+    session.pushAudio(Buffer.alloc(3_200, 7), 100);
+    await server.waitForMessage(isAudioMessage);
+    server.send({
+      sessionResumptionUpdate: { resumable: true, newHandle: "resume-token" },
+    });
+    server.terminate();
+
+    await server.waitForConnectionCount(2);
+    const resumedSetup = await server.waitForMessage(isSetupMessage, 1);
+    assert.deepEqual(resumedSetup, {
+      setup: {
+        model: "models/gemini-3.5-live-translate-preview",
+        inputAudioTranscription: {},
+        outputAudioTranscription: {},
+        sessionResumption: { handle: "resume-token" },
+        contextWindowCompression: { slidingWindow: {} },
+        realtimeInputConfig: {
+          automaticActivityDetection: {
+            disabled: false,
+            startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
+            endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
+            prefixPaddingMs: 20,
+            silenceDurationMs: 500,
+          },
+        },
+        generationConfig: {
+          responseModalities: ["AUDIO"],
+          translationConfig: { targetLanguageCode: "en", echoTargetLanguage: true },
+        },
+      },
+    });
+
+    session.pushAudio(Buffer.alloc(1_600, 9), 200);
+    server.send({ setupComplete: {} }, 1);
+    const resumedAudio = await server.waitForMessage(isAudioMessage, 1);
+    assert.ok(isAudioMessage(resumedAudio));
+    assert.equal(
+      Buffer.from(resumedAudio.realtimeInput.audio.data, "base64").byteLength,
+      1_600,
+    );
+    assert.equal(
+      events.filter((event) => event.type === "warning").length,
+      1,
+    );
+  } finally {
+    await session.close();
+    await server.close();
+  }
+});
+
+test("ends an abandoned turn before reconnecting Gemini without resumption", async () => {
+  const server = new FakeGeminiServer();
+  const endpoint = await server.endpoint();
+  const events: ProviderStreamEvent[] = [];
+  const session = new GeminiLiveTranslateSession(
+    "test-gemini-key",
+    {
+      sessionId: "gemini-fresh-reconnect",
+      source: "es",
+      target: "en",
+      sampleRate: 16_000,
+      channels: 1,
+      onEvent: (event) => events.push(event),
+    },
+    {
+      endpoint,
+      setupTimeoutMs: 250,
+      reconnectBaseDelayMs: 5,
+      maxReconnectDelayMs: 10,
+    },
+  );
+
+  try {
+    const opening = session.open();
+    await server.waitForMessage(isSetupMessage);
+    server.send({ setupComplete: {} });
+    await opening;
+
+    server.send({
+      serverContent: {
+        inputTranscription: { text: "Primera frase", languageCode: "es" },
+        outputTranscription: { text: "First sentence", languageCode: "en" },
+      },
+    });
+    await waitForGemini(() => events.find((event) => (
+      event.type === "translation" && event.text === "First sentence" && !event.isFinal
+    )));
+    server.terminate();
+
+    await server.waitForConnectionCount(2);
+    const freshSetup = await server.waitForMessage(isSetupMessage, 1);
+    assert.deepEqual(freshSetup, {
+      setup: {
+        model: "models/gemini-3.5-live-translate-preview",
+        inputAudioTranscription: {},
+        outputAudioTranscription: {},
+        sessionResumption: {},
+        contextWindowCompression: { slidingWindow: {} },
+        realtimeInputConfig: {
+          automaticActivityDetection: {
+            disabled: false,
+            startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
+            endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
+            prefixPaddingMs: 20,
+            silenceDurationMs: 500,
+          },
+        },
+        generationConfig: {
+          responseModalities: ["AUDIO"],
+          translationConfig: { targetLanguageCode: "en", echoTargetLanguage: true },
+        },
+      },
+    });
+    server.send({ setupComplete: {} }, 1);
+    server.send({
+      serverContent: {
+        inputTranscription: { text: "Segunda frase", languageCode: "es" },
+        outputTranscription: { text: "Second sentence", languageCode: "en" },
+        turnComplete: true,
+      },
+    }, 1);
+
+    await waitForGemini(() => (
+      events.filter((event) => event.type === "translation" && event.isFinal).length === 2
+        ? true
+        : undefined
+    ));
+    const finals = events.filter(
+      (event): event is Extract<ProviderStreamEvent, { type: "translation" }> => (
+        event.type === "translation" && event.isFinal
+      ),
+    );
+    const starts = events.filter((event) => event.type === "speech_start");
+    assert.deepEqual(finals.map((event) => event.text), ["First sentence", "Second sentence"]);
+    assert.equal(starts.length, 2);
+    assert.notEqual(starts[0]?.turnId, starts[1]?.turnId);
   } finally {
     await session.close();
     await server.close();

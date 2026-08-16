@@ -492,6 +492,53 @@ test("waits for an in-flight draft before finalizing the same source text", asyn
   }
 });
 
+test("does not let a stale draft delay the final translation", async () => {
+  const provider = new ControlledProvider();
+  const translator = new DeferredTranslator();
+  const app = await buildServer(
+    new ProviderRouter([provider]),
+    asTranslationRouter((request) => translator.translate(request)),
+    { utteranceGraceMs: 10 },
+  );
+  const address = await app.listen({ host: "127.0.0.1", port: 0 });
+  const client = await RealtimeClient.connect(
+    address.replace("http", "ws") + "/v1/realtime",
+  );
+
+  try {
+    client.send({
+      type: "start_session",
+      sessionId: "final-skips-stale-draft",
+      sourceLanguage: "kn",
+      targetLanguage: "en",
+      provider: "mock",
+      sampleRate: 16_000,
+      channels: 1,
+    });
+    await client.waitForMessage((message) => message.type === "session_started");
+    const stream = provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 100 });
+    stream.emit({ type: "transcript", text: "first", timestampMs: 150, isFinal: false });
+    await waitFor(() => translator.requests.length === 1 ? true : undefined);
+    stream.emit({ type: "transcript", text: "first final", timestampMs: 200, isFinal: false });
+    stream.emit({ type: "speech_end", timestampMs: 220 });
+
+    await waitFor(() => translator.requests.length === 2 ? true : undefined);
+    assert.equal(translator.requests[1]?.text, "first final");
+    translator.resolveNext("stale translation");
+    translator.resolveNext("final translation");
+    const final = await client.waitForMessage(
+      (message) => message.type === "caption" && message.isFinal,
+    );
+    assert.equal(final.type, "caption");
+    assert.equal(final.translatedText, "final translation");
+  } finally {
+    translator.resolveNext("cleanup");
+    await client.close();
+    await app.close();
+  }
+});
+
 test("publishes provider-native translations without calling the text translator", async () => {
   const harness = await createHarness(2_000, true);
   try {

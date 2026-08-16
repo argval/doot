@@ -15,6 +15,12 @@ export function mergeStreamingText(existing: string, incoming: string): string {
   if (hasWordPrefix(incomingWords, existingWords)) return collapseStutter(normalized);
   if (hasWordPrefix(existingWords, incomingWords)) return collapseStutter(existing);
 
+  // Providers sometimes replace a cumulative partial after correcting a word.
+  // A substantial shared prefix identifies that as a revision, not new speech.
+  if (hasSubstantialSharedPrefix(existingWords, incomingWords)) {
+    return collapseStutter(normalized);
+  }
+
   for (let size = Math.min(incomingWords.length, existingWords.length); size >= 1; size -= 1) {
     if (sameWords(existingWords.slice(-size), incomingWords.slice(0, size))) {
       if (size === incomingWords.length) return collapseStutter(existing);
@@ -54,6 +60,13 @@ function collapseStutter(text: string): string {
 
 function hasWordPrefix(words: string[], prefix: string[]): boolean {
   return prefix.length <= words.length && sameWords(words.slice(0, prefix.length), prefix);
+}
+
+function hasSubstantialSharedPrefix(left: string[], right: string[]): boolean {
+  const limit = Math.min(left.length, right.length);
+  let size = 0;
+  while (size < limit && wordsEquivalent(left[size] ?? "", right[size] ?? "")) size += 1;
+  return size > 0 && size * 2 >= limit;
 }
 
 function sameWords(left: string[], right: string[]): boolean {

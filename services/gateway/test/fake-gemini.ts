@@ -45,8 +45,18 @@ export class FakeGeminiServer {
     connection.socket.send(JSON.stringify(payload));
   }
 
+  terminate(connectionIndex = 0): void {
+    const connection = this.connections[connectionIndex];
+    if (!connection) throw new Error(`Missing fake Gemini connection ${connectionIndex}`);
+    connection.socket.terminate();
+  }
+
   async waitForConnection(): Promise<FakeGeminiConnection> {
     return waitForGemini(() => this.connections[0]);
+  }
+
+  async waitForConnectionCount(count: number): Promise<FakeGeminiConnection> {
+    return waitForGemini(() => this.connections[count - 1]);
   }
 
   async waitForMessage(

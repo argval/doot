@@ -52,6 +52,7 @@ interface ActiveUtterance {
   draftTimer: NodeJS.Timeout | null;
   draftMaxWaitTimer: NodeJS.Timeout | null;
   draftInFlight: boolean;
+  draftInFlightSourceText: string | null;
   draftPending: boolean;
   draftCompletion: Promise<void> | null;
   draftSourceText: string | null;
@@ -519,6 +520,7 @@ function openActiveUtterance(
     draftTimer: null,
     draftMaxWaitTimer: null,
     draftInFlight: false,
+    draftInFlightSourceText: null,
     draftPending: false,
     draftCompletion: null,
     draftSourceText: null,
@@ -632,6 +634,7 @@ async function runDraftTranslation(
   utterance.draftInFlight = true;
   utterance.draftPending = false;
   const sourceText = utterance.sourceText;
+  utterance.draftInFlightSourceText = sourceText;
   const request = session.request;
   let translatedText: string | null = null;
   try {
@@ -644,6 +647,7 @@ async function runDraftTranslation(
     // Draft misses are fine; the final pass still reports translation errors.
   } finally {
     utterance.draftInFlight = false;
+    utterance.draftInFlightSourceText = null;
   }
 
   if (
@@ -737,7 +741,12 @@ function finalizeActiveUtterance(
   session.providerSession?.commitAudioThrough(utterance.endMs);
   const request = session.request;
   const finalize = async () => {
-    if (utterance.draftCompletion) await utterance.draftCompletion;
+    if (
+      utterance.draftCompletion
+      && utterance.draftInFlightSourceText === utterance.sourceText
+    ) {
+      await utterance.draftCompletion;
+    }
     let translatedText = session.nativeTranslation
       ? utterance.nativeTranslatedText ?? ""
       : utterance.draftTranslatedText ?? "";
