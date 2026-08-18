@@ -18,8 +18,16 @@ const SETUP_TIMEOUT_MS = 8_000;
 const END_TIMEOUT_MS = 3_000;
 /** Soft coalesce target — desktop already emits ~100 ms frames. */
 const PCM_BYTES_PER_100_MS = 3_200;
-/** Same silence window Sarvam Realtime uses (`silence_duration_ms=500`). */
-const GEMINI_SILENCE_DURATION_MS = 500;
+/**
+ * Tighter than Sarvam's 500 ms so Live Translate captions break on brief
+ * pauses (commentary breaths) without going as low as Google's 100 ms demo
+ * value, which fragments mid-phrase.
+ */
+const GEMINI_SILENCE_DURATION_MS = 300;
+/** Prefer a sentence break once a turn has at least this much audio. */
+const GEMINI_SOFT_SPLIT_MIN_MS = 2_500;
+/** Force a new caption line even mid-phrase after this much continuous audio. */
+const GEMINI_MAX_TURN_MS = 5_500;
 const MAX_RECONNECT_ATTEMPTS = 6;
 const MAX_RECONNECT_DELAY_MS = 4_000;
 const MAX_QUEUED_AUDIO_BYTES = 192_000;
@@ -31,6 +39,8 @@ export interface GeminiLiveRuntime {
   endTimeoutMs?: number;
   reconnectBaseDelayMs?: number;
   maxReconnectDelayMs?: number;
+  softSplitMinMs?: number;
+  maxTurnMs?: number;
 }
 
 interface Waiter {
@@ -61,6 +71,9 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
   private resumptionHandle: string | null = null;
   private sourceText = "";
   private translatedText = "";
+  /** Text already finalized via soft splits within the current Gemini activity. */
+  private committedSource = "";
+  private committedTranslated = "";
   private sourceLanguageCode: string | undefined;
   private targetLanguageCode: string | undefined;
   private lastEmittedTranslation = "";
@@ -290,7 +303,8 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     try {
       // Transcription + VAD live on setup (BidiGenerateContentSetup). Google's
       // live-translate WS example nests transcription under generationConfig and
-      // the runtime rejects that with 1007. Silence window mirrors Sarvam.
+      // the runtime rejects that with 1007. Silence is tighter than Sarvam so
+      // continuous commentary opens new caption lines on brief breaths.
       socket.send(JSON.stringify({
         setup: {
           model: `models/${GEMINI_LIVE_TRANSLATE_MODEL}`,
@@ -383,7 +397,9 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
   }
 
   private handleInputTranscription(text: string, languageCode?: string): void {
-    const merged = mergeStreamingText(this.sourceText, text);
+    const relative = textAfterCommitted(text, this.committedSource);
+    if (!relative) return;
+    const merged = mergeStreamingText(this.sourceText, relative);
     if (!merged || merged === this.sourceText) return;
     this.sourceText = merged;
     this.sourceLanguageCode = languageCode ?? this.sourceLanguageCode;
@@ -397,6 +413,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
       isFinal: false,
     });
     this.emitTranslation(false);
+    this.maybeSplitLongTurn();
   }
 
   private handleOutputTranscription(text: string, languageCode?: string): void {
@@ -410,7 +427,9 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     );
     if (!filteredIncoming) return;
 
-    const merged = mergeStreamingText(this.translatedText, filteredIncoming);
+    const relative = textAfterCommitted(filteredIncoming, this.committedTranslated);
+    if (!relative) return;
+    const merged = mergeStreamingText(this.translatedText, relative);
     const filteredMerged = filterGeminiTranslationToTarget(
       merged,
       this.options.target,
@@ -422,6 +441,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     // Translated-only overlay: do not wait for the source transcript stream.
     this.markSpeechStarted();
     this.emitTranslation(false);
+    this.maybeSplitLongTurn();
   }
 
   private markSpeechStarted(): void {
@@ -450,15 +470,75 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     });
   }
 
-  private finalizeTurn(): void {
+  /**
+   * Continuous speech (e.g. match commentary) may never hit the silence VAD.
+   * Prefer sentence boundaries after a minimum turn length; otherwise force a
+   * split at maxTurnMs so the overlay still gets new lines.
+   */
+  private maybeSplitLongTurn(): void {
+    if (!this.speechStarted || this.turnAudioStartMs === null) return;
+    if (!this.translatedText) return;
+    const turnMs = this.lastAudioEndMs - this.turnAudioStartMs;
+    const softSplitMinMs = this.runtime.softSplitMinMs ?? GEMINI_SOFT_SPLIT_MIN_MS;
+    const maxTurnMs = this.runtime.maxTurnMs ?? GEMINI_MAX_TURN_MS;
+    if (turnMs < softSplitMinMs) return;
+
+    const sentence = splitCompletedSentence(this.translatedText);
+    if (sentence) {
+      this.commitSoftSplit(sentence.completed, sentence.remainder);
+      return;
+    }
+    if (turnMs >= maxTurnMs) {
+      this.finalizeTurn({ providerComplete: false });
+    }
+  }
+
+  private commitSoftSplit(completed: string, remainder: string): void {
+    this.translatedText = completed;
+    this.emitTranslation(true);
+    if (this.speechStarted) {
+      this.options.onEvent({
+        type: "speech_end",
+        timestampMs: this.lastAudioEndMs,
+        ...(this.turnId ? { turnId: this.turnId } : {}),
+      });
+    }
+    this.committedTranslated = appendCommitted(this.committedTranslated, completed);
+    if (this.sourceText) {
+      this.committedSource = appendCommitted(this.committedSource, this.sourceText);
+    }
+    this.sourceText = "";
+    this.translatedText = remainder;
+    this.lastEmittedTranslation = "";
+    this.speechStarted = false;
+    this.turnId = null;
+    this.turnAudioStartMs = this.lastAudioEndMs;
+    this.awaitingTurn = true;
+    if (remainder) {
+      this.markSpeechStarted();
+      this.emitTranslation(false);
+    }
+  }
+
+  private finalizeTurn(options: { providerComplete?: boolean } = {}): void {
+    const providerComplete = options.providerComplete !== false;
     if (this.translatedText) {
       this.emitTranslation(true);
+      if (!providerComplete) {
+        this.committedTranslated = appendCommitted(
+          this.committedTranslated,
+          this.translatedText,
+        );
+      }
     } else if (this.sourceText) {
       this.options.onEvent({
         type: "error",
         message: "Gemini Live Translate completed without translated text",
         retryable: true,
       });
+    }
+    if (!providerComplete && this.sourceText) {
+      this.committedSource = appendCommitted(this.committedSource, this.sourceText);
     }
     if (this.speechStarted) {
       this.options.onEvent({
@@ -474,9 +554,17 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     this.lastEmittedTranslation = "";
     this.speechStarted = false;
     this.turnId = null;
-    this.awaitingTurn = false;
-    this.turnAudioStartMs = null;
-    this.resolveEndWaiters();
+    if (providerComplete) {
+      this.committedSource = "";
+      this.committedTranslated = "";
+      this.awaitingTurn = false;
+      this.turnAudioStartMs = null;
+      this.resolveEndWaiters();
+    } else {
+      // Soft max: keep the Gemini activity open for the next caption line.
+      this.awaitingTurn = true;
+      this.turnAudioStartMs = this.lastAudioEndMs;
+    }
   }
 
   private waitForEnd(): Promise<void> {
@@ -614,6 +702,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
         },
       },
     });
+    this.maybeSplitLongTurn();
   }
 }
 
@@ -634,6 +723,51 @@ function readTranscription(value: unknown): {
 
 function normalizeText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+/** Drop text already finalized by a soft split when Gemini re-sends cumulatives. */
+function textAfterCommitted(incoming: string, committed: string): string {
+  const normalizedIncoming = normalizeText(incoming);
+  const normalizedCommitted = normalizeText(committed);
+  if (!normalizedCommitted) return normalizedIncoming;
+  if (!normalizedIncoming) return "";
+  if (normalizedIncoming === normalizedCommitted) return "";
+  if (normalizedIncoming.startsWith(normalizedCommitted)) {
+    return normalizedIncoming.slice(normalizedCommitted.length).trim();
+  }
+  const committedWords = normalizedCommitted.split(/\s+/);
+  const incomingWords = normalizedIncoming.split(/\s+/);
+  if (
+    committedWords.length > 0
+    && committedWords.length <= incomingWords.length
+    && committedWords.every((word, index) => (
+      word.toLocaleLowerCase() === (incomingWords[index] ?? "").toLocaleLowerCase()
+    ))
+  ) {
+    return incomingWords.slice(committedWords.length).join(" ");
+  }
+  return normalizedIncoming;
+}
+
+function appendCommitted(base: string, next: string): string {
+  const left = normalizeText(base);
+  const right = normalizeText(next);
+  if (!left) return right;
+  if (!right) return left;
+  if (right.startsWith(left)) return right;
+  if (left.startsWith(right)) return left;
+  return `${left} ${right}`;
+}
+
+/** First completed sentence plus trailing speech — used for commentary line breaks. */
+function splitCompletedSentence(text: string): { completed: string; remainder: string } | null {
+  const normalized = normalizeText(text);
+  const match = normalized.match(/^(.+?[.!?…])\s+(\S[\s\S]*)$/u);
+  if (!match?.[1] || !match[2]) return null;
+  const completed = match[1].trim();
+  const remainder = match[2].trim();
+  if (!completed || !remainder) return null;
+  return { completed, remainder };
 }
 
 function parseDurationMs(value: unknown): number | null {
