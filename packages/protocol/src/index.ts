@@ -103,7 +103,7 @@ export const SUPPORTED_TARGET_LANGUAGES = [
   ...INDIC_LANGUAGES,
 ] as const satisfies readonly (typeof SUPPORTED_LANGUAGES)[number][];
 
-export const PROVIDER_IDS = ["sarvam", "gemini", "mock"] as const;
+export const PROVIDER_IDS = ["sarvam", "gemini-transcribe", "gemini", "mock"] as const;
 export const AUDIO_SAMPLE_RATES = [16_000] as const;
 export const CHANNEL_COUNTS = [1] as const;
 

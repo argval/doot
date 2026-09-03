@@ -1,8 +1,75 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ProviderStreamEvent } from "../src/speech/contract.js";
-import { GeminiLiveTranslateSession } from "../src/speech/gemini/live.js";
+import {
+  GeminiLiveTranscribeSession,
+  GeminiLiveTranslateSession,
+} from "../src/speech/gemini/live.js";
 import { FakeGeminiServer, waitForGemini } from "./fake-gemini.js";
+
+test("configures Transcribe Live and publishes interim then final transcripts", async () => {
+  const server = new FakeGeminiServer();
+  const endpoint = await server.endpoint();
+  const events: ProviderStreamEvent[] = [];
+  const session = new GeminiLiveTranscribeSession(
+    "test-gemini-key",
+    {
+      sessionId: "gemini-transcribe-1",
+      source: "es",
+      target: "en",
+      sampleRate: 16_000,
+      channels: 1,
+      onEvent: (event) => events.push(event),
+    },
+    { endpoint, setupTimeoutMs: 250, endTimeoutMs: 250 },
+  );
+
+  try {
+    const opening = session.open();
+    const connection = await server.waitForConnection();
+    const setup = await server.waitForMessage(isSetupMessage);
+    assert.deepEqual(setup, {
+      setup: {
+        model: "models/gemini-3.5-transcribe-live",
+        generationConfig: { responseModalities: ["TEXT"] },
+        inputAudioTranscription: { languageCodes: [] },
+      },
+    });
+    server.send({ setupComplete: {} });
+    await opening;
+
+    session.pushAudio(Buffer.alloc(3_200, 7), 100);
+    await server.waitForMessage(isAudioMessage);
+    server.send({
+      serverContent: {
+        interimInputTranscription: { text: "Hola mundo", languageCode: "es-ES" },
+      },
+    });
+    await waitForGemini(() => events.find((event) => (
+      event.type === "transcript" && event.text === "Hola mundo" && !event.isFinal
+    )));
+
+    server.send({
+      serverContent: {
+        inputTranscription: { text: "Hola, mundo.", languageCode: "es-ES" },
+      },
+    });
+    const final = await waitForGemini(() => events.find(
+      (event): event is Extract<ProviderStreamEvent, { type: "transcript" }> => (
+        event.type === "transcript" && event.text === "Hola, mundo." && event.isFinal
+      ),
+    ));
+    const started = events.find((event) => event.type === "speech_start");
+    assert.equal(final.turnId, started?.turnId);
+    assert.equal(final.languageCode, "es-ES");
+    assert.ok(events.some((event) => event.type === "speech_end"));
+    assert.equal(events.some((event) => event.type === "translation"), false);
+    assert.equal(connection.messages.filter(isAudioMessage).length, 1);
+  } finally {
+    await session.close();
+    await server.close();
+  }
+});
 
 test("configures Live Translate, sends 100 ms PCM frames, and correlates transcripts", async () => {
   const server = new FakeGeminiServer();

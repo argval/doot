@@ -7,8 +7,9 @@ import {
 import { isRecord } from "../../util.js";
 import { mergeStreamingText } from "../../merge-text.js";
 import {
+  GEMINI_LIVE_WS,
+  GEMINI_TRANSCRIBE_LIVE_MODEL,
   GEMINI_LIVE_TRANSLATE_MODEL,
-  GEMINI_LIVE_TRANSLATE_WS,
   filterGeminiTranslationToTarget,
   geminiLanguageCodeMatches,
   toGeminiLanguageCode,
@@ -54,12 +55,13 @@ interface QueuedAudioFrame {
   timestampMs: number;
 }
 
+type GeminiLiveMode = "transcribe" | "translate";
+
 /**
- * Server-to-server Gemini Live Translate session. Google emits source and
- * translated transcripts independently, so this adapter correlates both into
- * one provider utterance before publishing native translation events.
+ * Shared Gemini Live transport. Transcribe emits source text only; Live
+ * Translate also correlates Google's source and translated transcript streams.
  */
-export class GeminiLiveTranslateSession implements ProviderStreamSession {
+class GeminiLiveSession implements ProviderStreamSession {
   private socket: WebSocket | null = null;
   private setupWaiter: Waiter | null = null;
   private readonly endWaiters = new Set<Waiter>();
@@ -92,14 +94,29 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
   constructor(
     private readonly apiKey: string,
     private readonly options: OpenProviderSessionOptions,
+    private readonly mode: GeminiLiveMode,
     private readonly runtime: GeminiLiveRuntime = {},
   ) {
     if (options.channels !== 1) {
-      throw new Error("Gemini Live Translate requires mono audio");
+      throw new Error(`${this.displayName} requires mono audio`);
     }
     if (options.sampleRate !== 16_000) {
-      throw new Error(`Gemini Live Translate does not support ${options.sampleRate} Hz audio`);
+      throw new Error(`${this.displayName} does not support ${options.sampleRate} Hz audio`);
     }
+  }
+
+  private get displayName(): string {
+    return this.mode === "transcribe" ? "Gemini Transcribe Live" : "Gemini Live Translate";
+  }
+
+  private get model(): string {
+    return this.mode === "transcribe"
+      ? GEMINI_TRANSCRIBE_LIVE_MODEL
+      : GEMINI_LIVE_TRANSLATE_MODEL;
+  }
+
+  private get supportsSessionResumption(): boolean {
+    return this.mode === "translate";
   }
 
   open(): Promise<void> {
@@ -113,8 +130,10 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     }
     // Without a resumable handle Gemini starts a new provider session. Close
     // any abandoned local turn so its cumulative text cannot bleed into it.
-    if (!initial && !this.resumptionHandle) this.finalizeTurn();
-    const url = new URL(this.runtime.endpoint ?? GEMINI_LIVE_TRANSLATE_WS);
+    if (!initial && (!this.supportsSessionResumption || !this.resumptionHandle)) {
+      this.finalizeTurn();
+    }
+    const url = new URL(this.runtime.endpoint ?? GEMINI_LIVE_WS);
     url.searchParams.set("key", this.apiKey);
     const socket = new WebSocket(url);
     this.socket = socket;
@@ -123,7 +142,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     return new Promise<void>((resolve, reject) => {
       const waiter: Waiter = {
         timeout: setTimeout(() => {
-          waiter.reject(new Error("Gemini Live Translate setup timed out"));
+          waiter.reject(new Error(`${this.displayName} setup timed out`));
           socket.terminate();
         }, this.runtime.setupTimeoutMs ?? SETUP_TIMEOUT_MS),
         resolve: () => {
@@ -143,7 +162,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
 
       socket.once("open", () => {
         if (this.closed || this.socket !== socket) {
-          waiter.reject(new Error("Gemini Live Translate session was superseded"));
+          waiter.reject(new Error(`${this.displayName} session was superseded`));
           socket.close();
           return;
         }
@@ -152,7 +171,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
       socket.on("message", (raw) => this.handleMessage(socket, raw));
       socket.once("unexpected-response", (_request, response) => {
         waiter.reject(new Error(
-          `Gemini Live Translate WebSocket rejected the connection (HTTP ${response.statusCode})`,
+          `${this.displayName} WebSocket rejected the connection (HTTP ${response.statusCode})`,
         ));
         socket.terminate();
       });
@@ -163,7 +182,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
         }
         this.options.onEvent({
           type: "warning",
-          message: `Gemini Live Translate stream error: ${error.message}`,
+          message: `${this.displayName} stream error: ${error.message}`,
         });
       });
       socket.once("close", (code, reason) => {
@@ -177,15 +196,15 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
         }
         if (this.closed || !current) return;
         if (this.ending) {
-          this.rejectEndWaiters(new Error("Gemini Live Translate disconnected during flush"));
+          this.rejectEndWaiters(new Error(`${this.displayName} disconnected during flush`));
           return;
         }
         const detail = reason.length > 0 ? reason.toString() : `code ${code}`;
         if (!wasReady) {
-          waiter.reject(new Error(`Gemini Live Translate closed before setup (${detail})`));
+          waiter.reject(new Error(`${this.displayName} closed before setup (${detail})`));
         }
         if (wasReady || !initial) {
-          this.scheduleReconnect(`Gemini Live Translate disconnected (${detail})`);
+          this.scheduleReconnect(`${this.displayName} disconnected (${detail})`);
         }
       });
     });
@@ -196,7 +215,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     if (audio.byteLength % 2 !== 0) {
       this.options.onEvent({
         type: "error",
-        message: "Gemini Live Translate received an incomplete PCM16 sample",
+        message: `${this.displayName} received an incomplete PCM16 sample`,
         retryable: false,
       });
       return;
@@ -251,7 +270,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     this.ending = true;
     const socket = this.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      throw new Error("Gemini Live Translate flush requires an open connection");
+      throw new Error(`${this.displayName} flush requires an open connection`);
     }
     if (this.pendingAudio.byteLength > 0) {
       // Send the real remainder — zero-padding looked like speech silence/noise.
@@ -273,8 +292,8 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     this.closed = true;
     this.clearReconnectTimer();
     this.clearGoAwayTimer();
-    this.setupWaiter?.reject(new Error("Gemini Live Translate closed during setup"));
-    this.rejectEndWaiters(new Error("Gemini Live Translate closed during flush"));
+    this.setupWaiter?.reject(new Error(`${this.displayName} closed during setup`));
+    this.rejectEndWaiters(new Error(`${this.displayName} closed during flush`));
 
     const socket = this.socket;
     this.socket = null;
@@ -301,13 +320,24 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
 
   private sendSetup(socket: WebSocket, waiter: Waiter): void {
     try {
+      if (this.mode === "transcribe") {
+        socket.send(JSON.stringify({
+          setup: {
+            model: `models/${this.model}`,
+            generationConfig: { responseModalities: ["TEXT"] },
+            inputAudioTranscription: { languageCodes: [] },
+          },
+        }));
+        return;
+      }
+
       // Transcription + VAD live on setup (BidiGenerateContentSetup). Google's
       // live-translate WS example nests transcription under generationConfig and
       // the runtime rejects that with 1007. Silence is tighter than Sarvam so
       // continuous commentary opens new caption lines on brief breaths.
       socket.send(JSON.stringify({
         setup: {
-          model: `models/${GEMINI_LIVE_TRANSLATE_MODEL}`,
+          model: `models/${this.model}`,
           inputAudioTranscription: {},
           outputAudioTranscription: {},
           sessionResumption: this.resumptionHandle
@@ -345,7 +375,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     } catch {
       this.options.onEvent({
         type: "warning",
-        message: "Gemini Live Translate returned a non-JSON streaming message",
+        message: `${this.displayName} returned a non-JSON streaming message`,
       });
       return;
     }
@@ -360,7 +390,8 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     }
     if (isRecord(payload.sessionResumptionUpdate)) {
       const update = payload.sessionResumptionUpdate;
-      this.resumptionHandle = update.resumable === true && typeof update.newHandle === "string"
+      this.resumptionHandle = this.supportsSessionResumption
+        && update.resumable === true && typeof update.newHandle === "string"
         ? update.newHandle
         : null;
       return;
@@ -368,7 +399,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     if (isRecord(payload.error)) {
       const message = typeof payload.error.message === "string"
         ? payload.error.message
-        : "Gemini Live Translate returned an error";
+        : `${this.displayName} returned an error`;
       if (!this.setupComplete) {
         this.setupWaiter?.reject(new Error(message));
         this.socket?.terminate();
@@ -381,7 +412,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     if (isRecord(payload.goAway)) {
       this.options.onEvent({
         type: "warning",
-        message: "Gemini Live Translate announced an upcoming disconnect",
+        message: `${this.displayName} announced an upcoming disconnect`,
       });
       this.scheduleGoAwayReconnect(socket, parseDurationMs(payload.goAway.timeLeft));
       return;
@@ -389,30 +420,43 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     if (!isRecord(payload.serverContent)) return;
 
     const content = payload.serverContent;
-    const input = readTranscription(content.inputTranscription);
-    if (input) this.handleInputTranscription(input.text, input.languageCode);
-    const output = readTranscription(content.outputTranscription);
-    if (output) this.handleOutputTranscription(output.text, output.languageCode);
+    if (this.mode === "transcribe") {
+      const interim = readTranscription(content.interimInputTranscription);
+      if (interim) this.handleInputTranscription(interim.text, interim.languageCode);
+      const final = readTranscription(content.inputTranscription);
+      if (final) this.handleInputTranscription(final.text, final.languageCode, true);
+    } else {
+      const input = readTranscription(content.inputTranscription);
+      if (input) this.handleInputTranscription(input.text, input.languageCode);
+      const output = readTranscription(content.outputTranscription);
+      if (output) this.handleOutputTranscription(output.text, output.languageCode);
+    }
     if (content.turnComplete === true) this.finalizeTurn();
   }
 
-  private handleInputTranscription(text: string, languageCode?: string): void {
+  private handleInputTranscription(
+    text: string,
+    languageCode?: string,
+    isFinal = false,
+  ): void {
     const relative = textAfterCommitted(text, this.committedSource);
-    if (!relative) return;
-    const merged = mergeStreamingText(this.sourceText, relative);
-    if (!merged || merged === this.sourceText) return;
+    if (!relative) {
+      if (isFinal && this.mode === "transcribe") this.finalizeTurn();
+      return;
+    }
+    const merged = isFinal ? relative : mergeStreamingText(this.sourceText, relative);
+    if (!merged) return;
+    const changed = merged !== this.sourceText;
     this.sourceText = merged;
     this.sourceLanguageCode = languageCode ?? this.sourceLanguageCode;
     this.markSpeechStarted();
-    this.options.onEvent({
-      type: "transcript",
-      text: this.sourceText,
-      timestampMs: this.lastAudioEndMs,
-      ...(this.turnId ? { turnId: this.turnId } : {}),
-      ...(this.sourceLanguageCode ? { languageCode: this.sourceLanguageCode } : {}),
-      isFinal: false,
-    });
-    this.emitTranslation(false);
+    if (isFinal && this.mode === "transcribe") {
+      this.finalizeTurn();
+      return;
+    }
+    if (!changed) return;
+    this.emitTranscript(false);
+    if (this.mode === "translate") this.emitTranslation(false);
     this.maybeSplitLongTurn();
   }
 
@@ -456,6 +500,18 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     });
   }
 
+  private emitTranscript(isFinal: boolean): void {
+    if (!this.sourceText) return;
+    this.options.onEvent({
+      type: "transcript",
+      text: this.sourceText,
+      timestampMs: this.lastAudioEndMs,
+      ...(this.turnId ? { turnId: this.turnId } : {}),
+      ...(this.sourceLanguageCode ? { languageCode: this.sourceLanguageCode } : {}),
+      isFinal,
+    });
+  }
+
   private emitTranslation(isFinal: boolean): void {
     if (!this.translatedText) return;
     if (!isFinal && this.translatedText === this.lastEmittedTranslation) return;
@@ -477,13 +533,14 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
    */
   private maybeSplitLongTurn(): void {
     if (!this.speechStarted || this.turnAudioStartMs === null) return;
-    if (!this.translatedText) return;
+    const captionText = this.mode === "transcribe" ? this.sourceText : this.translatedText;
+    if (!captionText) return;
     const turnMs = this.lastAudioEndMs - this.turnAudioStartMs;
     const softSplitMinMs = this.runtime.softSplitMinMs ?? GEMINI_SOFT_SPLIT_MIN_MS;
     const maxTurnMs = this.runtime.maxTurnMs ?? GEMINI_MAX_TURN_MS;
     if (turnMs < softSplitMinMs) return;
 
-    const sentence = splitCompletedSentence(this.translatedText);
+    const sentence = splitCompletedSentence(captionText);
     if (sentence) {
       this.commitSoftSplit(sentence.completed, sentence.remainder);
       return;
@@ -494,6 +551,29 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
   }
 
   private commitSoftSplit(completed: string, remainder: string): void {
+    if (this.mode === "transcribe") {
+      this.sourceText = completed;
+      this.emitTranscript(true);
+      if (this.speechStarted) {
+        this.options.onEvent({
+          type: "speech_end",
+          timestampMs: this.lastAudioEndMs,
+          ...(this.turnId ? { turnId: this.turnId } : {}),
+        });
+      }
+      this.committedSource = appendCommitted(this.committedSource, completed);
+      this.sourceText = remainder;
+      this.speechStarted = false;
+      this.turnId = null;
+      this.turnAudioStartMs = this.lastAudioEndMs;
+      this.awaitingTurn = true;
+      if (remainder) {
+        this.markSpeechStarted();
+        this.emitTranscript(false);
+      }
+      return;
+    }
+
     this.translatedText = completed;
     this.emitTranslation(true);
     if (this.speechStarted) {
@@ -522,7 +602,9 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
 
   private finalizeTurn(options: { providerComplete?: boolean } = {}): void {
     const providerComplete = options.providerComplete !== false;
-    if (this.translatedText) {
+    if (this.mode === "transcribe") {
+      this.emitTranscript(true);
+    } else if (this.translatedText) {
       this.emitTranslation(true);
       if (!providerComplete) {
         this.committedTranslated = appendCommitted(
@@ -533,7 +615,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     } else if (this.sourceText) {
       this.options.onEvent({
         type: "error",
-        message: "Gemini Live Translate completed without translated text",
+        message: `${this.displayName} completed without translated text`,
         retryable: true,
       });
     }
@@ -572,7 +654,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
       const waiter: Waiter = {
         timeout: setTimeout(() => {
           this.endWaiters.delete(waiter);
-          reject(new Error("Gemini Live Translate flush timed out waiting for completion"));
+          reject(new Error(`${this.displayName} flush timed out waiting for completion`));
         }, this.runtime.endTimeoutMs ?? END_TIMEOUT_MS),
         resolve: () => {
           clearTimeout(waiter.timeout);
@@ -610,7 +692,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     if (droppedBytes > 0) {
       this.options.onEvent({
         type: "warning",
-        message: "Gemini Live Translate reconnect buffer filled; oldest audio was dropped",
+        message: `${this.displayName} reconnect buffer filled; oldest audio was dropped`,
       });
     }
   }
@@ -679,7 +761,7 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
     } catch (error) {
       this.options.onEvent({
         type: "error",
-        message: `Gemini Live Translate could not send streaming data: ${asError(error).message}`,
+        message: `${this.displayName} could not send streaming data: ${asError(error).message}`,
         retryable: true,
       });
     }
@@ -703,6 +785,26 @@ export class GeminiLiveTranslateSession implements ProviderStreamSession {
       },
     });
     this.maybeSplitLongTurn();
+  }
+}
+
+export class GeminiLiveTranslateSession extends GeminiLiveSession {
+  constructor(
+    apiKey: string,
+    options: OpenProviderSessionOptions,
+    runtime: GeminiLiveRuntime = {},
+  ) {
+    super(apiKey, options, "translate", runtime);
+  }
+}
+
+export class GeminiLiveTranscribeSession extends GeminiLiveSession {
+  constructor(
+    apiKey: string,
+    options: OpenProviderSessionOptions,
+    runtime: GeminiLiveRuntime = {},
+  ) {
+    super(apiKey, options, "transcribe", runtime);
   }
 }
 

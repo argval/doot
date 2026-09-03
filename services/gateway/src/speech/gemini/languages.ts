@@ -1,12 +1,36 @@
 import {
   INTERNATIONAL_LANGUAGES,
+  SUPPORTED_LANGUAGES,
   type SupportedLanguage,
   type SupportedTargetLanguage,
 } from "@doot/protocol";
 
+export const GEMINI_TRANSCRIBE_LIVE_MODEL = "gemini-3.5-transcribe-live";
 export const GEMINI_LIVE_TRANSLATE_MODEL = "gemini-3.5-live-translate-preview";
-export const GEMINI_LIVE_TRANSLATE_WS =
+export const GEMINI_LIVE_WS =
   "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
+
+/** Gemini 3.5 Transcribe Live does not list these Doot protocol languages. */
+const GEMINI_TRANSCRIBE_UNSUPPORTED_LANGUAGES = new Set<SupportedLanguage>([
+  "ak",
+  "sq",
+  "eu",
+  "rw",
+  "su",
+  "zu",
+  "kok",
+  "ks",
+  "sa",
+  "sat",
+  "mni",
+  "brx",
+  "mai",
+  "doi",
+]);
+
+export const GEMINI_TRANSCRIBE_SOURCE_LANGUAGES = SUPPORTED_LANGUAGES.filter(
+  (language) => !GEMINI_TRANSCRIBE_UNSUPPORTED_LANGUAGES.has(language),
+);
 
 /** Indic languages Gemini Live Translate covers in addition to the international set. */
 const GEMINI_LIVE_INDIC_LANGUAGES = [

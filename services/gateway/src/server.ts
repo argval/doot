@@ -11,6 +11,7 @@ import {
 } from "./gateway.js";
 import { registerHistoryRoutes } from "./history.js";
 import { GeminiProvider } from "./speech/gemini/provider.js";
+import { GeminiTranscribeProvider } from "./speech/gemini/transcribe.js";
 import { MockProvider } from "./speech/mock/provider.js";
 import { ProviderRouter } from "./speech/router.js";
 import { SarvamProvider } from "./speech/sarvam/provider.js";
@@ -23,6 +24,7 @@ export function createProviderRouter(
 ): ProviderRouter {
   return new ProviderRouter([
     new SarvamProvider(credentials.sarvamApiKey),
+    new GeminiTranscribeProvider(credentials.geminiApiKey),
     new GeminiProvider(credentials.geminiApiKey),
     new MockProvider(),
   ]);

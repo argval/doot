@@ -14,7 +14,10 @@ import WebSocket from "ws";
 
 const FRAME_BYTES = 3_200;
 const FRAME_MS = 100;
-const GEMINI_EFFECTIVE_COST_PER_MINUTE_USD = 0.0368;
+const GEMINI_SPEECH_COST_PER_MINUTE_USD: Partial<Record<ProviderId, number>> = {
+  gemini: 0.0368,
+  "gemini-transcribe": 0.009,
+};
 
 interface BenchmarkOptions {
   audioPath: string;
@@ -79,9 +82,10 @@ function runBenchmark(options: BenchmarkOptions, audio: Buffer): Promise<Benchma
       clearTimeout(timeout);
       socket.close();
       const finalCaption = [...captions].reverse().find((caption) => caption.isFinal);
-      const estimatedCost = options.provider === "gemini"
-        ? Number(((durationMs / 60_000) * GEMINI_EFFECTIVE_COST_PER_MINUTE_USD).toFixed(6))
-        : null;
+      const costPerMinute = GEMINI_SPEECH_COST_PER_MINUTE_USD[options.provider];
+      const estimatedCost = costPerMinute === undefined
+        ? null
+        : Number(((durationMs / 60_000) * costPerMinute).toFixed(6));
       resolve({
         source: options.source,
         target: options.target,
@@ -201,7 +205,7 @@ function parseOptions(args: string[]): BenchmarkOptions {
 function usage(): never {
   throw new Error(
     "Usage: npm run benchmark:live -- --audio sample.pcm --source es --target en "
-    + "--provider gemini [--quality-notes \"manual assessment\"]",
+    + "--provider gemini-transcribe [--quality-notes \"manual assessment\"]",
   );
 }
 
