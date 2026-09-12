@@ -5,7 +5,7 @@ import { getCaptionRoute, getConnectionStatus, openAudioSettings } from "../lib/
 import { updatePrefs, type DesktopPrefs } from "../lib/prefs";
 
 export function SetupSection({ prefs, onComplete }: { prefs: DesktopPrefs; onComplete: () => void }) {
-  const [keys, setKeys] = useState({ sarvam: false, gemini: false });
+  const [keys, setKeys] = useState({ sarvam: false, gemini: false, speechmatics: false, openai: false });
   const [provider, setProvider] = useState("sarvam");
   const [key, setKey] = useState("");
   const [notice, setNotice] = useState("");
@@ -14,7 +14,7 @@ export function SetupSection({ prefs, onComplete }: { prefs: DesktopPrefs; onCom
   useEffect(() => {
     if (!desktop) return;
     let cancelled = false;
-    void invoke<{ sarvam: boolean; gemini: boolean }>("credential_status").then((value) => { if (!cancelled) setKeys(value); })
+    void invoke<typeof keys>("credential_status").then((value) => { if (!cancelled) setKeys(value); })
       .catch(() => { if (!cancelled) setNotice("Allow Doot to access its OS credential store."); });
     return () => { cancelled = true; };
   }, [desktop]);
@@ -31,8 +31,8 @@ export function SetupSection({ prefs, onComplete }: { prefs: DesktopPrefs; onCom
     <p className="settings-intro">Doot starts its caption service for you. Add your own provider keys, check audio permission, then choose languages on the floating overlay.</p>
     <p className="settings-section-label">Speech services</p>
     <section className="settings-group" aria-label="Speech services">
-      <div className="settings-row"><span><strong>Speech services</strong><em>Sarvam covers English and Indic speech. Gemini covers international routes. Some pairs need both keys.</em></span></div>
-      <label className="settings-row"><span><strong>Provider</strong></span><select value={provider} disabled={busy} onChange={(event) => { setProvider(event.target.value); setKey(""); }}><option value="sarvam">Sarvam{keys.sarvam ? " · Saved" : ""}</option><option value="gemini">Gemini{keys.gemini ? " · Saved" : ""}</option></select></label>
+      <div className="settings-row"><span><strong>Speech services</strong><em>Sarvam covers English and Indic speech. Gemini covers international routes. Speechmatics and OpenAI are available for comparison trials.</em></span></div>
+      <label className="settings-row"><span><strong>Provider</strong></span><select value={provider} disabled={busy} onChange={(event) => { setProvider(event.target.value); setKey(""); }}><option value="sarvam">Sarvam{keys.sarvam ? " · Saved" : ""}</option><option value="gemini">Gemini{keys.gemini ? " · Saved" : ""}</option><option value="speechmatics">Speechmatics{keys.speechmatics ? " · Saved" : ""}</option><option value="openai">OpenAI{keys.openai ? " · Saved" : ""}</option></select></label>
       <form className="settings-key-form" onSubmit={(event) => { event.preventDefault(); void save(); }}>
         <label>API key<input type="password" autoComplete="off" spellCheck={false} value={key} disabled={!desktop || busy} onChange={(event) => setKey(event.target.value)} placeholder="Stored in your OS credential store" /></label>
         <button disabled={!desktop || busy || !key.trim()} type="submit">Save key</button>
@@ -40,7 +40,7 @@ export function SetupSection({ prefs, onComplete }: { prefs: DesktopPrefs; onCom
     </section>
     <p className="settings-section-label">This computer</p>
     <div className="settings-history-actions">
-      <button disabled={!desktop || busy || !keys[provider as keyof typeof keys]} onClick={() => void save(true)}>Remove saved {provider === "sarvam" ? "Sarvam" : "Gemini"} key</button>
+      <button disabled={!desktop || busy || !keys[provider as keyof typeof keys]} onClick={() => void save(true)}>Remove saved {provider === "sarvam" ? "Sarvam" : provider === "gemini" ? "Gemini" : provider === "speechmatics" ? "Speechmatics" : "OpenAI"} key</button>
       <button disabled={!desktop || busy} onClick={() => { void openAudioSettings().catch((error: unknown) => setNotice(String(error))); }}>Open audio permissions</button>
       <button disabled={!desktop || busy} onClick={() => {
         setBusy(true);

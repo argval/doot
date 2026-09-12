@@ -17,5 +17,7 @@ export const config = {
   port: Number(process.env.GATEWAY_PORT ?? 8787),
   sarvamApiKey: env("SARVAM_API_KEY"),
   geminiApiKey: env("GEMINI_API_KEY"),
+  speechmaticsApiKey: env("SPEECHMATICS_API_KEY"),
+  openaiApiKey: env("OPENAI_API_KEY"),
   authToken: env("DOOT_GATEWAY_TOKEN"),
 };

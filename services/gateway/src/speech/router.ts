@@ -19,6 +19,8 @@ const SPEECH_NAMES: Record<ProviderId, string> = {
   sarvam: "Sarvam recognition",
   "gemini-transcribe": "Gemini Transcribe Live",
   gemini: "Gemini Live Translate",
+  speechmatics: "Speechmatics Realtime",
+  "openai-transcribe": "OpenAI GPT Live Transcribe",
   mock: "Demo captions (not speech recognition)",
 };
 

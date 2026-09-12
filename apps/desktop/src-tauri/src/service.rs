@@ -58,6 +58,8 @@ impl GatewayManager {
         let token = format!("{}{}", uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
         let sarvam = read_key("sarvam")?;
         let gemini = read_key("gemini")?;
+        let speechmatics = read_key("speechmatics")?;
+        let openai = read_key("openai")?;
         let mut command = Command::new(node);
         if cfg!(debug_assertions) {
             command.args(["--import", "tsx"]);
@@ -75,6 +77,8 @@ impl GatewayManager {
             "NODE_PATH",
             "SARVAM_API_KEY",
             "GEMINI_API_KEY",
+            "SPEECHMATICS_API_KEY",
+            "OPENAI_API_KEY",
             "DOOT_GATEWAY_TOKEN",
             "DOOT_ALLOW_UNAUTHENTICATED",
         ] {
@@ -86,7 +90,7 @@ impl GatewayManager {
         #[cfg(target_os = "windows")]
         command.creation_flags(0x08000000);
         let mut child = command.spawn().map_err(|_| "Could not start the bundled caption service. Reinstall Doot or check your development runtime.".to_string())?;
-        let startup = serde_json::json!({ "authToken": token, "dbPath": data.join("doot.db"), "migrationsFolder": migrations, "sarvamApiKey": sarvam, "geminiApiKey": gemini });
+        let startup = serde_json::json!({ "authToken": token, "dbPath": data.join("doot.db"), "migrationsFolder": migrations, "sarvamApiKey": sarvam, "geminiApiKey": gemini, "speechmaticsApiKey": speechmatics, "openaiApiKey": openai });
         child
             .stdin
             .as_mut()
@@ -173,7 +177,7 @@ fn gateway_paths(app: &AppHandle) -> Result<(PathBuf, PathBuf, PathBuf), String>
 }
 
 fn key_entry(provider: &str) -> Result<keyring::Entry, String> {
-    if !["sarvam", "gemini"].contains(&provider) {
+    if !["sarvam", "gemini", "speechmatics", "openai"].contains(&provider) {
         return Err("Unknown speech service".into());
     }
     keyring::Entry::new("app.doot.desktop", provider)
@@ -199,7 +203,7 @@ pub async fn gateway_connection(
 #[tauri::command]
 pub fn credential_status() -> Result<serde_json::Value, String> {
     Ok(
-        serde_json::json!({ "sarvam": read_key("sarvam")?.is_some(), "gemini": read_key("gemini")?.is_some() }),
+        serde_json::json!({ "sarvam": read_key("sarvam")?.is_some(), "gemini": read_key("gemini")?.is_some(), "speechmatics": read_key("speechmatics")?.is_some(), "openai": read_key("openai")?.is_some() }),
     )
 }
 

@@ -225,6 +225,8 @@ test("routes every supported live language through Sarvam", () => {
     sarvam: true,
     "gemini-transcribe": false,
     gemini: false,
+    speechmatics: false,
+    "openai-transcribe": false,
     mock: true,
   });
 });
