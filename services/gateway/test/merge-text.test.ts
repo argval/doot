@@ -38,3 +38,14 @@ test("keeps two copies of a word but drops a longer stutter before translation",
 test("collapses unspaced repeated characters so CJK finals are not echoed into MT", () => {
   assert.equal(collapseStutter("谢谢谢谢"), "谢谢");
 });
+
+test("keeps CJK sentence punctuation so Gemini soft-splits still fire", () => {
+  assert.equal(
+    collapseStutter("これは最初の文です。次の文です。"),
+    "これは最初の文です。次の文です。",
+  );
+  assert.equal(
+    collapseStutter("这是第一句话。这是第二句话。"),
+    "这是第一句话。这是第二句话。",
+  );
+});

@@ -57,8 +57,8 @@ function tokenize(text: string): string[] {
   if (!normalized) return [];
   if (/\s/.test(normalized)) return normalized.split(" ").filter(Boolean);
   const tokens: string[] = [];
-  for (const { segment, isWordLike } of wordSegmenter.segment(normalized)) {
-    if (isWordLike) tokens.push(segment);
+  for (const { segment } of wordSegmenter.segment(normalized)) {
+    if (segment) tokens.push(segment);
   }
   return tokens.length > 0 ? tokens : [normalized];
 }
