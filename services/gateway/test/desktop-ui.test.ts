@@ -77,6 +77,23 @@ test("language modes restore the last pair, preserve Auto→English, and bound r
   assert.deepEqual(malformed.lastTranslationPair, { source: "auto", target: "en" });
 });
 
+test("settled speaker turns tint the existing left bar without names", () => {
+  const html = renderToStaticMarkup(createElement(CaptionPanel, {
+    lines: [
+      { utteranceId: "s1", translatedText: "First speaker.", isActive: false, speakerTint: 2 },
+      { utteranceId: "s2", translatedText: "Live caption.", isActive: true },
+    ],
+    targetLanguage: "en",
+    error: null,
+    statusNotice: null,
+    placeholder: "Listening…",
+  }));
+  assert.match(html, /data-speaker="2"/);
+  assert.match(html, /class="caption-text caption-turn live"/);
+  assert.doesNotMatch(html, /data-speaker="2"[^>]*>Live caption/);
+  assert.doesNotMatch(html, />S1<|>Speaker /);
+});
+
 test("caption failures preserve readable turns and drafts do not flood live announcements", () => {
   const html = renderToStaticMarkup(createElement(CaptionPanel, {
     lines: [{ utteranceId: "turn-1", translatedText: "Keep this readable caption.", isActive: true }],

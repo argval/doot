@@ -12,7 +12,7 @@ import { isRecord } from "../../util.js";
 export const GEMINI_TEXT_TRANSLATE_MODEL = "gemini-2.5-flash";
 const GEMINI_TRANSLATE_URL =
   `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TEXT_TRANSLATE_MODEL}:generateContent`;
-const TRANSLATION_TIMEOUT_MS = 12_000;
+const TRANSLATION_TIMEOUT_MS = 2_000;
 
 export class GeminiTextTranslator implements TextTranslationProvider {
   id = "gemini";
@@ -54,7 +54,7 @@ export class GeminiTextTranslator implements TextTranslationProvider {
             maxOutputTokens: 1024,
           },
         }),
-        signal: AbortSignal.timeout(TRANSLATION_TIMEOUT_MS),
+        signal: AbortSignal.timeout(request.deadlineMs ?? TRANSLATION_TIMEOUT_MS),
       });
       const body: unknown = await response.json().catch(() => null);
       if (!response.ok) {

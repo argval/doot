@@ -29,6 +29,9 @@
   --caption-line-height: 1.25;
   --caption-letter-spacing: -0.015em;
   --caption-weight: 510;
+  --caption-speaker-1: var(--overlay-accent);
+  --caption-speaker-2: var(--overlay-ink);
+  --caption-speaker-3: var(--brand-olive);
 
   --settings-ink: var(--brand-ink);
   --settings-ink-secondary: #62655b;

@@ -13,10 +13,14 @@ export interface CaptionState {
   active: DesktopCaptionEvent | null;
 }
 
+export type SpeakerTint = 1 | 2 | 3;
+
 export interface VisibleCaptionLine {
   utteranceId: string;
   translatedText: string;
   isActive: boolean;
+  /** Settled diarized lines only. The live line stays citron via `.live`. */
+  speakerTint?: SpeakerTint;
 }
 
 export const EMPTY_CAPTION_STATE: CaptionState = {
@@ -89,11 +93,27 @@ function toVisibleLine(
   utterance: CaptionEvent,
   translatedText: string,
 ): VisibleCaptionLine {
+  const isActive = state.active?.utteranceId === utterance.utteranceId;
+  const speakerTint = speakerTintFor(utterance.speakerId, isActive);
   return {
     utteranceId: utterance.utteranceId,
     translatedText,
-    isActive: state.active?.utteranceId === utterance.utteranceId,
+    isActive,
+    ...(speakerTint ? { speakerTint } : {}),
   };
+}
+
+/** Map a provider speaker label onto the three overlay bar tints. Live lines stay citron. */
+export function speakerTintFor(
+  speakerId: string | undefined,
+  isActive: boolean,
+): SpeakerTint | undefined {
+  if (isActive || !speakerId) return undefined;
+  let hash = 0;
+  for (let index = 0; index < speakerId.length; index += 1) {
+    hash = (hash * 31 + speakerId.charCodeAt(index)) >>> 0;
+  }
+  return ((hash % 3) + 1) as SpeakerTint;
 }
 
 function revisionFor(state: CaptionState, utteranceId: string): number {

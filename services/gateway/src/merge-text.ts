@@ -1,3 +1,5 @@
+const wordSegmenter = new Intl.Segmenter(undefined, { granularity: "word" });
+
 export function mergeStreamingText(existing: string, incoming: string): string {
   const normalized = incoming.replace(/\s+/g, " ").trim();
   if (!existing) return collapseStutter(normalized);
@@ -10,12 +12,12 @@ export function mergeStreamingText(existing: string, incoming: string): string {
   if (containsPhrase(existing, normalized)) return collapseStutter(existing);
   if (containsPhrase(normalized, existing)) return collapseStutter(normalized);
 
-  const existingWords = existing.split(/\s+/);
-  const incomingWords = normalized.split(/\s+/);
+  const existingWords = tokenize(existing);
+  const incomingWords = tokenize(normalized);
   if (hasWordPrefix(incomingWords, existingWords)) return collapseStutter(normalized);
   if (hasWordPrefix(existingWords, incomingWords)) return collapseStutter(existing);
 
-  // Providers sometimes replace a cumulative partial after correcting a word.
+  // Providers sometimes replace a cumulative snapshot after correcting a word.
   // A substantial shared prefix identifies that as a revision, not new speech.
   if (hasSubstantialSharedPrefix(existingWords, incomingWords)) {
     return collapseStutter(normalized);
@@ -24,30 +26,22 @@ export function mergeStreamingText(existing: string, incoming: string): string {
   for (let size = Math.min(incomingWords.length, existingWords.length); size >= 1; size -= 1) {
     if (sameWords(existingWords.slice(-size), incomingWords.slice(0, size))) {
       if (size === incomingWords.length) return collapseStutter(existing);
-      return collapseStutter([...existingWords, ...incomingWords.slice(size)].join(" "));
+      return collapseStutter(joinTokens(existing, [...existingWords, ...incomingWords.slice(size)]));
     }
   }
 
   return collapseStutter(`${existing} ${normalized}`);
 }
 
-function containsPhrase(haystack: string, needle: string): boolean {
-  const hayWords = haystack.split(/\s+/);
-  const needleWords = needle.split(/\s+/);
-  if (needleWords.length === 0 || needleWords.length > hayWords.length) return false;
-  for (let start = 0; start <= hayWords.length - needleWords.length; start += 1) {
-    if (sameWords(hayWords.slice(start, start + needleWords.length), needleWords)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function collapseStutter(text: string): string {
-  const words = text.split(/\s+/).filter(Boolean);
-  if (words.length < 2) return words.join(" ");
+/** Collapse trailing/internal repeats before translation so MT does not echo stutters. */
+export function collapseStutter(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  const words = collapseRepeatedTokens(tokenize(normalized));
+  if (words.length < 2) return joinTokens(normalized, words);
+  const spaced = /\s/.test(normalized);
   let end = words.length;
-  for (let n = Math.min(8, Math.floor(end / 2)); n >= 2; n -= 1) {
+  for (let n = Math.min(8, Math.floor(end / 2)); n >= (spaced ? 2 : 1); n -= 1) {
     while (
       end >= 2 * n
       && sameWords(words.slice(end - n, end), words.slice(end - 2 * n, end - n))
@@ -55,7 +49,53 @@ function collapseStutter(text: string): string {
       end -= n;
     }
   }
-  return words.slice(0, end).join(" ");
+  return joinTokens(normalized, words.slice(0, end));
+}
+
+function tokenize(text: string): string[] {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) return [];
+  if (/\s/.test(normalized)) return normalized.split(" ").filter(Boolean);
+  const tokens: string[] = [];
+  for (const { segment } of wordSegmenter.segment(normalized)) {
+    if (segment) tokens.push(segment);
+  }
+  return tokens.length > 0 ? tokens : [normalized];
+}
+
+function joinTokens(sample: string, tokens: string[]): string {
+  if (tokens.length === 0) return "";
+  return /\s/.test(sample.trim()) ? tokens.join(" ") : tokens.join("");
+}
+
+function collapseRepeatedTokens(words: string[]): string[] {
+  const collapsed: string[] = [];
+  for (const word of words) {
+    const last = collapsed.at(-1);
+    const previous = collapsed.at(-2);
+    if (
+      last
+      && previous
+      && wordsEquivalent(last, word)
+      && wordsEquivalent(previous, word)
+    ) {
+      continue;
+    }
+    collapsed.push(word);
+  }
+  return collapsed;
+}
+
+function containsPhrase(haystack: string, needle: string): boolean {
+  const hayWords = tokenize(haystack);
+  const needleWords = tokenize(needle);
+  if (needleWords.length === 0 || needleWords.length > hayWords.length) return false;
+  for (let start = 0; start <= hayWords.length - needleWords.length; start += 1) {
+    if (sameWords(hayWords.slice(start, start + needleWords.length), needleWords)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function hasWordPrefix(words: string[], prefix: string[]): boolean {

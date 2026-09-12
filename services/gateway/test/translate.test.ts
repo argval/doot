@@ -35,6 +35,29 @@ test("sends code-mixed text and numbers to Mayura with automatic detection", asy
   }]);
 });
 
+test("draft urgency skips the slow Sarvam fallback", async () => {
+  const models: unknown[] = [];
+  const fetcher: typeof fetch = async (_input, init) => {
+    const rawBody = init?.body;
+    if (typeof rawBody !== "string") throw new Error("Expected JSON request body");
+    const body = JSON.parse(rawBody) as Record<string, unknown>;
+    models.push(body.model);
+    return Response.json({ message: "unsupported mode" }, { status: 422 });
+  };
+  const translator = new SarvamTextTranslator("test-key", fetcher);
+
+  await assert.rejects(
+    translator.translate({
+      text: "mixed text",
+      source: "ur",
+      target: "hi",
+      urgency: "draft",
+      deadlineMs: 1_400,
+    }),
+  );
+  assert.deepEqual(models, ["mayura:v1"]);
+});
+
 test("falls back to the broad Sarvam translation model when Mayura rejects input", async () => {
   const models: unknown[] = [];
   const fetcher: typeof fetch = async (_input, init) => {

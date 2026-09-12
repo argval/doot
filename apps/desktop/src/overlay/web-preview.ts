@@ -6,11 +6,13 @@ const PREVIEW_LINES: readonly VisibleCaptionLine[] = [
     utteranceId: "preview-1",
     translatedText: "Earlier turns stay on their own lines, a little quieter.",
     isActive: false,
+    speakerTint: 2,
   },
   {
     utteranceId: "preview-2",
     translatedText: "A new speaker or long pause starts the next caption.",
     isActive: false,
+    speakerTint: 3,
   },
   {
     utteranceId: "preview-3",

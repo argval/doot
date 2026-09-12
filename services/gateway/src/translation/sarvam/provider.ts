@@ -11,7 +11,7 @@ import {
 } from "./languages.js";
 
 const SARVAM_TRANSLATE_URL = "https://api.sarvam.ai/translate";
-const TRANSLATION_TIMEOUT_MS = 12_000;
+const TRANSLATION_TIMEOUT_MS = 2_000;
 
 export class SarvamTextTranslator implements TextTranslationProvider {
   id = "sarvam";
@@ -38,23 +38,33 @@ export class SarvamTextTranslator implements TextTranslationProvider {
     if (!this.apiKey) throw new Error("Sarvam translation is not configured");
 
     const targetLanguageCode = toSarvamTranslationLanguageCode(request.target);
+    const startedAt = Date.now();
+    const deadlineMs = request.deadlineMs ?? TRANSLATION_TIMEOUT_MS;
     const primary = await this.requestTranslation({
       text,
       targetLanguageCode,
       model: "mayura:v1",
       mode: "modern-colloquial",
+      deadlineMs,
     });
     if (primary.ok) return primary.text;
 
     if (primary.status !== 400 && primary.status !== 422) {
       throw new Error(primary.message);
     }
+    if (request.urgency === "draft") {
+      throw new Error(primary.message);
+    }
+
+    const remainingMs = deadlineMs - (Date.now() - startedAt);
+    if (remainingMs < 200) throw new Error(primary.message);
 
     const fallback = await this.requestTranslation({
       text,
       targetLanguageCode,
       model: "sarvam-translate:v1",
       mode: "formal",
+      deadlineMs: remainingMs,
     });
     if (fallback.ok) return fallback.text;
     throw new Error(fallback.message);
@@ -65,6 +75,7 @@ export class SarvamTextTranslator implements TextTranslationProvider {
     targetLanguageCode: string;
     model: "mayura:v1" | "sarvam-translate:v1";
     mode: "modern-colloquial" | "formal";
+    deadlineMs: number;
   }): Promise<TranslationResult> {
     try {
       const response = await this.fetcher(SARVAM_TRANSLATE_URL, {
@@ -81,7 +92,7 @@ export class SarvamTextTranslator implements TextTranslationProvider {
           mode: options.mode,
           output_script: "fully-native",
         }),
-        signal: AbortSignal.timeout(TRANSLATION_TIMEOUT_MS),
+        signal: AbortSignal.timeout(options.deadlineMs),
       });
 
       const body: unknown = await response.json().catch(() => null);

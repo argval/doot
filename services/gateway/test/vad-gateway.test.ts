@@ -491,6 +491,161 @@ test("keeps only the latest draft queued while translation is in flight", async 
   }
 });
 
+test("collapses stuttered source before calling text translation", async () => {
+  const harness = await createHarness();
+  try {
+    const stream = harness.provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 100, turnId: "turn-stutter" });
+    stream.emit({
+      type: "transcript",
+      text: "go go go to the store",
+      timestampMs: 150,
+      turnId: "turn-stutter",
+      isFinal: false,
+    });
+    await waitFor(() => harness.translator.requests.length === 1 ? true : undefined);
+    assert.equal(harness.translator.requests[0]?.text, "go go to the store");
+    assert.equal(harness.translator.requests[0]?.urgency, "draft");
+    assert.equal(harness.translator.requests[0]?.deadlineMs, 1_400);
+    const caption = await harness.client.waitForMessage((message) => (
+      message.type === "caption" && message.translatedText === "English: go go to the store"
+    ));
+    assert.equal(caption.type, "caption");
+    assert.equal(caption.sourceText, "go go to the store");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("opens a new utterance when the speaker changes on the same provider turn", async () => {
+  const harness = await createHarness();
+  try {
+    const stream = harness.provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 100, turnId: "turn-a", speakerId: "S1" });
+    stream.emit({
+      type: "transcript",
+      text: "hello from one",
+      timestampMs: 150,
+      turnId: "turn-a",
+      speakerId: "S1",
+      isFinal: false,
+    });
+    const first = await harness.client.waitForMessage((message) => (
+      message.type === "caption" && message.translatedText === "English: hello from one"
+    ));
+    stream.emit({
+      type: "transcript",
+      text: "hello from two",
+      timestampMs: 250,
+      turnId: "turn-a",
+      speakerId: "S2",
+      isFinal: false,
+    });
+    const second = await harness.client.waitForMessage((message) => (
+      message.type === "caption" && message.translatedText === "English: hello from two"
+    ));
+    assert.equal(first.type, "caption");
+    assert.equal(second.type, "caption");
+    assert.notEqual(first.utteranceId, second.utteranceId);
+    assert.equal(first.speakerId, "S1");
+    assert.equal(second.speakerId, "S2");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("does not split a turn on unknown speaker labels", async () => {
+  const harness = await createHarness();
+  try {
+    const stream = harness.provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 100, turnId: "turn-uu", speakerId: "S1" });
+    stream.emit({
+      type: "transcript",
+      text: "known speaker",
+      timestampMs: 150,
+      turnId: "turn-uu",
+      speakerId: "S1",
+      isFinal: false,
+    });
+    const first = await harness.client.waitForMessage((message) => (
+      message.type === "caption" && message.sourceText === "known speaker"
+    ));
+    stream.emit({
+      type: "transcript",
+      text: "known speaker still talking",
+      timestampMs: 220,
+      turnId: "turn-uu",
+      speakerId: "UU",
+      isFinal: false,
+    });
+    const second = await harness.client.waitForMessage((message) => (
+      message.type === "caption" && message.sourceText === "known speaker still talking"
+    ));
+    assert.equal(first.type, "caption");
+    assert.equal(second.type, "caption");
+    assert.equal(first.utteranceId, second.utteranceId);
+    assert.equal(second.speakerId, "S1");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("flushes a draft translation as soon as speech ends", async () => {
+  const provider = new ControlledProvider();
+  const translator = new DeferredTranslator();
+  const app = await buildServer(
+    new ProviderRouter([provider]),
+    asTranslationRouter((request) => translator.translate(request)),
+    { utteranceGraceMs: 2_000 },
+  );
+  const address = await app.listen({ host: "127.0.0.1", port: 0 });
+  const client = await RealtimeClient.connect(
+    address.replace("http", "ws") + "/v1/realtime",
+  );
+
+  try {
+    client.send({
+      type: "start_session",
+      sessionId: "speech-end-flush",
+      sourceLanguage: "kn",
+      targetLanguage: "en",
+      provider: "mock",
+      sampleRate: 16_000,
+      channels: 1,
+    });
+    await client.waitForMessage((message) => message.type === "session_started");
+    const stream = provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 100, turnId: "turn-flush" });
+    stream.emit({
+      type: "transcript",
+      text: "hello there",
+      timestampMs: 150,
+      turnId: "turn-flush",
+      isFinal: false,
+    });
+    await waitFor(() => translator.requests.length === 1 ? true : undefined);
+    stream.emit({
+      type: "transcript",
+      text: "hello there friend",
+      timestampMs: 220,
+      turnId: "turn-flush",
+      isFinal: false,
+    });
+    stream.emit({ type: "speech_end", timestampMs: 240, turnId: "turn-flush" });
+    await delay(20);
+    assert.equal(translator.requests.length, 1);
+    translator.resolveNext("hi");
+    await waitFor(() => translator.requests.length === 2 ? true : undefined);
+    assert.equal(translator.requests[1]?.text, "hello there friend");
+    assert.equal(translator.requests[1]?.urgency, "draft");
+    assert.equal(translator.requests[1]?.deadlineMs, 1_400);
+  } finally {
+    translator.resolveNext("cleanup");
+    await client.close();
+    await app.close();
+  }
+});
+
 test("waits for an in-flight draft before finalizing the same source text", async () => {
   const provider = new ControlledProvider();
   const translator = new DeferredTranslator();

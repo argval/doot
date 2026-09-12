@@ -57,6 +57,7 @@ const PREVIEW_LATIN: readonly VisibleCaptionLine[] = [
     utteranceId: "settings-preview-1",
     translatedText: "Earlier turns stay on their own lines, a little quieter.",
     isActive: false,
+    speakerTint: 2,
   },
   {
     utteranceId: "settings-preview-2",

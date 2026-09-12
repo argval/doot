@@ -31,12 +31,17 @@ import {
   type TranslateText,
 } from "./translation/contract.js";
 import { isRecord } from "./util.js";
-import { mergeStreamingText } from "./merge-text.js";
+import { mergeStreamingText, collapseStutter } from "./merge-text.js";
 import type { TranslationRouter } from "./translation/router.js";
 
 const maxAudioChunkBytes = 256 * 1024;
 const maxBase64Length = Math.ceil(maxAudioChunkBytes / 3) * 4;
 const MAX_COMPLETED_PROVIDER_TURNS = 32;
+const DRAFT_TRANSLATE_MS = 40;
+const DRAFT_MAX_WAIT_MS = 160;
+const PENDING_FINAL_GRACE_MS = 800;
+const DRAFT_DEADLINE_MS = 1_400;
+const FINAL_DEADLINE_MS = 2_000;
 
 export interface RealtimeGatewayOptions {
   db?: DootDb;
@@ -62,6 +67,7 @@ interface ActiveUtterance {
   draftSourceText: string | null;
   draftTranslatedText: string | null;
   nativeTranslatedText: string | null;
+  speakerId: string | null;
 }
 
 interface SessionState {
@@ -353,34 +359,37 @@ function handleProviderEvent(
 
   switch (event.type) {
     case "speech_start": {
-      if (isCompletedProviderTurn(session, event.turnId)) return;
-      if (event.turnId && session.settlingUtterances.has(event.turnId)) return;
+      if (isCompletedProviderTurn(session, event.turnId, event.speakerId)) return;
+      const startKey = utteranceLookupKey(event.turnId, event.speakerId);
+      if (startKey && session.settlingUtterances.has(startKey)) return;
       const activeTurnId = session.activeUtterance?.providerTurnId;
       const changedTurn = Boolean(
         event.turnId && activeTurnId && event.turnId !== activeTurnId,
       );
-      if (session.activeUtterance && (!session.speechActive || changedTurn)) {
+      const changedSpeaker = speakerChanged(session.activeUtterance?.speakerId, event.speakerId);
+      if (session.activeUtterance && (!session.speechActive || changedTurn || changedSpeaker)) {
         settleActiveUtterance(translator, options, socket, session);
       }
       session.speechActive = true;
       session.pendingSpeechStartMs = event.timestampMs;
       session.pendingSpeechTurnId = event.turnId ?? null;
       if (event.turnId && !session.activeUtterance) {
-        openActiveUtterance(session, event.timestampMs, event.turnId);
+        openActiveUtterance(session, event.timestampMs, event.turnId, event.speakerId);
       }
       cancelGraceTimer(session.activeUtterance);
       return;
     }
     case "speech_end": {
-      if (isCompletedProviderTurn(session, event.turnId)) {
+      if (isCompletedProviderTurn(session, event.turnId, event.speakerId)) {
         if (!session.activeUtterance && !session.pendingSpeechTurnId) {
           session.speechActive = false;
         }
         return;
       }
-      const settling = event.turnId ? session.settlingUtterances.get(event.turnId) : undefined;
+      const settling = findSettlingUtterance(session, event.turnId, event.speakerId);
       if (settling) {
         settling.endMs = Math.max(settling.endMs, event.timestampMs);
+        flushDraftTranslation(translator, socket, session, settling);
         return;
       }
       if (
@@ -394,10 +403,12 @@ function handleProviderEvent(
           session.activeUtterance.endMs,
           event.timestampMs,
         );
-        // A provider-declared pending final may correct the partial. This
-        // deadline delays only sealing that line, never new speech or drafts.
+        assignSpeaker(session.activeUtterance, event.speakerId);
+        // Flush MT as soon as speech stops so captions land inside 1–2s.
+        // A pending final may still correct the source; that only delays sealing.
+        flushDraftTranslation(translator, socket, session, session.activeUtterance);
         scheduleGraceFinalization(translator, options, socket, session, session.activeUtterance,
-          event.finalTranscriptPending ? 2_000 : options.utteranceGraceMs);
+          event.finalTranscriptPending ? PENDING_FINAL_GRACE_MS : options.utteranceGraceMs);
       }
       return;
     }
@@ -409,9 +420,7 @@ function handleProviderEvent(
         session,
         event,
       );
-      const utterance = event.turnId
-        ? session.settlingUtterances.get(event.turnId) ?? session.activeUtterance
-        : session.activeUtterance;
+      const utterance = findUtterance(session, event.turnId, event.speakerId);
       if (
         accepted
         && event.isFinal
@@ -465,11 +474,11 @@ function updateActiveUtterance(
   session: SessionState,
   event: Extract<ProviderStreamEvent, { type: "transcript" }>,
 ): boolean {
-  const transcript = normalizeTranscript(event.text);
+  const transcript = collapseStutter(normalizeTranscript(event.text));
   if (!transcript) return false;
-  if (isCompletedProviderTurn(session, event.turnId)) return false;
+  if (isCompletedProviderTurn(session, event.turnId, event.speakerId)) return false;
 
-  let utterance = (event.turnId && session.settlingUtterances.get(event.turnId)) || session.activeUtterance;
+  let utterance = findUtterance(session, event.turnId, event.speakerId);
   if (
     utterance
     && event.turnId
@@ -479,16 +488,21 @@ function updateActiveUtterance(
     settleActiveUtterance(translator, options, socket, session);
     utterance = null;
   }
+  if (utterance && speakerChanged(utterance.speakerId, event.speakerId)) {
+    settleActiveUtterance(translator, options, socket, session);
+    utterance = null;
+  }
   if (!utterance) {
-    utterance = openActiveUtterance(session, event.timestampMs, event.turnId);
+    utterance = openActiveUtterance(session, event.timestampMs, event.turnId, event.speakerId);
   } else if (!utterance.providerTurnId && event.turnId) {
     utterance.providerTurnId = event.turnId;
   }
+  assignSpeaker(utterance, event.speakerId);
 
   // Realtime `transcript.final` is the provider's authoritative complete
   // utterance, whereas partials can be overlapping incremental fragments.
   const mergedText = event.isFinal
-    ? transcript
+    ? collapseStutter(transcript)
     : mergeStreamingText(utterance.sourceText, transcript);
   utterance.endMs = Math.max(utterance.endMs, event.timestampMs);
   if (mergedText === utterance.sourceText) return true;
@@ -534,6 +548,7 @@ function openActiveUtterance(
   session: SessionState,
   timestampMs: number,
   providerTurnId?: string,
+  speakerId?: string,
 ): ActiveUtterance {
   const sequence = session.nextSequence;
   session.nextSequence += 1;
@@ -561,6 +576,7 @@ function openActiveUtterance(
     draftSourceText: null,
     draftTranslatedText: null,
     nativeTranslatedText: null,
+    speakerId: knownSpeakerId(speakerId),
   };
   session.activeUtterance = utterance;
   if (pendingStartMatches) {
@@ -577,11 +593,11 @@ function updateNativeTranslation(
   session: SessionState,
   event: Extract<ProviderStreamEvent, { type: "translation" }>,
 ): void {
-  const translated = normalizeTranscript(event.text);
+  const translated = collapseStutter(normalizeTranscript(event.text));
   if (!translated) return;
-  if (isCompletedProviderTurn(session, event.turnId)) return;
+  if (isCompletedProviderTurn(session, event.turnId, event.speakerId)) return;
 
-  let utterance = (event.turnId && session.settlingUtterances.get(event.turnId)) || session.activeUtterance;
+  let utterance = findUtterance(session, event.turnId, event.speakerId);
   if (
     utterance
     && event.turnId
@@ -591,14 +607,18 @@ function updateNativeTranslation(
     settleActiveUtterance(translator, options, socket, session);
     utterance = null;
   }
+  if (utterance && speakerChanged(utterance.speakerId, event.speakerId)) {
+    settleActiveUtterance(translator, options, socket, session);
+    utterance = null;
+  }
   if (!utterance) {
     // Native providers (Gemini) can emit translated text before source text.
-    utterance = openActiveUtterance(session, event.timestampMs, event.turnId);
+    utterance = openActiveUtterance(session, event.timestampMs, event.turnId, event.speakerId);
   } else if (!utterance.providerTurnId && event.turnId) {
     utterance.providerTurnId = event.turnId;
   }
+  assignSpeaker(utterance, event.speakerId);
 
-  // Native translation events are provider-normalized cumulative snapshots.
   const mergedText = translated;
   utterance.endMs = Math.max(utterance.endMs, event.timestampMs);
   if (mergedText !== utterance.nativeTranslatedText) {
@@ -624,15 +644,17 @@ function updateNativeTranslation(
   }
 }
 
-const DRAFT_TRANSLATE_MS = 120;
-const DRAFT_MAX_WAIT_MS = 450;
-
 function scheduleDraftTranslation(
   translator: TranslateText,
   socket: WebSocket,
   session: SessionState,
   utterance: ActiveUtterance,
 ): void {
+  const firstDraft = !utterance.draftInFlight && utterance.draftSourceText === null;
+  if (firstDraft || !session.speechActive) {
+    flushDraftTranslation(translator, socket, session, utterance);
+    return;
+  }
   if (utterance.draftTimer) clearTimeout(utterance.draftTimer);
   utterance.draftTimer = setTimeout(() => {
     utterance.draftTimer = null;
@@ -641,7 +663,7 @@ function scheduleDraftTranslation(
   }, DRAFT_TRANSLATE_MS);
 
   // Continuous speech keeps resetting the trailing timer; force a draft at least
-  // this often so English updates without waiting for a pause.
+  // this often so captions update without waiting for a pause.
   if (!utterance.draftMaxWaitTimer) {
     utterance.draftMaxWaitTimer = setTimeout(() => {
       utterance.draftMaxWaitTimer = null;
@@ -652,6 +674,20 @@ function scheduleDraftTranslation(
       queueDraftTranslation(translator, socket, session, utterance);
     }, DRAFT_MAX_WAIT_MS);
   }
+}
+
+function flushDraftTranslation(
+  translator: TranslateText,
+  socket: WebSocket,
+  session: SessionState,
+  utterance: ActiveUtterance,
+): void {
+  if (utterance.draftTimer) {
+    clearTimeout(utterance.draftTimer);
+    utterance.draftTimer = null;
+  }
+  clearDraftMaxWait(utterance);
+  queueDraftTranslation(translator, socket, session, utterance);
 }
 
 function clearDraftMaxWait(utterance: ActiveUtterance): void {
@@ -668,7 +704,8 @@ async function runDraftTranslation(
 ): Promise<void> {
   utterance.draftInFlight = true;
   utterance.draftPending = false;
-  const sourceText = utterance.sourceText;
+  const sourceText = collapseStutter(utterance.sourceText);
+  utterance.sourceText = sourceText;
   utterance.draftInFlightSourceText = sourceText;
   const request = session.request;
   let translatedText: string | null = null;
@@ -677,6 +714,8 @@ async function runDraftTranslation(
       text: sourceText,
       source: request.sourceLanguage,
       target: request.targetLanguage,
+      urgency: "draft",
+      deadlineMs: DRAFT_DEADLINE_MS,
     });
   } catch {
     // Draft misses are fine; the final pass still reports translation errors.
@@ -684,6 +723,8 @@ async function runDraftTranslation(
     utterance.draftInFlight = false;
     utterance.draftInFlightSourceText = null;
   }
+
+  if (translatedText) translatedText = collapseStutter(translatedText);
 
   if (
     translatedText === null
@@ -748,9 +789,11 @@ function queueDraftTranslation(
 }
 
 function isLiveUtterance(session: SessionState, utterance: ActiveUtterance): boolean {
-  return session.activeUtterance === utterance
-    || (utterance.providerTurnId !== null
-      && session.settlingUtterances.get(utterance.providerTurnId) === utterance);
+  if (session.activeUtterance === utterance) return true;
+  for (const settling of session.settlingUtterances.values()) {
+    if (settling === utterance) return true;
+  }
+  return false;
 }
 
 /** Keep late provider finals addressable without blocking the next speech interval. */
@@ -766,7 +809,9 @@ function settleActiveUtterance(
     void finalizeActiveUtterance(translator, socket, session);
     return;
   }
-  session.settlingUtterances.set(utterance.providerTurnId, utterance);
+  const key = utteranceLookupKey(utterance.providerTurnId, utterance.speakerId)
+    ?? utterance.providerTurnId;
+  session.settlingUtterances.set(key, utterance);
   session.activeUtterance = null;
   if (!utterance.graceTimer) scheduleGraceFinalization(translator, options, socket, session, utterance);
   // Bound memory even if a provider sends many starts without finalizing.
@@ -801,11 +846,18 @@ function finalizeActiveUtterance(
   if (!utterance) return session.pendingFinalizations;
 
   if (session.activeUtterance === utterance) session.activeUtterance = null;
-  if (utterance.providerTurnId) {
-    session.settlingUtterances.delete(utterance.providerTurnId);
-    rememberCompletedProviderTurn(session, utterance.providerTurnId);
+  const completedKey = utteranceLookupKey(utterance.providerTurnId, utterance.speakerId)
+    ?? utterance.providerTurnId;
+  if (completedKey) {
+    session.settlingUtterances.delete(completedKey);
+    if (utterance.providerTurnId) session.settlingUtterances.delete(utterance.providerTurnId);
+    rememberCompletedProviderTurn(session, completedKey);
   }
   clearUtteranceTimers(utterance);
+  utterance.sourceText = collapseStutter(utterance.sourceText);
+  if (utterance.nativeTranslatedText) {
+    utterance.nativeTranslatedText = collapseStutter(utterance.nativeTranslatedText);
+  }
   if (!utterance.sourceText && !utterance.nativeTranslatedText) return session.pendingFinalizations;
   session.providerSession?.commitAudioThrough(utterance.endMs);
   const request = session.request;
@@ -832,6 +884,8 @@ function finalizeActiveUtterance(
             text: utterance.sourceText,
             source: request.sourceLanguage,
             target: request.targetLanguage,
+            urgency: "final",
+            deadlineMs: FINAL_DEADLINE_MS,
           });
         } catch (error) {
           if (!session.closed) {
@@ -848,6 +902,7 @@ function finalizeActiveUtterance(
         }
       }
     }
+    if (translatedText) translatedText = collapseStutter(translatedText);
     if (session.closed) return;
     queueFinalizedCaption(session, utterance, translatedText);
     if (session.closed) return;
@@ -992,6 +1047,7 @@ function sendCaption(
     startMs: utterance.startMs,
     endMs: utterance.endMs,
     provider: session.providerId,
+    ...(utterance.speakerId ? { speakerId: utterance.speakerId } : {}),
   });
 }
 
@@ -999,10 +1055,58 @@ function normalizeTranscript(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function knownSpeakerId(speakerId: string | undefined): string | null {
+  if (!speakerId) return null;
+  const normalized = speakerId.trim();
+  if (!normalized || normalized === "UU" || normalized.toLowerCase() === "unknown") return null;
+  return normalized;
+}
+
+function speakerChanged(current: string | null | undefined, incoming: string | undefined): boolean {
+  const next = knownSpeakerId(incoming);
+  return Boolean(current && next && current !== next);
+}
+
+function assignSpeaker(utterance: ActiveUtterance, speakerId: string | undefined): void {
+  const next = knownSpeakerId(speakerId);
+  if (next) utterance.speakerId = next;
+}
+
+function utteranceLookupKey(
+  turnId: string | null | undefined,
+  speakerId: string | null | undefined,
+): string | undefined {
+  if (!turnId) return undefined;
+  const speaker = knownSpeakerId(speakerId ?? undefined);
+  return speaker ? `${turnId}:${speaker}` : turnId;
+}
+
+function findSettlingUtterance(
+  session: SessionState,
+  turnId: string | undefined,
+  speakerId: string | undefined,
+): ActiveUtterance | undefined {
+  const key = utteranceLookupKey(turnId, speakerId);
+  if (key && session.settlingUtterances.has(key)) return session.settlingUtterances.get(key);
+  if (turnId && session.settlingUtterances.has(turnId)) return session.settlingUtterances.get(turnId);
+  return undefined;
+}
+
+function findUtterance(
+  session: SessionState,
+  turnId: string | undefined,
+  speakerId: string | undefined,
+): ActiveUtterance | null {
+  return findSettlingUtterance(session, turnId, speakerId) ?? session.activeUtterance;
+}
+
 function isCompletedProviderTurn(
   session: SessionState,
   turnId: string | undefined,
+  speakerId?: string,
 ): boolean {
+  const key = utteranceLookupKey(turnId, speakerId);
+  if (key && session.completedProviderTurnIds.includes(key)) return true;
   return Boolean(turnId && session.completedProviderTurnIds.includes(turnId));
 }
 
