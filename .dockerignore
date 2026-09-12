@@ -9,3 +9,10 @@ target
 .env.*
 !.env.example
 *.log
+**/*.db
+**/*.db-wal
+**/*.db-shm
+accuracy-local
+graphify-out
+apps/desktop/src-tauri/binaries
+apps/desktop/src-tauri/resources/gateway

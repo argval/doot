@@ -71,7 +71,6 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
   private currentTurnId: string | null = null;
   private currentTurnFinalSeen = false;
   private readonly pendingFinalTurns: Array<{ turnId: string; timestampMs: number }> = [];
-  private readonly queuedTurnEvents: ProviderStreamEvent[] = [];
   private turnEnded = false;
   private turnSequence = 0;
   private committedThroughTimestampMs = -1;
@@ -352,7 +351,7 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
       const turnId = this.startSpeechTurn();
       this.speechActive = true;
       this.lastVadTimestampMs = this.lastSentAudioStartMs;
-      this.emitTurnEvent({
+      this.options.onEvent({
         type: "speech_start",
         timestampMs: this.lastSentAudioStartMs,
         turnId,
@@ -372,7 +371,7 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
         this.pendingFinalTurns.push({ turnId, timestampMs });
       }
       this.lastVadTimestampMs = timestampMs;
-      this.emitTurnEvent({ type: "speech_end", timestampMs, turnId });
+      this.options.onEvent({ type: "speech_end", timestampMs, turnId, finalTranscriptPending: !this.currentTurnFinalSeen });
       return;
     }
 
@@ -403,12 +402,9 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
         isFinal,
       };
       if (pendingTurn) {
-        this.options.onEvent(transcriptEvent);
         this.pendingFinalTurns.shift();
-        this.flushQueuedTurnEvents();
-      } else {
-        this.emitTurnEvent(transcriptEvent);
       }
+      this.options.onEvent(transcriptEvent);
       if (
         isFinal
         && this.ending
@@ -424,7 +420,6 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
     if (event === "session.end") {
       if (this.ending) {
         this.pendingFinalTurns.splice(0);
-        this.flushQueuedTurnEvents();
         this.resolveEndWaiters();
       } else {
         this.failTerminal("Sarvam Realtime ended the session unexpectedly");
@@ -445,37 +440,6 @@ export class SarvamRealtimeSession implements ProviderStreamSession {
   private ensureTurn(): string {
     if (!this.currentTurnId) return this.startSpeechTurn();
     return this.currentTurnId;
-  }
-
-  private emitTurnEvent(event: ProviderStreamEvent): void {
-    const pendingTurnId = this.pendingFinalTurns[0]?.turnId;
-    if (
-      pendingTurnId
-      && "turnId" in event
-      && event.turnId
-      && event.turnId !== pendingTurnId
-    ) {
-      this.queuedTurnEvents.push(event);
-      return;
-    }
-    this.options.onEvent(event);
-  }
-
-  private flushQueuedTurnEvents(): void {
-    const pendingTurnId = this.pendingFinalTurns[0]?.turnId;
-    while (this.queuedTurnEvents.length > 0) {
-      const event = this.queuedTurnEvents[0];
-      if (
-        pendingTurnId
-        && event
-        && "turnId" in event
-        && event.turnId
-        && event.turnId !== pendingTurnId
-      ) break;
-      this.queuedTurnEvents.shift();
-      if (!event) continue;
-      this.options.onEvent(event);
-    }
   }
 
   private sendFrame(frame: AudioFrame): void {

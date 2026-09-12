@@ -1,8 +1,11 @@
 mod audio;
 mod commands;
+mod diagnostics;
 mod events;
+mod service;
 mod stream;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder},
@@ -21,6 +24,10 @@ const SETTINGS_WINDOW_LABEL: &str = "settings";
 pub struct AppState {
     pub audio_engine: Mutex<audio::AudioEngine>,
     pub last_provider: Mutex<Option<String>>,
+    pub gateway: tokio::sync::Mutex<service::GatewayManager>,
+    pub click_through: AtomicBool,
+    pub exiting: AtomicBool,
+    pub exit_ready: AtomicBool,
 }
 
 pub(crate) fn remember_provider(app: &AppHandle, provider: &str) {
@@ -47,6 +54,15 @@ pub fn run() {
         not(target_os = "macos")
     ))]
     let toggle_shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyD);
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let interaction_shortcut = Shortcut::new(
+        Some(if cfg!(target_os = "macos") {
+            Modifiers::SUPER | Modifiers::SHIFT
+        } else {
+            Modifiers::CONTROL | Modifiers::SHIFT
+        }),
+        Code::KeyO,
+    );
 
     let mut builder =
         tauri::Builder::default().plugin(tauri_plugin_store::Builder::default().build());
@@ -58,6 +74,13 @@ pub fn run() {
                     .with_handler(move |app, shortcut, event| {
                         if shortcut == &toggle_shortcut && event.state() == ShortcutState::Pressed {
                             let _ = app.emit(CAPTURE_TOGGLE_EVENT, ());
+                        }
+                        if shortcut == &interaction_shortcut
+                            && event.state() == ShortcutState::Pressed
+                        {
+                            let enabled =
+                                !app.state::<AppState>().click_through.load(Ordering::SeqCst);
+                            let _ = commands::set_overlay_click_through(app.clone(), enabled);
                         }
                     })
                     .build(),
@@ -75,17 +98,31 @@ pub fn run() {
     }
 
     builder
+        .manage(diagnostics::Timings::default())
         .manage(AppState {
             audio_engine: Mutex::new(audio::AudioEngine::new()),
             last_provider: Mutex::new(None),
+            gateway: tokio::sync::Mutex::new(service::GatewayManager::default()),
+            click_through: AtomicBool::new(false),
+            exiting: AtomicBool::new(false),
+            exit_ready: AtomicBool::new(false),
         })
         .invoke_handler(tauri::generate_handler![
             commands::start_caption_session,
             commands::stop_caption_session,
             commands::set_overlay_always_on_top,
             commands::audio_capture_status,
+            commands::check_system_audio,
             commands::connection_status,
-            commands::open_settings_window
+            diagnostics::caption_timings,
+            diagnostics::record_caption_timing,
+            commands::open_audio_settings,
+            commands::open_settings_window,
+            service::gateway_connection,
+            service::credential_status,
+            service::save_service_key,
+            commands::set_overlay_click_through,
+            commands::move_overlay
         ])
         .menu(|app| {
             let settings_item = MenuItemBuilder::with_id("open-settings", "Settings…")
@@ -132,10 +169,18 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
-                restore_overlay_layer(window.app_handle());
             }
         })
         .setup(move |app| {
+            let data = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&data)?;
+            let instance = service::lock_instance(&data.join("instance.lock"))?;
+            app.manage(instance);
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let state = handle.state::<AppState>();
+                let _ = state.gateway.lock().await.ensure(&handle).await;
+            });
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_always_on_top(true);
                 let _ = window.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
@@ -149,8 +194,19 @@ pub fn run() {
                 MenuItemBuilder::with_id("toggle-overlay", "Show / Hide Overlay").build(app)?;
             let settings_item = MenuItemBuilder::with_id("open-settings", "Settings").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit Doot").build(app)?;
+            let unlock_item =
+                MenuItemBuilder::with_id("unlock-overlay", "Unlock Overlay").build(app)?;
+            let reset_item =
+                MenuItemBuilder::with_id("reset-overlay", "Reset Overlay Position").build(app)?;
             let menu = MenuBuilder::new(app)
-                .items(&[&toggle_item, &overlay_item, &settings_item, &quit_item])
+                .items(&[
+                    &toggle_item,
+                    &overlay_item,
+                    &unlock_item,
+                    &reset_item,
+                    &settings_item,
+                    &quit_item,
+                ])
                 .build()?;
             let mut tray = TrayIconBuilder::new()
                 .menu(&menu)
@@ -172,10 +228,50 @@ pub fn run() {
 
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             app.global_shortcut().register(toggle_shortcut)?;
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            app.global_shortcut().register(interaction_shortcut)?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Doot");
+        .build(tauri::generate_context!())
+        .expect("error while building Doot")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                let state = app.state::<AppState>();
+                if state.exit_ready.load(Ordering::SeqCst) {
+                    return;
+                }
+                api.prevent_exit();
+                if state.exiting.swap(true, Ordering::SeqCst) {
+                    return;
+                }
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = app.state::<AppState>();
+                    if let Ok(mut engine) = state.audio_engine.lock() {
+                        engine.request_shutdown();
+                    }
+                    // A UI stop may already own the completion receiver; wait on the
+                    // shared running flag so Quit still lets that stop finish.
+                    let _ = tokio::time::timeout(std::time::Duration::from_secs(50), async {
+                        loop {
+                            if !state
+                                .audio_engine
+                                .lock()
+                                .map(|engine| engine.is_active())
+                                .unwrap_or(false)
+                            {
+                                break;
+                            }
+                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        }
+                    })
+                    .await;
+                    state.gateway.lock().await.stop().await;
+                    state.exit_ready.store(true, Ordering::SeqCst);
+                    app.exit(0);
+                });
+            }
+        });
 }
 
 fn handle_menu_event(app: &AppHandle, id: &str) {
@@ -184,6 +280,13 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
             let _ = open_settings(app);
         }
         "toggle-overlay" => toggle_overlay(app),
+        "unlock-overlay" => {
+            let _ = commands::set_overlay_click_through(app.clone(), false);
+            show_overlay(app);
+        }
+        "reset-overlay" => {
+            let _ = commands::move_overlay(app.clone(), "reset".into());
+        }
         "toggle-capture" => {
             let _ = app.emit(CAPTURE_TOGGLE_EVENT, ());
         }
@@ -193,7 +296,6 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
 }
 
 pub(crate) fn open_settings(app: &AppHandle) -> Result<(), String> {
-    yield_overlay_layer(app);
     if let Some(window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
         let _ = window.unminimize();
         window.show().map_err(|error| error.to_string())?;
@@ -220,20 +322,6 @@ pub(crate) fn open_settings(app: &AppHandle) -> Result<(), String> {
     let _ = window.set_visible_on_all_workspaces(false);
     let _ = window.set_focus();
     Ok(())
-}
-
-fn yield_overlay_layer(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.set_always_on_top(false);
-    }
-}
-
-fn restore_overlay_layer(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.set_always_on_top(true);
-        #[cfg(target_os = "macos")]
-        let _ = window.set_visible_on_all_workspaces(true);
-    }
 }
 
 fn toggle_overlay(app: &AppHandle) {

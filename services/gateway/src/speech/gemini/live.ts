@@ -321,11 +321,15 @@ class GeminiLiveSession implements ProviderStreamSession {
   private sendSetup(socket: WebSocket, waiter: Waiter): void {
     try {
       if (this.mode === "transcribe") {
+        // `languageCodes: []` is an allow-none list, not auto-detect. Omit it
+        // for Auto; pass the selected source otherwise. Hybrid VAD is required
+        // so system-audio sessions finalize without a mic pause / audioStreamEnd.
         socket.send(JSON.stringify({
           setup: {
             model: `models/${this.model}`,
             generationConfig: { responseModalities: ["TEXT"] },
-            inputAudioTranscription: { languageCodes: [] },
+            inputAudioTranscription: this.transcribeAudioTranscriptionConfig(),
+            realtimeInputConfig: this.activityDetectionConfig(),
           },
         }));
         return;
@@ -344,15 +348,7 @@ class GeminiLiveSession implements ProviderStreamSession {
             ? { handle: this.resumptionHandle }
             : {},
           contextWindowCompression: { slidingWindow: {} },
-          realtimeInputConfig: {
-            automaticActivityDetection: {
-              disabled: false,
-              startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
-              endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
-              prefixPaddingMs: 20,
-              silenceDurationMs: GEMINI_SILENCE_DURATION_MS,
-            },
-          },
+          realtimeInputConfig: this.activityDetectionConfig(),
           generationConfig: {
             responseModalities: ["AUDIO"],
             translationConfig: {
@@ -365,6 +361,39 @@ class GeminiLiveSession implements ProviderStreamSession {
     } catch (error) {
       waiter.reject(asError(error));
     }
+  }
+
+  private transcribeAudioTranscriptionConfig(): {
+    mode: "smart";
+    languageCodes?: string[];
+  } {
+    if (this.options.source === "auto") {
+      return { mode: "smart" };
+    }
+    return {
+      mode: "smart",
+      languageCodes: [toGeminiLanguageCode(this.options.source)],
+    };
+  }
+
+  private activityDetectionConfig(): {
+    automaticActivityDetection: {
+      disabled: false;
+      startOfSpeechSensitivity: "START_SENSITIVITY_LOW";
+      endOfSpeechSensitivity: "END_SENSITIVITY_HIGH";
+      prefixPaddingMs: number;
+      silenceDurationMs: number;
+    };
+  } {
+    return {
+      automaticActivityDetection: {
+        disabled: false,
+        startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
+        endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
+        prefixPaddingMs: 20,
+        silenceDurationMs: GEMINI_SILENCE_DURATION_MS,
+      },
+    };
   }
 
   private handleMessage(socket: WebSocket, raw: RawData): void {
@@ -861,15 +890,22 @@ function appendCommitted(base: string, next: string): string {
   return `${left} ${right}`;
 }
 
-/** First completed sentence plus trailing speech — used for commentary line breaks. */
+const sentenceSegmenter = new Intl.Segmenter(undefined, { granularity: "sentence" });
+
+/** Unicode sentence boundaries, including scripts that do not use spaces. */
 function splitCompletedSentence(text: string): { completed: string; remainder: string } | null {
   const normalized = normalizeText(text);
-  const match = normalized.match(/^(.+?[.!?…])\s+(\S[\s\S]*)$/u);
-  if (!match?.[1] || !match[2]) return null;
-  const completed = match[1].trim();
-  const remainder = match[2].trim();
-  if (!completed || !remainder) return null;
-  return { completed, remainder };
+  for (const sentence of sentenceSegmenter.segment(normalized)) {
+    const end = sentence.index + sentence.segment.length;
+    const completed = normalized.slice(0, end).trim();
+    const remainder = normalized.slice(end).trim();
+    if (!remainder) return null;
+    // ponytail: ICU covers Unicode punctuation; guard common titles/initials
+    // here. Expand from labeled failures, not a speculative abbreviation list.
+    if (/\b(?:[A-Z]|Mr|Mrs|Ms|Dr|Prof|Sr|Jr)\.$/u.test(completed)) continue;
+    return { completed, remainder };
+  }
+  return null;
 }
 
 function parseDurationMs(value: unknown): number | null {

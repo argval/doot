@@ -1,4 +1,7 @@
 import type { CaptionEvent } from "@doot/protocol";
+import type { NativeCaptionTiming } from "./lib/timing";
+
+export type DesktopCaptionEvent = CaptionEvent & { timing?: NativeCaptionTiming };
 
 const MAX_HISTORY_UTTERANCES = 18;
 /** Recent speaker turns / pause-separated sections kept on-screen. */
@@ -6,8 +9,8 @@ const MAX_VISIBLE_UTTERANCES = 4;
 
 export interface CaptionState {
   /** Completed turns plus an older turn whose final translation is still settling. */
-  history: CaptionEvent[];
-  active: CaptionEvent | null;
+  history: DesktopCaptionEvent[];
+  active: DesktopCaptionEvent | null;
 }
 
 export interface VisibleCaptionLine {
@@ -31,10 +34,11 @@ export function reduceCaptionEvent(
   const historyIndex = current.history.findIndex(
     (utterance) => utterance.utteranceId === event.utteranceId,
   );
-  if (!event.isFinal && historyIndex >= 0) {
+  const latestSequence = Math.max(current.active?.sequence ?? -1, current.history.at(-1)?.sequence ?? -1);
+  if (!event.isFinal && (historyIndex >= 0 || event.sequence < latestSequence)) {
     if (current.history[historyIndex]?.isFinal) return current;
     return {
-      history: upsertUtterance(current.history, event),
+      history: upsertUtterance(current.history, event).slice(-MAX_HISTORY_UTTERANCES),
       active: current.active,
     };
   }
@@ -107,7 +111,7 @@ function upsertUtterance(
   const index = utterances.findIndex(
     (utterance) => utterance.utteranceId === event.utteranceId,
   );
-  if (index < 0) return [...utterances, event];
+  if (index < 0) return [...utterances, event].sort((left, right) => left.sequence - right.sequence);
   return utterances.map((utterance, currentIndex) => (
     currentIndex === index ? event : utterance
   ));

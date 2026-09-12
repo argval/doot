@@ -16,9 +16,9 @@
         "label": "main",
         "title": "Doot",
         "width": 576,
-        "height": 160,
+        "height": 190,
         "minWidth": 360,
-        "minHeight": 120,
+        "minHeight": 160,
         "decorations": false,
         "resizable": true,
         "alwaysOnTop": true,
@@ -29,7 +29,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src ipc: http://ipc.localhost ws://127.0.0.1:8787 http://127.0.0.1:8787"
+      "csp": "default-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src ipc: http://ipc.localhost http://127.0.0.1:*"
     }
   },
   "bundle": {

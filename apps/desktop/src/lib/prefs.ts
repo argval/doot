@@ -21,7 +21,12 @@ export interface DesktopPrefs {
   captionFontSize: number;
   overlayIdleOpacity: number;
   lastProvider: string | null;
+  recentPairs: TranslationPair[];
+  lastTranslationPair: TranslationPair;
+  onboardingComplete: boolean;
 }
+
+export interface TranslationPair { source: SupportedLanguage; target: SupportedTargetLanguage }
 
 export const DEFAULT_PREFS: DesktopPrefs = {
   sourceLanguage: "auto",
@@ -30,6 +35,9 @@ export const DEFAULT_PREFS: DesktopPrefs = {
   captionFontSize: 28,
   overlayIdleOpacity: 0.42,
   lastProvider: null,
+  recentPairs: [],
+  lastTranslationPair: { source: "auto", target: "en" },
+  onboardingComplete: false,
 };
 
 const PREFS_FILE = "prefs.json";
@@ -93,6 +101,16 @@ export function normalizePrefs(value: unknown): DesktopPrefs {
   const targetLanguage = translateEnabled
     ? concreteCaptionLanguage(rawTarget)
     : rawTarget;
+  const validPair = (value: unknown): value is TranslationPair => {
+    const pair = asRecord(value);
+    return Boolean(pair && isSupportedLanguage(pair.source) && isSupportedTargetLanguage(pair.target));
+  };
+  const recentPairs = Array.isArray(record.recentPairs)
+    ? record.recentPairs.filter(validPair).filter((pair, index, pairs) => pairs.findIndex((other) => other.source === pair.source && other.target === pair.target) === index).slice(0, 5)
+    : [];
+  const lastTranslationPair = validPair(record.lastTranslationPair)
+    ? record.lastTranslationPair
+    : { source: sourceLanguage, target: concreteCaptionLanguage(rawTarget) };
 
   return {
     sourceLanguage: translateEnabled ? sourceLanguage : targetLanguage,
@@ -101,7 +119,27 @@ export function normalizePrefs(value: unknown): DesktopPrefs {
     captionFontSize,
     overlayIdleOpacity,
     lastProvider,
+    recentPairs,
+    lastTranslationPair,
+    onboardingComplete: record.onboardingComplete === true,
   };
+}
+
+export function translationModePatch(prefs: DesktopPrefs): Partial<DesktopPrefs> {
+  if (prefs.translateEnabled) return {
+    translateEnabled: false,
+    lastTranslationPair: { source: prefs.sourceLanguage, target: concreteCaptionLanguage(prefs.targetLanguage) },
+    sourceLanguage: prefs.targetLanguage,
+  };
+  const pair = prefs.targetLanguage === "auto"
+    ? { source: "auto" as const, target: "en" as const }
+    : prefs.lastTranslationPair;
+  return { translateEnabled: true, sourceLanguage: pair.source, targetLanguage: pair.target };
+}
+
+export function rememberPair(prefs: DesktopPrefs): TranslationPair[] {
+  const pair = { source: prefs.sourceLanguage, target: concreteCaptionLanguage(prefs.targetLanguage) };
+  return [pair, ...prefs.recentPairs.filter((other) => other.source !== pair.source || other.target !== pair.target)].slice(0, 5);
 }
 
 export function applyOverlayAppearance(prefs: DesktopPrefs): void {

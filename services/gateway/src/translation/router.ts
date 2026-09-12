@@ -1,7 +1,3 @@
-import {
-  SUPPORTED_TARGET_LANGUAGES,
-  type SupportedTargetLanguage,
-} from "@doot/protocol";
 import type {
   TextTranslationProvider,
   TranslationRequest,
@@ -17,24 +13,22 @@ export class TranslationRouter {
     );
   }
 
-  configuredTargetLanguages(): SupportedTargetLanguage[] {
-    const targets = new Set<SupportedTargetLanguage>();
-    for (const provider of this.providers) {
-      if (!provider.configured) continue;
-      for (const language of provider.targetLanguages) {
-        targets.add(language);
-      }
-    }
-    return SUPPORTED_TARGET_LANGUAGES.filter((language) => targets.has(language));
+  select(request: Pick<TranslationRequest, "source" | "target">): TextTranslationProvider {
+    // Preference is explicit; construction order must not change production routes.
+    const compatible = this.providers.filter((provider) => (
+      provider.configured && provider.supports(request)
+    ));
+    const provider = compatible.find((candidate) => candidate.id === "sarvam")
+      ?? compatible.find((candidate) => candidate.id === "gemini")
+      ?? compatible[0];
+    if (!provider) throw new TranslationUnavailableError(request);
+    return provider;
   }
 
   async translate(request: TranslationRequest): Promise<string> {
     const text = request.text.trim();
     if (!text || request.source === request.target) return text;
-    const provider = this.providers.find((candidate) => (
-      candidate.configured && candidate.supports({ ...request, text })
-    ));
-    if (!provider) throw new TranslationUnavailableError(request);
+    const provider = this.select(request);
     return provider.translate({ ...request, text });
   }
 }

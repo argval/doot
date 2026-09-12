@@ -12,11 +12,13 @@ export interface HistorySegment {
 
 export interface HistorySessionSummary {
   id: string;
+  title?: string;
   sourceLanguage: string;
   targetLanguage: string;
   provider: string;
   startedAtMs: number;
   stoppedAtMs: number | null;
+  interrupted?: boolean;
   segmentCount: number;
   preview: string;
 }

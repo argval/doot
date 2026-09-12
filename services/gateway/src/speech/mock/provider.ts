@@ -19,8 +19,6 @@ export class MockProvider implements SpeechProvider {
     sourceLanguages: SUPPORTED_LANGUAGES,
     sampleRates: AUDIO_SAMPLE_RATES,
     channels: CHANNEL_COUNTS,
-    routingPriority: 0,
-    automaticDetectionPriority: 0,
   } as const;
 
   async openSession(

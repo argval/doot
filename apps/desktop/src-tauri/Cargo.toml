@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Native audio engine for Doot"
 authors = ["Doot"]
 edition = "2021"
+rust-version = "1.89"
 
 [lib]
 name = "doot_lib"
@@ -20,10 +21,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2.6.2", features = ["macos-private-api", "tray-icon"] }
 thiserror = "2"
-tokio = { version = "1.53.1", features = ["sync", "time", "net", "rt", "macros", "io-util"] }
+tokio = { version = "1.53.1", features = ["sync", "time", "net", "rt", "macros", "io-util", "process"] }
 tokio-tungstenite = "0.30.0"
 uuid = { version = "1", features = ["v4", "serde"] }
 tauri-plugin-store = "=2.2.0"
+keyring = { version = "3.6.3", features = ["apple-native", "windows-native"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-global-shortcut = "2"

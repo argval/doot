@@ -21,8 +21,6 @@ export class GeminiProvider implements SpeechProvider {
     sampleRates: [16_000],
     channels: [1],
     nativeTranslation: true,
-    routingPriority: 80,
-    automaticDetectionPriority: 0,
   } as const;
 
   constructor(

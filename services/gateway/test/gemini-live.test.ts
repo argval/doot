@@ -1,11 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { SupportedLanguage } from "@doot/protocol";
 import type { ProviderStreamEvent } from "../src/speech/contract.js";
 import {
   GeminiLiveTranscribeSession,
   GeminiLiveTranslateSession,
 } from "../src/speech/gemini/live.js";
 import { FakeGeminiServer, waitForGemini } from "./fake-gemini.js";
+
+const transcribeActivityDetection = {
+  automaticActivityDetection: {
+    disabled: false,
+    startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
+    endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
+    prefixPaddingMs: 20,
+    silenceDurationMs: 300,
+  },
+};
 
 test("configures Transcribe Live and publishes interim then final transcripts", async () => {
   const server = new FakeGeminiServer();
@@ -32,7 +43,8 @@ test("configures Transcribe Live and publishes interim then final transcripts", 
       setup: {
         model: "models/gemini-3.5-transcribe-live",
         generationConfig: { responseModalities: ["TEXT"] },
-        inputAudioTranscription: { languageCodes: [] },
+        inputAudioTranscription: { mode: "smart", languageCodes: ["es"] },
+        realtimeInputConfig: transcribeActivityDetection,
       },
     });
     server.send({ setupComplete: {} });
@@ -65,6 +77,41 @@ test("configures Transcribe Live and publishes interim then final transcripts", 
     assert.ok(events.some((event) => event.type === "speech_end"));
     assert.equal(events.some((event) => event.type === "translation"), false);
     assert.equal(connection.messages.filter(isAudioMessage).length, 1);
+  } finally {
+    await session.close();
+    await server.close();
+  }
+});
+
+test("omits Transcribe languageCodes for Auto and still enables VAD", async () => {
+  const server = new FakeGeminiServer();
+  const endpoint = await server.endpoint();
+  const session = new GeminiLiveTranscribeSession(
+    "test-gemini-key",
+    {
+      sessionId: "gemini-transcribe-auto",
+      source: "auto",
+      target: "en",
+      sampleRate: 16_000,
+      channels: 1,
+      onEvent: () => undefined,
+    },
+    { endpoint, setupTimeoutMs: 250, endTimeoutMs: 250 },
+  );
+
+  try {
+    const opening = session.open();
+    const setup = await server.waitForMessage(isSetupMessage);
+    assert.deepEqual(setup, {
+      setup: {
+        model: "models/gemini-3.5-transcribe-live",
+        generationConfig: { responseModalities: ["TEXT"] },
+        inputAudioTranscription: { mode: "smart" },
+        realtimeInputConfig: transcribeActivityDetection,
+      },
+    });
+    server.send({ setupComplete: {} });
+    await opening;
   } finally {
     await session.close();
     await server.close();
@@ -702,6 +749,39 @@ test("soft-splits long continuous Gemini turns on sentence boundaries", async ()
     await session.close();
     await server.close();
   }
+});
+
+test("recognizes multilingual sentence boundaries without requiring Latin punctuation or spaces", async (t) => {
+  const cases: Array<[SupportedLanguage, string, string]> = [
+    ["ja", "これは最初の文です。", "次の文です。"],
+    ["zh", "这是第一句话。", "这是第二句话。"],
+    ["hi", "यह पहला वाक्य है।", " यह दूसरा वाक्य है।"],
+    ["ar", "هل تسمعني؟", " نعم أسمعك."],
+    ["en", "Dr. Rao paid 3.14 dollars.", " Then he left."],
+  ];
+  for (const [language, completed, remainder] of cases) await t.test(language, async () => {
+    const server = new FakeGeminiServer();
+    const events: ProviderStreamEvent[] = [];
+    const session = new GeminiLiveTranscribeSession("test-key", {
+      sessionId: `sentence-${language}`, source: language, target: language,
+      sampleRate: 16_000, channels: 1, onEvent: (event) => events.push(event),
+    }, { endpoint: await server.endpoint(), softSplitMinMs: 100, maxTurnMs: 10_000 });
+    try {
+      const opening = session.open();
+      await server.waitForMessage(isSetupMessage);
+      server.send({ setupComplete: {} });
+      await opening;
+      session.pushAudio(Buffer.alloc(6_400), 0);
+      server.send({ serverContent: { interimInputTranscription: { text: completed + remainder, languageCode: language } } });
+      const final = await waitForGemini(() => events.find((event) => event.type === "transcript" && event.isFinal), 500);
+      assert.equal(final.type === "transcript" && final.text, completed);
+      const draft = [...events].reverse().find((event) => event.type === "transcript" && !event.isFinal);
+      assert.equal(draft?.type === "transcript" && draft.text, remainder.trim());
+    } finally {
+      await session.close();
+      await server.close();
+    }
+  });
 });
 
 test("force-splits long Gemini turns without sentence punctuation", async () => {

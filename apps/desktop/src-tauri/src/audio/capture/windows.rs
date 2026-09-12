@@ -126,6 +126,7 @@ fn capture_loop(
     }
     let _com = ComGuard;
     let started_at = Instant::now();
+    frames.set_clock(started_at);
     let mut ready_sent = false;
 
     while !stop.load(Ordering::SeqCst) {
@@ -156,7 +157,7 @@ fn capture_loop(
             Err(error) => {
                 drop(session);
                 if !is_recoverable_device_error(&error) {
-                    eprintln!("WASAPI capture stopped: {error}");
+                    frames.fail(format!("System audio capture stopped: {error}"));
                     return;
                 }
                 thread::sleep(RECONNECT_DELAY);
@@ -265,13 +266,7 @@ fn pump_packets(
             let mut flags = 0_u32;
             unsafe {
                 capture
-                    .GetBuffer(
-                        &mut data_ptr,
-                        &mut frames_read,
-                        &mut flags,
-                        None,
-                        None,
-                    )
+                    .GetBuffer(&mut data_ptr, &mut frames_read, &mut flags, None, None)
                     .map_err(|error| map_capture_error("GetBuffer", error))?;
             }
 

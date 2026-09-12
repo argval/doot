@@ -44,6 +44,8 @@ export interface OverlayWebPreview {
   error: string | null;
   capturing: boolean;
   targetLanguage: SupportedLanguage | null;
+  status?: string;
+  audioLevel?: number;
 }
 
 const IDLE_PREVIEW: OverlayWebPreview = {
@@ -55,6 +57,16 @@ const IDLE_PREVIEW: OverlayWebPreview = {
 
 export function overlayWebPreview(): OverlayWebPreview {
   const mode = previewMode();
+  if (mode === "reconnecting" || mode === "no-audio" || mode === "starting") {
+    return {
+      lines: mode === "reconnecting" ? PREVIEW_LINES : [],
+      error: null,
+      capturing: true,
+      targetLanguage: null,
+      status: mode === "reconnecting" ? "Reconnecting…" : mode === "no-audio" ? "No audio detected" : "Starting…",
+      audioLevel: 0,
+    };
+  }
   if (mode === "captions-indic") {
     return {
       lines: PREVIEW_LINES_INDIC,
@@ -69,6 +81,7 @@ export function overlayWebPreview(): OverlayWebPreview {
       error: null,
       capturing: true,
       targetLanguage: null,
+      audioLevel: 0.03,
     };
   }
   if (mode === "listening") {

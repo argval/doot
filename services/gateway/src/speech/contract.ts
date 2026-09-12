@@ -8,7 +8,7 @@ import type {
 
 export type ProviderStreamEvent =
   | { type: "speech_start"; timestampMs: number; turnId?: string }
-  | { type: "speech_end"; timestampMs: number; turnId?: string }
+  | { type: "speech_end"; timestampMs: number; turnId?: string; finalTranscriptPending?: boolean }
   | {
     type: "transcript";
     text: string;
@@ -41,12 +41,10 @@ export interface SpeechProviderCapabilities {
   /** When present, limits targets accepted by this provider. */
   targetLanguages?: readonly SupportedTargetLanguage[];
   /**
-   * Auto-detect only when the target is in this provider's source family.
-   * Sarvam uses this so Auto→Spanish (etc.) falls through to Gemini.
+   * Only accept sessions where source and target match (transcription).
+   * Gemini Transcribe uses this so translate pairs fall through to Live Translate.
    */
-  restrictAutoToFamilyTargets?: boolean;
-  routingPriority: number;
-  automaticDetectionPriority: number;
+  sameLanguageOnly?: boolean;
 }
 
 export interface OpenProviderSessionOptions {
@@ -97,9 +95,8 @@ export function supportsSession(
       || capabilities.targetLanguages.some((language) => language === target)
     )
     && (
-      source !== "auto"
-      || target === undefined
-      || !capabilities.restrictAutoToFamilyTargets
-      || capabilities.sourceLanguages.some((language) => language === target)
+      target === undefined
+      || !capabilities.sameLanguageOnly
+      || source === target
     );
 }
