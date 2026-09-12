@@ -1,10 +1,15 @@
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import {
   Activity,
   Captions,
   History,
   Info,
-  Settings2,
+  KeyRound,
+  Languages,
+  Circle,
+  Search,
+  Shield,
+  SlidersHorizontal,
 } from "lucide-react";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getName, getVersion } from "@tauri-apps/api/app";
@@ -37,6 +42,7 @@ import { PrivacySection } from "./PrivacySection";
 import type { VisibleCaptionLine } from "../captions";
 import { summarizeTiming, type CaptionTimingSample } from "../lib/timing";
 import { interactionShortcutLabel } from "../lib/shortcut";
+import { speechProviderLabel } from "../lib/speech-labels";
 
 type SettingsSection = "setup" | "general" | "captions" | "history" | "privacy" | "connection" | "about";
 
@@ -128,19 +134,21 @@ function selectedOpacityPreset(opacity: number): (typeof OPACITY_PRESETS)[number
 const SECTIONS: ReadonlyArray<{
   id: SettingsSection;
   label: string;
-  icon: typeof Settings2;
+  icon: typeof KeyRound;
+  keywords: string;
 }> = [
-  { id: "setup", label: "Setup", icon: Settings2 },
-  { id: "general", label: "General", icon: Settings2 },
-  { id: "captions", label: "Captions", icon: Captions },
-  { id: "history", label: "History", icon: History },
-  { id: "privacy", label: "Privacy", icon: Info },
-  { id: "connection", label: "Connection", icon: Activity },
-  { id: "about", label: "About", icon: Info },
+  { id: "setup", label: "Setup", icon: KeyRound, keywords: "key api sarvam gemini permission audio" },
+  { id: "general", label: "General", icon: SlidersHorizontal, keywords: "login startup overlay position click-through" },
+  { id: "captions", label: "Captions", icon: Captions, keywords: "opacity ghost balanced solid text size font preview" },
+  { id: "history", label: "History", icon: History, keywords: "sessions transcript export" },
+  { id: "privacy", label: "Privacy", icon: Shield, keywords: "save retention history" },
+  { id: "connection", label: "Connection", icon: Activity, keywords: "gateway audio permission route timing" },
+  { id: "about", label: "About", icon: Info, keywords: "version" },
 ];
 
 export function SettingsApp() {
   const [section, setSection] = useState<SettingsSection>("general");
+  const [navQuery, setNavQuery] = useState("");
   const [prefs, setPrefs] = useState<DesktopPrefs>(DEFAULT_PREFS);
   const [openAtLogin, setOpenAtLoginEnabled] = useState(false);
   const [connection, setConnection] = useState<ConnectionStatus | null>(null);
@@ -273,26 +281,46 @@ export function SettingsApp() {
     }
   }, []);
 
+  const visibleSections = useMemo(() => {
+    const query = navQuery.trim().toLowerCase();
+    if (!query) {
+      return SECTIONS;
+    }
+    return SECTIONS.filter((item) => `${item.label} ${item.keywords}`.toLowerCase().includes(query));
+  }, [navQuery]);
+
   return (
     <div className="settings-shell">
       <nav className="settings-sidebar" aria-label="Settings">
-        <p className="settings-brand">Doot</p>
-        {SECTIONS.map((item) => {
-          const Icon = item.icon;
-          const selected = section === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              className={selected ? "settings-nav-item selected" : "settings-nav-item"}
-              aria-current={selected ? "page" : undefined}
-              onClick={() => setSection(item.id)}
-            >
-              <Icon size={15} aria-hidden="true" />
-              <span>{item.label}</span>
-            </button>
-          );
-        })}
+        <label className="settings-search">
+          <Search size={13} aria-hidden="true" />
+          <input
+            type="search"
+            value={navQuery}
+            onChange={(event) => setNavQuery(event.target.value)}
+            placeholder="Search"
+            aria-label="Search settings"
+          />
+        </label>
+        <div className="settings-nav">
+          {visibleSections.length === 0 && <p className="settings-search-empty">No matching settings</p>}
+          {visibleSections.map((item) => {
+            const Icon = item.icon;
+            const selected = section === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className={selected ? "settings-nav-item selected" : "settings-nav-item"}
+                aria-current={selected ? "page" : undefined}
+                onClick={() => setSection(item.id)}
+              >
+                <span className="settings-nav-icon"><Icon size={13} aria-hidden="true" /></span>
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </div>
       </nav>
       <main className={section === "history" ? "settings-content history" : "settings-content"}>
         <h1>{SECTIONS.find((item) => item.id === section)?.label}</h1>
@@ -339,6 +367,7 @@ function GeneralSection({
   const [positionError, setPositionError] = useState<string | null>(null);
   return (
     <>
+      <p className="settings-section-label">Startup</p>
       <section className="settings-group" aria-label="Startup">
         <label className="settings-row">
           <span>
@@ -354,6 +383,7 @@ function GeneralSection({
         </label>
       </section>
       {loginError && <p className="settings-error">{loginError}</p>}
+      <p className="settings-section-label">Overlay</p>
       <p className="settings-footnote">Use Alt+Arrow keys while an overlay control is focused to move it. {interactionShortcutLabel()} toggles click-through. The tray also provides Unlock Overlay.</p>
       <div className="settings-history-actions"><button disabled={!isTauriRuntime()} onClick={() => { void invoke("move_overlay", { direction: "reset" }).then(() => setPositionError(null)).catch((error: unknown) => setPositionError(String(error))); }}>Reset overlay position and unlock</button></div>
       {positionError && <p role="alert" className="settings-error">{positionError}</p>}
@@ -382,6 +412,13 @@ function CaptionsSection({
           "--overlay-hover-boost": String(hoverBoostFor(prefs.overlayIdleOpacity)),
         } as CSSProperties}
       >
+        <div className="language-picker" aria-hidden="true">
+          <span className="language-select">
+            <input readOnly tabIndex={-1} value="English" aria-hidden="true" />
+          </span>
+          <span className="language-translate active"><Languages size={13} /></span>
+          <span className="capture-toggle"><Circle size={11} /></span>
+        </div>
         <CaptionPanel
           lines={previewLinesFor(prefs.targetLanguage)}
           targetLanguage={previewLanguage}
@@ -390,7 +427,26 @@ function CaptionsSection({
           placeholder="Your live captions will appear here."
         />
       </div>
-      <section className="settings-group" aria-label="Overlay">
+      <p className="settings-section-label">Idle look</p>
+      <section className="settings-group" aria-label="Idle look">
+        <div className="settings-row">
+          <div className="settings-presets full" role="group" aria-label="Idle opacity presets">
+            {OPACITY_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className={opacityPreset === preset.id ? "selected" : undefined}
+                aria-pressed={opacityPreset === preset.id}
+                onClick={() => onPatch({ overlayIdleOpacity: preset.value })}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+      <p className="settings-section-label">Text</p>
+      <section className="settings-group" aria-label="Caption text">
         <label className="settings-row">
           <span>
             <strong>Text size</strong>
@@ -410,25 +466,6 @@ function CaptionsSection({
             <span className="settings-slider-value">{prefs.captionFontSize}px</span>
           </div>
         </label>
-        <div className="settings-row">
-          <span>
-            <strong>Idle look</strong>
-            <em>Ghost, Balanced, or Solid. Hover still steps up one notch.</em>
-          </span>
-          <div className="settings-presets" role="group" aria-label="Idle opacity presets">
-            {OPACITY_PRESETS.map((preset) => (
-              <button
-                key={preset.id}
-                type="button"
-                className={opacityPreset === preset.id ? "selected" : undefined}
-                aria-pressed={opacityPreset === preset.id}
-                onClick={() => onPatch({ overlayIdleOpacity: preset.value })}
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-        </div>
       </section>
     </>
   );
@@ -452,11 +489,12 @@ function ConnectionSection({
   const [actionError, setActionError] = useState<string | null>(null);
   const gatewayOk = connection?.gatewayReachable ?? Boolean(route);
   const capture = connection?.capture;
-  const provider = connection?.lastProvider || prefs.lastProvider;
+  const provider = speechProviderLabel(connection?.lastProvider || prefs.lastProvider);
 
   return (
     <>
       <p className="settings-intro">Check that Doot can hear this computer and provide captions in your chosen languages.</p>
+      <p className="settings-section-label">Status</p>
       <section className="settings-group" aria-label="Status">
         <div className="settings-row">
           <span>

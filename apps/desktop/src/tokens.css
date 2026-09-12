@@ -54,6 +54,9 @@
   --settings-live-bg: var(--settings-ok-bg);
   --settings-badge: var(--settings-control);
   --settings-badge-ink: var(--settings-ink-secondary);
+  --settings-search-bg: rgb(0 0 0 / 6%);
+  --settings-icon-well: rgb(var(--brand-rgb) / 32%);
+  --settings-segmented: rgb(100 105 90 / 12%);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -75,5 +78,8 @@
     --settings-ok-bg: rgb(var(--brand-rgb) / 12%);
     --settings-down-ink: #ff6961;
     --settings-down-bg: rgb(255 69 58 / 16%);
+    --settings-search-bg: rgb(255 255 255 / 8%);
+    --settings-icon-well: rgb(var(--brand-rgb) / 16%);
+    --settings-segmented: rgb(145 150 131 / 20%);
   }
 }

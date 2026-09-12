@@ -80,7 +80,7 @@ button {
 
 .caption-window {
   position: absolute;
-  inset: 42px 0 0;
+  inset: 0;
   width: 100%;
   min-height: 0;
   overflow: hidden;
@@ -92,6 +92,8 @@ button {
   border: 0;
   border-radius: var(--overlay-radius);
   background-color: rgb(var(--overlay-fill) / var(--overlay-idle-alpha, 0.42));
+  backdrop-filter: blur(36px);
+  -webkit-backdrop-filter: blur(36px);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 16%);
   cursor: grab;
   user-select: none;
@@ -150,7 +152,7 @@ button {
   will-change: opacity;
 }
 
-.caption-window > :not(.capture-toggle):not(.resize-grip) {
+.caption-window > :not(.resize-grip) {
   position: relative;
   z-index: 1;
 }
@@ -195,10 +197,14 @@ button {
   position: absolute;
   top: 8px;
   right: 8px;
+  left: auto;
+  max-width: calc(100% - 16px);
   bottom: auto;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   padding: 3px 5px;
   border: 1px solid var(--overlay-picker-border);
   border-radius: 9px;
@@ -214,48 +220,62 @@ button {
 }
 
 .caption-overlay:hover .language-picker,
-.caption-overlay:focus-within .language-picker {
+.caption-overlay:focus-within .language-picker,
+.settings-overlay-preview:hover .language-picker,
+.settings-overlay-preview:focus-within .language-picker {
   opacity: 1;
-  pointer-events: auto;
   transform: translateY(0);
 }
 
+.caption-overlay:hover .language-picker,
+.caption-overlay:focus-within .language-picker {
+  pointer-events: auto;
+}
+
 .language-picker .language-select {
-  gap: 5px;
-  font-size: 10px;
+  gap: 0;
+  font-size: 11px;
+}
+
+.language-picker .language-select > span {
+  display: none;
 }
 
 .language-picker .language-select :is(select, input) {
-  width: 86px;
-  padding-right: 17px;
+  width: 108px;
+  min-height: 26px;
+  padding: 3px 18px 3px 4px;
 }
 
-.language-picker .language-translate {
-  width: 32px;
-  height: 32px;
+.language-picker .language-translate,
+.language-picker .capture-toggle {
+  width: 26px;
+  height: 26px;
 }
 
 .capture-toggle {
   display: grid;
   position: relative;
-  width: 32px;
-  height: 32px;
+  width: 26px;
+  height: 26px;
   flex: none;
   place-items: center;
   padding: 0;
-  border: 1px solid rgb(var(--brand-rgb) / 24%);
+  border: 1px solid rgb(255 255 255 / 7%);
   border-radius: 7px;
-  color: var(--overlay-accent-ink);
-  background: var(--overlay-accent);
+  color: var(--overlay-ink-subtle);
+  background: rgb(255 255 255 / 4%);
   cursor: pointer;
   transition:
-    filter var(--duration-micro) var(--ease-out),
+    color var(--duration-micro) var(--ease-out),
+    background var(--duration-micro) var(--ease-out),
+    border-color var(--duration-micro) var(--ease-out),
     transform var(--duration-micro) var(--ease-out);
 }
 
 .capture-toggle:hover:not(:disabled) {
-  filter: brightness(1.08);
-  transform: translateY(-1px);
+  color: var(--overlay-ink);
+  background: rgb(255 255 255 / 9%);
 }
 
 .capture-toggle.active {
@@ -397,13 +417,13 @@ button {
 .language-select :is(select, input) {
   width: 72px;
   appearance: none;
-  padding: 5px 20px 5px 0;
+  padding: 3px 18px 3px 0;
   border: 0;
   outline: 0;
   color: var(--overlay-ink);
   background: transparent;
   cursor: pointer;
-  min-height: 32px;
+  min-height: 26px;
 }
 
 .sr-only {
@@ -431,26 +451,11 @@ button {
 .caption-status .audio-bars { height: 12px; }
 .caption-notice .caption-error-action { flex: none; min-height: 28px; }
 .caption-notice > span { max-height: 2.6em; overflow: auto; }
-.caption-copy { padding-inline-end: 20px; }
-.recent-pairs { position: relative; display: grid; place-items: center; width: 32px; height: 32px; color: var(--overlay-ink); flex: none; }
+.caption-copy { padding-inline-end: 20px; padding-top: 36px; }
+.recent-pairs { position: relative; display: grid; place-items: center; width: 26px; height: 26px; color: var(--overlay-ink); flex: none; }
 .recent-pairs select { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
 .recent-pairs:focus-within { outline: 2px solid var(--overlay-accent); border-radius: 6px; }
 .language-translate, .capture-toggle { position: relative; }
-.language-translate:focus-visible::after, .capture-toggle:focus-visible::after {
-  content: attr(aria-label);
-  position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 5px;
-  width: max-content;
-  padding: 5px 8px;
-  border-radius: 6px;
-  color: #fff;
-  background: rgb(var(--overlay-fill));
-  font-size: 11px;
-  z-index: 5;
-  pointer-events: none;
-}
 .language-translate:active, .capture-toggle:active { transform: scale(0.96); }
 @media (max-width: 420px) {
   .language-picker { gap: 3px; right: 0; }
@@ -486,8 +491,8 @@ button {
 
 .language-translate {
   display: grid;
-  width: 25px;
-  height: 25px;
+  width: 26px;
+  height: 26px;
   flex: none;
   place-items: center;
   padding: 0;
@@ -535,22 +540,9 @@ button {
 }
 
 .caption-overlay:hover .resize-grip,
-.caption-overlay:focus-within .resize-grip {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.caption-window > .capture-toggle {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 4;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.caption-overlay:hover .caption-window > .capture-toggle,
-.caption-overlay:focus-within .caption-window > .capture-toggle {
+.caption-overlay:focus-within .resize-grip,
+.settings-overlay-preview:hover .resize-grip,
+.settings-overlay-preview:focus-within .resize-grip {
   opacity: 1;
   pointer-events: auto;
 }
