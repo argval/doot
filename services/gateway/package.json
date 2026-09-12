@@ -16,7 +16,7 @@
     "@doot/db": "0.1.0",
     "@doot/protocol": "0.1.0",
     "@fastify/websocket": "^11.0.2",
-    "fastify": "^5.2.1",
+    "fastify": "^5.12.1",
     "pino-pretty": "^13.0.0",
     "ws": "^8.18.0"
   },
