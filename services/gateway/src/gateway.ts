@@ -389,7 +389,9 @@ function handleProviderEvent(
       const settling = findSettlingUtterance(session, event.turnId, event.speakerId);
       if (settling) {
         settling.endMs = Math.max(settling.endMs, event.timestampMs);
-        flushDraftTranslation(translator, socket, session, settling);
+        if (!session.nativeTranslation) {
+          flushDraftTranslation(translator, socket, session, settling);
+        }
         return;
       }
       if (
@@ -404,9 +406,12 @@ function handleProviderEvent(
           event.timestampMs,
         );
         assignSpeaker(session.activeUtterance, event.speakerId);
-        // Flush MT as soon as speech stops so captions land inside 1–2s.
-        // A pending final may still correct the source; that only delays sealing.
-        flushDraftTranslation(translator, socket, session, session.activeUtterance);
+        // Flush text MT as soon as speech stops so captions land inside 1–2s.
+        // Native Live Translate must not run the passthrough translator — that
+        // would paint source onto translated-only captions.
+        if (!session.nativeTranslation) {
+          flushDraftTranslation(translator, socket, session, session.activeUtterance);
+        }
         scheduleGraceFinalization(translator, options, socket, session, session.activeUtterance,
           event.finalTranscriptPending ? PENDING_FINAL_GRACE_MS : options.utteranceGraceMs);
       }
@@ -593,7 +598,7 @@ function updateNativeTranslation(
   session: SessionState,
   event: Extract<ProviderStreamEvent, { type: "translation" }>,
 ): void {
-  const translated = collapseStutter(normalizeTranscript(event.text));
+  const translated = normalizeTranscript(event.text);
   if (!translated) return;
   if (isCompletedProviderTurn(session, event.turnId, event.speakerId)) return;
 
@@ -770,6 +775,7 @@ function queueDraftTranslation(
   if (
     session.closed
     || session.closing
+    || session.nativeTranslation
     || !isLiveUtterance(session, utterance)
     || !utterance.sourceText
     || utterance.draftSourceText === utterance.sourceText
@@ -844,6 +850,11 @@ function finalizeActiveUtterance(
   utterance = session.activeUtterance,
 ): Promise<void> {
   if (!utterance) return session.pendingFinalizations;
+  // Native turns must wait for Gemini's translation. Sealing on speech_end
+  // with blank translatedText hides the line and drops the late English caption.
+  if (session.nativeTranslation && !normalizeTranscript(utterance.nativeTranslatedText ?? "")) {
+    return session.pendingFinalizations;
+  }
 
   if (session.activeUtterance === utterance) session.activeUtterance = null;
   const completedKey = utteranceLookupKey(utterance.providerTurnId, utterance.speakerId)
@@ -855,9 +866,6 @@ function finalizeActiveUtterance(
   }
   clearUtteranceTimers(utterance);
   utterance.sourceText = collapseStutter(utterance.sourceText);
-  if (utterance.nativeTranslatedText) {
-    utterance.nativeTranslatedText = collapseStutter(utterance.nativeTranslatedText);
-  }
   if (!utterance.sourceText && !utterance.nativeTranslatedText) return session.pendingFinalizations;
   session.providerSession?.commitAudioThrough(utterance.endMs);
   const request = session.request;
@@ -902,7 +910,7 @@ function finalizeActiveUtterance(
         }
       }
     }
-    if (translatedText) translatedText = collapseStutter(translatedText);
+    if (translatedText && !session.nativeTranslation) translatedText = collapseStutter(translatedText);
     if (session.closed) return;
     queueFinalizedCaption(session, utterance, translatedText);
     if (session.closed) return;

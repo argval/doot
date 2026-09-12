@@ -49,3 +49,11 @@ test("keeps CJK sentence punctuation so Gemini soft-splits still fire", () => {
     "这是第一句话。这是第二句话。",
   );
 });
+
+test("can merge native captions without collapsing an emphatic repeat", () => {
+  assert.equal(
+    mergeStreamingText("", "Get back Get back", { collapseRepeats: false }),
+    "Get back Get back",
+  );
+  assert.equal(collapseStutter("Get back Get back"), "Get back");
+});
