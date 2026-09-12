@@ -7,8 +7,8 @@ import type {
 } from "@doot/protocol";
 
 export type ProviderStreamEvent =
-  | { type: "speech_start"; timestampMs: number; turnId?: string }
-  | { type: "speech_end"; timestampMs: number; turnId?: string; finalTranscriptPending?: boolean }
+  | { type: "speech_start"; timestampMs: number; turnId?: string; speakerId?: string }
+  | { type: "speech_end"; timestampMs: number; turnId?: string; speakerId?: string; finalTranscriptPending?: boolean }
   | {
     type: "transcript";
     text: string;
@@ -16,6 +16,8 @@ export type ProviderStreamEvent =
     /** Provider-session identity for correlating late events to a speech interval. */
     turnId?: string;
     languageCode?: string;
+    /** Known speaker when the provider diarizes; omitted/unknown does not split lines. */
+    speakerId?: string;
     /** True only when the provider emitted a complete utterance transcript. */
     isFinal: boolean;
   }
@@ -25,6 +27,7 @@ export type ProviderStreamEvent =
     text: string;
     timestampMs: number;
     turnId?: string;
+    speakerId?: string;
     languageCode?: string;
     /** True when the provider has settled the translated utterance. */
     isFinal: boolean;

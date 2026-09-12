@@ -7,6 +7,10 @@ export interface TranslationRequest {
   text: string;
   source: SupportedLanguage;
   target: SupportedLanguage;
+  /** Wall-clock budget for this call. Drafts are shorter than finals. */
+  deadlineMs?: number;
+  /** Drafts skip slow fallbacks; finals may retry. */
+  urgency?: "draft" | "final";
 }
 
 export type TranslateText = (request: TranslationRequest) => Promise<string>;

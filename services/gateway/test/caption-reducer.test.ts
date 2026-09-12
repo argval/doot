@@ -5,6 +5,7 @@ import {
   EMPTY_CAPTION_STATE,
   reduceCaptionEvent,
   selectVisibleCaptions,
+  speakerTintFor,
 } from "../../../apps/desktop/src/captions.js";
 
 test("replaces active revisions and commits only the final revision", () => {
@@ -277,6 +278,29 @@ test("late first text for an older interval never steals the live line or change
   assert.equal(state.active?.utteranceId, "new");
   state = reduceCaptionEvent(state, caption({ utteranceId: "middle", sequence: 1, translatedText: "Middle speech", isFinal: true }));
   assert.deepEqual(selectVisibleCaptions(state).lines.map((line) => line.translatedText), ["Late old speech", "Middle speech", "New speech"]);
+});
+
+test("tints settled diarized lines without adding speaker names", () => {
+  let state = reduceCaptionEvent(EMPTY_CAPTION_STATE, caption({
+    utteranceId: "session:1:0",
+    speakerId: "S1",
+    translatedText: "First speaker",
+    isFinal: true,
+  }));
+  state = reduceCaptionEvent(state, caption({
+    utteranceId: "session:2:1",
+    sequence: 1,
+    speakerId: "S2",
+    translatedText: "Second speaker",
+    isFinal: false,
+  }));
+
+  const visible = selectVisibleCaptions(state);
+  assert.equal(visible.lines[0]?.speakerTint, speakerTintFor("S1", false));
+  assert.ok(visible.lines[0]?.speakerTint);
+  assert.equal(visible.lines[1]?.isActive, true);
+  assert.equal(visible.lines[1]?.speakerTint, undefined);
+  assert.notEqual(visible.lines[0]?.utteranceId, visible.lines[1]?.utteranceId);
 });
 
 function caption(overrides: Partial<CaptionEvent>): CaptionEvent {

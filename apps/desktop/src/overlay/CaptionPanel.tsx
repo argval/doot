@@ -99,6 +99,7 @@ export function CaptionPanel({
               <p
                 key={line.utteranceId}
                 dir={targetLanguage === "auto" ? "auto" : undefined}
+                data-speaker={line.speakerTint}
                 className={line.isActive
                   ? "caption-text caption-turn live"
                   : "caption-text caption-turn"}

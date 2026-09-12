@@ -313,6 +313,8 @@ export interface CaptionEvent {
   startMs: number;
   endMs: number;
   provider: ProviderId;
+  /** Stable provider speaker label when diarization is enabled. Overlay identity stays utteranceId. */
+  speakerId?: string;
 }
 
 export interface SessionStoppedEvent {

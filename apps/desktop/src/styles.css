@@ -327,6 +327,18 @@ button {
   border-inline-start-color: var(--overlay-accent);
 }
 
+.caption-turn[data-speaker="1"]:not(.live) {
+  border-inline-start-color: var(--caption-speaker-1);
+}
+
+.caption-turn[data-speaker="2"]:not(.live) {
+  border-inline-start-color: var(--caption-speaker-2);
+}
+
+.caption-turn[data-speaker="3"]:not(.live) {
+  border-inline-start-color: var(--caption-speaker-3);
+}
+
 .caption-turn:not(.live) {
   color: var(--overlay-ink-muted);
 }
