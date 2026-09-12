@@ -832,6 +832,75 @@ test("publishes native translations that arrive before source transcripts", asyn
   }
 });
 
+test("native Live Translate does not paint source after speech_end before English arrives", async () => {
+  const harness = await createHarness(20, true);
+  try {
+    const stream = harness.provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 100, turnId: "ja-en-1" });
+    stream.emit({
+      type: "transcript",
+      text: "待って",
+      timestampMs: 150,
+      turnId: "ja-en-1",
+      languageCode: "ja",
+      isFinal: false,
+    });
+    stream.emit({ type: "speech_end", timestampMs: 220, turnId: "ja-en-1" });
+    await delay(50);
+    assert.equal(harness.translator.requests.length, 0);
+    assert.equal(
+      harness.client.messages.some((message) => (
+        message.type === "caption" && message.translatedText !== "" && (
+          message.translatedText === "待って"
+          || message.translatedText.startsWith("English:")
+        )
+      )),
+      false,
+    );
+
+    stream.emit({
+      type: "translation",
+      text: "Wait!",
+      timestampMs: 400,
+      turnId: "ja-en-1",
+      languageCode: "en",
+      isFinal: true,
+    });
+    const final = await harness.client.waitForMessage(
+      (message) => message.type === "caption" && message.isFinal,
+    );
+    assert.equal(final.type, "caption");
+    assert.equal(final.translatedText, "Wait!");
+    assert.equal(final.sourceText, "待って");
+    assert.equal(harness.translator.requests.length, 0);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("native Live Translate keeps an emphatic repeated English line", async () => {
+  const harness = await createHarness(2_000, true);
+  try {
+    const stream = harness.provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 100, turnId: "emphasis" });
+    stream.emit({
+      type: "translation",
+      text: "Get back Get back",
+      timestampMs: 180,
+      turnId: "emphasis",
+      languageCode: "en",
+      isFinal: true,
+    });
+    const final = await harness.client.waitForMessage(
+      (message) => message.type === "caption" && message.isFinal,
+    );
+    assert.equal(final.type, "caption");
+    assert.equal(final.translatedText, "Get back Get back");
+  } finally {
+    await harness.close();
+  }
+});
+
 test("finalizes a native translated-only turn without a source transcript", async () => {
   const harness = await createHarness(2_000, true);
   try {

@@ -502,7 +502,9 @@ class GeminiLiveSession implements ProviderStreamSession {
 
     const relative = textAfterCommitted(filteredIncoming, this.committedTranslated);
     if (!relative) return;
-    const merged = mergeStreamingText(this.translatedText, relative);
+    // Native captions are already translated. Do not run the MT stutter filter
+    // on them — "Get back Get back" is often the real English line.
+    const merged = mergeStreamingText(this.translatedText, relative, { collapseRepeats: false });
     const filteredMerged = filterGeminiTranslationToTarget(
       merged,
       this.options.target,

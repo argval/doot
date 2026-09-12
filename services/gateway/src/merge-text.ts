@@ -1,36 +1,47 @@
 const wordSegmenter = new Intl.Segmenter(undefined, { granularity: "word" });
 
-export function mergeStreamingText(existing: string, incoming: string): string {
+export function mergeStreamingText(
+  existing: string,
+  incoming: string,
+  options: { collapseRepeats?: boolean } = {},
+): string {
+  const collapse = (text: string) => {
+    const normalized = text.replace(/\s+/g, " ").trim();
+    // First native snapshot should keep emphatic repeats; later merges still
+    // collapse Gemini's overlapping re-emits of the same caption.
+    if (options.collapseRepeats === false && !existing) return normalized;
+    return collapseStutter(normalized);
+  };
   const normalized = incoming.replace(/\s+/g, " ").trim();
-  if (!existing) return collapseStutter(normalized);
+  if (!existing) return collapse(normalized);
   if (!normalized) return existing;
   if (normalized === existing || existing.startsWith(normalized)) {
-    return collapseStutter(existing);
+    return collapse(existing);
   }
-  if (normalized.startsWith(existing)) return collapseStutter(normalized);
+  if (normalized.startsWith(existing)) return collapse(normalized);
 
-  if (containsPhrase(existing, normalized)) return collapseStutter(existing);
-  if (containsPhrase(normalized, existing)) return collapseStutter(normalized);
+  if (containsPhrase(existing, normalized)) return collapse(existing);
+  if (containsPhrase(normalized, existing)) return collapse(normalized);
 
   const existingWords = tokenize(existing);
   const incomingWords = tokenize(normalized);
-  if (hasWordPrefix(incomingWords, existingWords)) return collapseStutter(normalized);
-  if (hasWordPrefix(existingWords, incomingWords)) return collapseStutter(existing);
+  if (hasWordPrefix(incomingWords, existingWords)) return collapse(normalized);
+  if (hasWordPrefix(existingWords, incomingWords)) return collapse(existing);
 
   // Providers sometimes replace a cumulative snapshot after correcting a word.
   // A substantial shared prefix identifies that as a revision, not new speech.
   if (hasSubstantialSharedPrefix(existingWords, incomingWords)) {
-    return collapseStutter(normalized);
+    return collapse(normalized);
   }
 
   for (let size = Math.min(incomingWords.length, existingWords.length); size >= 1; size -= 1) {
     if (sameWords(existingWords.slice(-size), incomingWords.slice(0, size))) {
-      if (size === incomingWords.length) return collapseStutter(existing);
-      return collapseStutter(joinTokens(existing, [...existingWords, ...incomingWords.slice(size)]));
+      if (size === incomingWords.length) return collapse(existing);
+      return collapse(joinTokens(existing, [...existingWords, ...incomingWords.slice(size)]));
     }
   }
 
-  return collapseStutter(`${existing} ${normalized}`);
+  return collapse(`${existing} ${normalized}`);
 }
 
 /** Collapse trailing/internal repeats before translation so MT does not echo stutters. */

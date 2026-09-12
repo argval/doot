@@ -549,6 +549,41 @@ test("does not stutter when Gemini re-emits the same Spanish translation fragmen
   }
 });
 
+test("keeps an emphatic repeated English phrase from Live Translate", async () => {
+  const server = new FakeGeminiServer();
+  const events: ProviderStreamEvent[] = [];
+  const session = new GeminiLiveTranslateSession(
+    "test-gemini-key",
+    {
+      sessionId: "gemini-emphasis",
+      source: "ja",
+      target: "en",
+      sampleRate: 16_000,
+      channels: 1,
+      onEvent: (event) => events.push(event),
+    },
+    { endpoint: await server.endpoint(), setupTimeoutMs: 250, endTimeoutMs: 250 },
+  );
+  try {
+    const opening = session.open();
+    await server.waitForMessage(isSetupMessage);
+    server.send({ setupComplete: {} });
+    await opening;
+    server.send({
+      serverContent: {
+        outputTranscription: { text: "Get back Get back", languageCode: "en" },
+      },
+    });
+    const caption = await waitForGemini(() => events.find((event) => (
+      event.type === "translation" && event.text === "Get back Get back"
+    )));
+    assert.equal(caption.type, "translation");
+  } finally {
+    await session.close();
+    await server.close();
+  }
+});
+
 test("strips Spanish source leaks from Gemini English captions", async () => {
   const server = new FakeGeminiServer();
   const endpoint = await server.endpoint();
