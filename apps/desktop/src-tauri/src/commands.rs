@@ -27,6 +27,7 @@ pub async fn start_caption_session(
     state: State<'_, AppState>,
     source_language: String,
     target_language: String,
+    context_hint: Option<String>,
 ) -> Result<SessionInfo, String> {
     let mut gateway = state.gateway.lock().await;
     if state.exiting.load(std::sync::atomic::Ordering::SeqCst) {
@@ -36,6 +37,7 @@ pub async fn start_caption_session(
     let config = SessionConfig {
         source_language: Language::parse(&source_language)?,
         target_language: Language::parse(&target_language)?,
+        context_hint: context_hint.unwrap_or_default(),
     };
     let mut engine = state
         .audio_engine

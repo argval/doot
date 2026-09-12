@@ -39,6 +39,7 @@ impl std::fmt::Display for Language {
 pub struct SessionConfig {
     pub source_language: Language,
     pub target_language: Language,
+    pub context_hint: String,
 }
 
 #[derive(Debug)]
@@ -105,6 +106,7 @@ impl AudioEngine {
         let provider_name = "automatic".to_string();
         let source_language = config.source_language.to_string();
         let target_language = config.target_language.to_string();
+        let context_hint = config.context_hint.clone();
 
         self.capture.start()?;
         let capture_config = self.capture.config();
@@ -114,6 +116,7 @@ impl AudioEngine {
                 session_id: session_id.to_string(),
                 source_language,
                 target_language,
+                context_hint,
                 sample_rate: capture_config.sample_rate,
                 channels: capture_config.channels,
             },
@@ -261,6 +264,7 @@ mod tests {
             config: SessionConfig {
                 source_language: Language::parse("en").unwrap(),
                 target_language: Language::parse("en").unwrap(),
+                context_hint: String::new(),
             },
             provider_name: "mock".into(),
         });

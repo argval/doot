@@ -21,6 +21,7 @@ import {
 import {
   CAPTION_FONT_SIZE_MAX,
   CAPTION_FONT_SIZE_MIN,
+  CONTEXT_HINT_MAX_CHARS,
   DEFAULT_PREFS,
   hoverBoostFor,
   loadPrefs,
@@ -140,7 +141,7 @@ const SECTIONS: ReadonlyArray<{
 }> = [
   { id: "setup", label: "Setup", icon: KeyRound, keywords: "key api sarvam gemini permission audio" },
   { id: "general", label: "General", icon: SlidersHorizontal, keywords: "login startup overlay position click-through" },
-  { id: "captions", label: "Captions", icon: Captions, keywords: "opacity ghost balanced solid text size font preview" },
+  { id: "captions", label: "Captions", icon: Captions, keywords: "opacity ghost balanced solid text size font preview context names show match" },
   { id: "history", label: "History", icon: History, keywords: "sessions transcript export" },
   { id: "privacy", label: "Privacy", icon: Shield, keywords: "save retention history" },
   { id: "connection", label: "Connection", icon: Activity, keywords: "gateway audio permission route timing" },
@@ -466,6 +467,23 @@ function CaptionsSection({
             />
             <span className="settings-slider-value">{prefs.captionFontSize}px</span>
           </div>
+        </label>
+        <label className="settings-row settings-row-stack">
+          <span>
+            <strong>What's playing?</strong>
+            <em>Optional hint for the next capture — a match, show, or stream. Leave blank to infer names from speech.</em>
+          </span>
+          <input
+            type="text"
+            maxLength={CONTEXT_HINT_MAX_CHARS}
+            value={prefs.contextHint}
+            placeholder="Premier League, Bleach, …"
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(event) => {
+              onPatch({ contextHint: event.target.value });
+            }}
+          />
         </label>
       </section>
     </>

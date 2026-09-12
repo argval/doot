@@ -75,6 +75,9 @@ test("language modes restore the last pair, preserve Auto→English, and bound r
   const malformed = normalizePrefs({ recentPairs: [null, { source: "en", target: "auto" }, { source: "invalid", target: "en" }], lastTranslationPair: {} });
   assert.deepEqual(malformed.recentPairs, []);
   assert.deepEqual(malformed.lastTranslationPair, { source: "auto", target: "en" });
+  assert.equal(normalizePrefs({ contextHint: "  Bleach" }).contextHint, "  Bleach");
+  assert.equal(normalizePrefs({ contextHint: "x".repeat(90) }).contextHint.length, 80);
+  assert.equal(DEFAULT_PREFS.contextHint, "");
 });
 
 test("settled speaker turns tint the existing left bar without names", () => {

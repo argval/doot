@@ -13,6 +13,7 @@ export const CAPTION_FONT_SIZE_MIN = 18;
 export const CAPTION_FONT_SIZE_MAX = 40;
 export const OVERLAY_IDLE_OPACITY_MIN = 0.18;
 export const OVERLAY_IDLE_OPACITY_MAX = 0.7;
+export const CONTEXT_HINT_MAX_CHARS = 80;
 
 export interface DesktopPrefs {
   sourceLanguage: SupportedLanguage;
@@ -24,6 +25,7 @@ export interface DesktopPrefs {
   recentPairs: TranslationPair[];
   lastTranslationPair: TranslationPair;
   onboardingComplete: boolean;
+  contextHint: string;
 }
 
 export interface TranslationPair { source: SupportedLanguage; target: SupportedTargetLanguage }
@@ -38,6 +40,7 @@ export const DEFAULT_PREFS: DesktopPrefs = {
   recentPairs: [],
   lastTranslationPair: { source: "auto", target: "en" },
   onboardingComplete: false,
+  contextHint: "",
 };
 
 const PREFS_FILE = "prefs.json";
@@ -48,6 +51,11 @@ let memoryPrefs: DesktopPrefs = { ...DEFAULT_PREFS };
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function normalizeContextHint(value: unknown): string {
+  if (typeof value !== "string") return DEFAULT_PREFS.contextHint;
+  return value.slice(0, CONTEXT_HINT_MAX_CHARS);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -122,6 +130,7 @@ export function normalizePrefs(value: unknown): DesktopPrefs {
     recentPairs,
     lastTranslationPair,
     onboardingComplete: record.onboardingComplete === true,
+    contextHint: normalizeContextHint(record.contextHint),
   };
 }
 

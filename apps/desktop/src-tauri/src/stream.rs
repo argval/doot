@@ -20,6 +20,7 @@ pub struct StreamSession {
     pub session_id: String,
     pub source_language: String,
     pub target_language: String,
+    pub context_hint: String,
     pub sample_rate: u32,
     pub channels: u16,
 }
@@ -126,6 +127,8 @@ struct StartSessionMessage<'a> {
     sample_rate: u32,
     channels: u16,
     next_caption_sequence: u64,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    context_hint: &'a str,
 }
 
 #[derive(Serialize)]
@@ -269,6 +272,7 @@ async fn run_stream_once(
             sample_rate: session.sample_rate,
             channels: session.channels,
             next_caption_sequence: *next_caption_sequence,
+            context_hint: &session.context_hint,
         },
     )
     .await
@@ -606,6 +610,7 @@ mod tests {
             session_id: "test".into(),
             source_language: "en".into(),
             target_language: "en".into(),
+            context_hint: String::new(),
             sample_rate: 16000,
             channels: 1,
         };

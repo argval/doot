@@ -142,7 +142,7 @@ export function App() {
         setCaptions(EMPTY_CAPTION_STATE);
         setAudio({ level: 0, silentForMs: 0 });
         setCaptureState("starting");
-        const next = await startCaptionSession(sessionSource, targetLanguage);
+        const next = await startCaptionSession(sessionSource, targetLanguage, prefs.contextHint);
         acceptedSessionIdRef.current = next.sessionId;
         setSession(next);
         if (prefs.translateEnabled) void updatePrefs({ recentPairs: rememberPair(prefs), lastTranslationPair: { source: prefs.sourceLanguage, target: prefs.targetLanguage === "auto" ? "en" : prefs.targetLanguage } });

@@ -11,6 +11,10 @@ export interface TranslationRequest {
   deadlineMs?: number;
   /** Drafts skip slow fallbacks; finals may retry. */
   urgency?: "draft" | "final";
+  /** Optional program/show/match hint from Settings. */
+  contextHint?: string;
+  /** Heard→canonical spellings inferred for this session. */
+  canonicalNames?: ReadonlyArray<{ heard: string; canonical: string }>;
 }
 
 export type TranslateText = (request: TranslationRequest) => Promise<string>;

@@ -29,6 +29,7 @@ import {
   TranslationUnavailableError,
   type TranslationRequest,
 } from "../src/translation/contract.js";
+import type { InferCaptionContext } from "../src/caption-context.js";
 
 function asTranslationRouter(
   translate: (request: TranslationRequest) => Promise<string>,
@@ -787,6 +788,50 @@ test("publishes provider-native translations without calling the text translator
   }
 });
 
+test("inferred names correct later native captions without rewriting earlier lines", async () => {
+  let inferCalls = 0;
+  const infer: InferCaptionContext = async () => {
+    inferCalls += 1;
+    return { title: "Bleach", names: [{ heard: "Yohaba", canonical: "Yhwach" }] };
+  };
+  const harness = await createHarness(2_000, true, undefined, infer);
+  try {
+    const stream = harness.provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 100, turnId: "t1" });
+    stream.emit({
+      type: "translation",
+      text: "Yohaba appears before the throne",
+      timestampMs: 180,
+      languageCode: "en",
+      isFinal: true,
+      turnId: "t1",
+    });
+    const first = await harness.client.waitForMessage(
+      (message) => message.type === "caption" && message.isFinal,
+    );
+    assert.equal(first.type, "caption");
+    assert.equal(first.translatedText, "Yohaba appears before the throne");
+    await waitForCondition(() => inferCalls >= 1);
+    stream.emit({ type: "speech_start", timestampMs: 800, turnId: "t2" });
+    stream.emit({
+      type: "translation",
+      text: "Yohaba raises his sword",
+      timestampMs: 900,
+      languageCode: "en",
+      isFinal: false,
+      turnId: "t2",
+    });
+    const draft = await harness.client.waitForMessage(
+      (message) => message.type === "caption" && !message.isFinal && message.translatedText.includes("Yhwach"),
+    );
+    assert.equal(draft.type, "caption");
+    assert.equal(draft.translatedText, "Yhwach raises his sword");
+    assert.equal(harness.translator.requests.length, 0);
+  } finally {
+    await harness.close();
+  }
+});
+
 test("publishes native translations that arrive before source transcripts", async () => {
   const harness = await createHarness(2_000, true);
   try {
@@ -1242,6 +1287,7 @@ async function createHarness(
   utteranceGraceMs = 25,
   nativeTranslation = false,
   db?: DootDb,
+  inferCaptionContext?: InferCaptionContext,
 ): Promise<Harness> {
   const sessionId = `test-${Math.random().toString(16).slice(2)}`;
   const provider = new ControlledProvider(nativeTranslation);
@@ -1250,7 +1296,7 @@ async function createHarness(
   const app = await buildServer(
     router,
     asTranslationRouter((request) => translator.translate(request)),
-    { utteranceGraceMs, db },
+    { utteranceGraceMs, db, inferCaptionContext },
   );
   const address = await app.listen({ host: "127.0.0.1", port: 0 });
   const client = await RealtimeClient.connect(
