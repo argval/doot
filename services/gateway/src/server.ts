@@ -17,24 +17,28 @@ import { GeminiTranscribeProvider } from "./speech/gemini/transcribe.js";
 import { MockProvider } from "./speech/mock/provider.js";
 import { ProviderRouter } from "./speech/router.js";
 import { SarvamProvider } from "./speech/sarvam/provider.js";
+import { SpeechmaticsProvider } from "./speech/speechmatics/provider.js";
+import { OpenAITranscribeProvider } from "./speech/openai/provider.js";
 import { GeminiTextTranslator } from "./translation/gemini/provider.js";
 import { TranslationRouter } from "./translation/router.js";
 import { SarvamTextTranslator } from "./translation/sarvam/provider.js";
 import { protectGateway } from "./security.js";
 
 export function createProviderRouter(
-  credentials: { sarvamApiKey?: string; geminiApiKey?: string } = {},
+  credentials: { sarvamApiKey?: string; geminiApiKey?: string; speechmaticsApiKey?: string; openaiApiKey?: string } = {},
 ): ProviderRouter {
   return new ProviderRouter([
     new SarvamProvider(credentials.sarvamApiKey),
     new GeminiTranscribeProvider(credentials.geminiApiKey),
     new GeminiProvider(credentials.geminiApiKey),
+    new SpeechmaticsProvider(credentials.speechmaticsApiKey),
+    new OpenAITranscribeProvider(credentials.openaiApiKey),
     new MockProvider(),
   ]);
 }
 
 export function createTranslationRouter(
-  credentials: { sarvamApiKey?: string; geminiApiKey?: string } = {},
+  credentials: { sarvamApiKey?: string; geminiApiKey?: string; speechmaticsApiKey?: string; openaiApiKey?: string } = {},
 ): TranslationRouter {
   return new TranslationRouter([
     new SarvamTextTranslator(credentials.sarvamApiKey),
@@ -46,10 +50,14 @@ export async function buildServer(
   router: ProviderRouter = createProviderRouter({
     sarvamApiKey: config.sarvamApiKey,
     geminiApiKey: config.geminiApiKey,
+    speechmaticsApiKey: config.speechmaticsApiKey,
+    openaiApiKey: config.openaiApiKey,
   }),
   translation: TranslationRouter = createTranslationRouter({
     sarvamApiKey: config.sarvamApiKey,
     geminiApiKey: config.geminiApiKey,
+    speechmaticsApiKey: config.speechmaticsApiKey,
+    openaiApiKey: config.openaiApiKey,
   }),
   gatewayOptions: RealtimeGatewayOptions = {},
 ) {

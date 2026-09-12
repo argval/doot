@@ -139,7 +139,7 @@ npm run benchmark:live -- \
   --quality-notes "Manual translation assessment"
 ```
 
-Use equal source/target languages with `--provider gemini-transcribe`. For Spanish→English, French→English, and German→English, use `--provider gemini`. Compare English→Spanish and English→Hindi with `--provider sarvam` against `--provider gemini` as the native Live Translate baseline. Sarvam→Spanish also requires the Gemini key for text translation. The POC does not make external API calls during automated tests.
+Use equal source/target languages with `--provider gemini-transcribe`. For Spanish→English, French→English, and German→English, use `--provider gemini`. Compare English→Spanish and English→Hindi with `--provider sarvam` against `--provider gemini` as the native Live Translate baseline. `--provider speechmatics` and `--provider openai-transcribe` are explicit STT comparison lanes; translation pairs still use Doot's pinned Sarvam/Gemini text translator. OpenAI's GPT Live Transcribe path resamples Doot's 16 kHz PCM to its required 24 kHz input. Sarvam→Spanish also requires the Gemini key for text translation. The POC does not make external API calls during automated tests.
 
 Locally, invoke the runner directly with `bun run --cwd services/gateway benchmark:live --audio /path/to/clip.pcm --source kn --target en --provider sarvam --reference /path/to/clip.reference.json`. Use short, non-sensitive clips and run the same clip/pair five times before comparing distributions. Keep provider/model, audio, and reference unchanged when comparing a code change.
 

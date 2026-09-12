@@ -10,7 +10,7 @@ const managed = process.argv.includes("--managed");
 const control = managed ? createInterface({ input: process.stdin }) : null;
 let parentClosed = false;
 control?.once("close", () => { parentClosed = true; });
-let startup: { authToken: string; dbPath: string; migrationsFolder: string; sarvamApiKey?: string; geminiApiKey?: string } | undefined;
+let startup: { authToken: string; dbPath: string; migrationsFolder: string; sarvamApiKey?: string; geminiApiKey?: string; speechmaticsApiKey?: string; openaiApiKey?: string } | undefined;
 if (control) {
   const [line] = await once(control, "line");
   if (typeof line !== "string" || line.length > 32_768) throw new Error("Invalid desktop startup configuration");
