@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { ChevronDown, Circle, Languages, Square, Settings2, History, MousePointer2 } from "lucide-react";
+import { ChevronDown, Circle, Languages, Square, History } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -40,6 +40,7 @@ import {
   updatePrefs,
   type DesktopPrefs,
 } from "./lib/prefs";
+import { speechProviderLabel } from "./lib/speech-labels";
 
 const selectableSourceLanguages = SUPPORTED_LANGUAGES.filter(
   (language) => language !== "auto",
@@ -76,9 +77,9 @@ export function App() {
   const statusLabel = preview.status ?? (captureState === "finalizing" ? "Finalizing captions…" : isTransitioning ? (capturing ? "Stopping…" : "Starting…")
     : captureState === "reconnecting" ? "Reconnecting…"
     : captureState === "starting" ? "Starting…"
-    : capturing ? (audio.silentForMs >= 5000 ? "No audio detected" : "Listening")
-    : "Stopped");
-  const providerLabel = session?.provider || prefs.lastProvider;
+    : capturing && audio.silentForMs >= 5000 ? "No audio detected"
+    : undefined);
+  const providerLabel = speechProviderLabel(session?.provider || prefs.lastProvider);
   const captureHint = capturing
     ? `Stop capturing (${captureShortcutLabel()})${providerLabel ? ` · ${providerLabel}` : ""}`
     : `Start capturing (${captureShortcutLabel()})`;
@@ -396,8 +397,20 @@ export function App() {
               disabled={languagesLocked}
             />
           )}
-          <button type="button" className="language-translate" aria-label="Open Settings" title="Open Settings" onClick={openSettings}><Settings2 size={14} /></button>
-          <button type="button" className="language-translate" aria-label="Enable click-through" title={`Click-through · unlock with ${interactionShortcutLabel()}`} onClick={() => { if (isTauriRuntime()) void invoke("set_overlay_click_through", { enabled: true }).catch((error: unknown) => setError(String(error))); }}><MousePointer2 size={14} /></button>
+          <button
+            type="button"
+            className={capturing ? "capture-toggle active" : "capture-toggle"}
+            disabled={isTransitioning}
+            aria-pressed={capturing}
+            aria-label={capturing ? "Stop capturing" : "Start capturing"}
+            title={captureHint}
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={() => void toggleCapture()}
+          >
+            {capturing
+              ? <Square size={10} fill="currentColor" />
+              : <Circle size={11} fill="currentColor" />}
+          </button>
         </div>
 
         <CaptionPanel
@@ -413,22 +426,6 @@ export function App() {
           copyRef={captionCopyRef}
           showResizeGrip
           onOpenSettings={openSettings}
-          captureControl={(
-            <button
-              type="button"
-              className={capturing ? "capture-toggle active" : "capture-toggle"}
-              disabled={isTransitioning}
-              aria-pressed={capturing}
-              aria-label={capturing ? "Stop capturing" : "Start capturing"}
-              title={captureHint}
-              onMouseDown={(event) => event.stopPropagation()}
-              onClick={() => void toggleCapture()}
-            >
-              {capturing
-                ? <Square size={10} fill="currentColor" />
-                : <Circle size={11} fill="currentColor" />}
-            </button>
-          )}
           onDragStart={(event) => {
             if (event.button !== 0 || !isTauriRuntime()) {
               return;
@@ -463,7 +460,6 @@ function LanguageSelect({
   const commit = () => { if (draft !== null) { const language = match(draft); if (language) onChange(language); } setDraft(null); };
   return (
     <label className="language-select">
-      {label ? <span>{label}</span> : null}
       <input
         list={id}
         value={draft ?? LANGUAGE_LABELS[value]}

@@ -53,6 +53,7 @@ test("Auto transcription follows the text script without declaring an unknown la
   assert.match(render("こんにちは"), /data-script="cjk"/);
 });
 import { DEFAULT_PREFS, normalizePrefs, rememberPair, translationModePatch } from "../../../apps/desktop/src/lib/prefs.js";
+import { speechProviderLabel } from "../../../apps/desktop/src/lib/speech-labels.js";
 
 test("language modes restore the last pair, preserve Auto→English, and bound recents", () => {
   const translating = normalizePrefs({ ...DEFAULT_PREFS, sourceLanguage: "kn", targetLanguage: "en" });
@@ -95,4 +96,11 @@ test("caption failures preserve readable turns and drafts do not flood live anno
   assert.match(html, /aria-live="polite" aria-atomic="true">Last finalized caption\./);
   assert.match(html, /lang="ar" dir="rtl"/);
   assert.doesNotMatch(html, /class="caption-error"/);
+});
+
+test("speech provider ids render as human-readable labels", () => {
+  assert.equal(speechProviderLabel("sarvam"), "Sarvam recognition");
+  assert.equal(speechProviderLabel("gemini-transcribe"), "Gemini Transcribe Live");
+  assert.equal(speechProviderLabel("openai-transcribe"), "OpenAI GPT Live Transcribe");
+  assert.equal(speechProviderLabel(null), null);
 });

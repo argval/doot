@@ -29,6 +29,7 @@ export function SetupSection({ prefs, onComplete }: { prefs: DesktopPrefs; onCom
   }
   return <>
     <p className="settings-intro">Doot starts its caption service for you. Add your own provider keys, check audio permission, then choose languages on the floating overlay.</p>
+    <p className="settings-section-label">Speech services</p>
     <section className="settings-group" aria-label="Speech services">
       <div className="settings-row"><span><strong>Speech services</strong><em>Sarvam covers English and Indic speech. Gemini covers international routes. Some pairs need both keys.</em></span></div>
       <label className="settings-row"><span><strong>Provider</strong></span><select value={provider} disabled={busy} onChange={(event) => { setProvider(event.target.value); setKey(""); }}><option value="sarvam">Sarvam{keys.sarvam ? " · Saved" : ""}</option><option value="gemini">Gemini{keys.gemini ? " · Saved" : ""}</option></select></label>
@@ -37,6 +38,7 @@ export function SetupSection({ prefs, onComplete }: { prefs: DesktopPrefs; onCom
         <button disabled={!desktop || busy || !key.trim()} type="submit">Save key</button>
       </form>
     </section>
+    <p className="settings-section-label">This computer</p>
     <div className="settings-history-actions">
       <button disabled={!desktop || busy || !keys[provider as keyof typeof keys]} onClick={() => void save(true)}>Remove saved {provider === "sarvam" ? "Sarvam" : "Gemini"} key</button>
       <button disabled={!desktop || busy} onClick={() => { void openAudioSettings().catch((error: unknown) => setNotice(String(error))); }}>Open audio permissions</button>
