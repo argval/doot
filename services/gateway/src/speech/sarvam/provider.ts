@@ -13,9 +13,6 @@ export class SarvamProvider implements SpeechProvider {
     sourceLanguages: SARVAM_SUPPORTED_LANGUAGES,
     sampleRates: [16_000],
     channels: [1],
-    routingPriority: 90,
-    automaticDetectionPriority: 100,
-    restrictAutoToFamilyTargets: true,
   } as const;
 
   constructor(private readonly apiKey?: string) {

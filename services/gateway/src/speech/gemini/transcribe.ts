@@ -9,7 +9,7 @@ import {
 } from "./live.js";
 import { GEMINI_TRANSCRIBE_SOURCE_LANGUAGES } from "./languages.js";
 
-/** Gemini's caption-native live STT path. Translation stays in the text router. */
+/** Gemini's same-language live STT path. Translate pairs use Live Translate. */
 export class GeminiTranscribeProvider implements SpeechProvider {
   readonly id = "gemini-transcribe" as const;
   readonly configured: boolean;
@@ -17,8 +17,7 @@ export class GeminiTranscribeProvider implements SpeechProvider {
     sourceLanguages: GEMINI_TRANSCRIBE_SOURCE_LANGUAGES,
     sampleRates: [16_000],
     channels: [1],
-    routingPriority: 85,
-    automaticDetectionPriority: 80,
+    sameLanguageOnly: true,
   } as const;
 
   constructor(

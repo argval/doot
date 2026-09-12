@@ -18,7 +18,10 @@ import {
   deleteHistorySession,
   fetchHistorySession,
   fetchHistorySessions,
+  renameHistorySession,
 } from "../lib/history";
+import { subscribeToSessionStatus } from "../lib/tauri";
+import { isTauriRuntime } from "../lib/runtime";
 
 export function HistorySection() {
   const [query, setQuery] = useState("");
@@ -31,9 +34,23 @@ export function HistorySection() {
   const [error, setError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [refresh, setRefresh] = useState(0);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 200);
+    const reload = () => { setPage(0); setRefresh((value) => value + 1); };
+    window.addEventListener("focus", reload);
+    let disposed = false;
+    let cleanup: (() => void) | undefined;
+    if (isTauriRuntime()) void subscribeToSessionStatus((status) => {
+      if (status.state === "idle" || status.state === "error") reload();
+    }).then((unsubscribe) => { if (disposed) unsubscribe(); else cleanup = unsubscribe; });
+    return () => { disposed = true; cleanup?.(); window.removeEventListener("focus", reload); };
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => { setDebouncedQuery(query.trim()); setPage(0); }, 200);
     return () => window.clearTimeout(timer);
   }, [query]);
 
@@ -43,9 +60,10 @@ export function HistorySection() {
     setError(null);
     void (async () => {
       try {
-        const next = await fetchHistorySessions(debouncedQuery, controller.signal);
+        const next = await fetchHistorySessions(debouncedQuery, controller.signal, page * 20, 21);
         if (!controller.signal.aborted) {
-          setSessions(next);
+          setSessions(next.slice(0, 20));
+          setHasMore(next.length > 20);
         }
       } catch (caught) {
         if (controller.signal.aborted) return;
@@ -58,7 +76,7 @@ export function HistorySection() {
       }
     })();
     return () => controller.abort();
-  }, [debouncedQuery]);
+  }, [debouncedQuery, page, refresh]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -99,6 +117,7 @@ export function HistorySection() {
   if (selectedId) {
     return (
       <SessionDetail
+        key={selectedId}
         detail={detail}
         loading={loadingDetail}
         error={error}
@@ -110,6 +129,12 @@ export function HistorySection() {
           setError(null);
         }}
         onConfirmingDelete={setConfirmingDelete}
+        onRename={async (title) => {
+          if (!detail) return;
+          await renameHistorySession(detail.id, title);
+          setDetail({ ...detail, title: title.trim() });
+          setRefresh((value) => value + 1);
+        }}
         onDelete={async () => {
           if (!selectedId) return;
           setDeleting(true);
@@ -119,6 +144,8 @@ export function HistorySection() {
             setSelectedId(null);
             setDetail(null);
             setConfirmingDelete(false);
+            setPage(0);
+            setRefresh((value) => value + 1);
           } catch (caught) {
             setError(historyErrorMessage(caught));
           } finally {
@@ -136,7 +163,7 @@ export function HistorySection() {
         <input
           type="search"
           value={query}
-          placeholder="Search captions or languages"
+          placeholder="Search names, captions, or languages"
           onChange={(event) => setQuery(event.target.value)}
         />
       </label>
@@ -152,11 +179,13 @@ export function HistorySection() {
                 className="settings-history-item"
                 onClick={() => setSelectedId(session.id)}
               >
-                <strong>{formatSessionWhen(session.startedAtMs)}</strong>
+                <strong>{session.title || formatSessionWhen(session.startedAtMs)}</strong>
                 <em>
+                  {session.title ? `${formatSessionWhen(session.startedAtMs)} · ` : ""}
                   {formatLanguagePair(session.sourceLanguage, session.targetLanguage)}
                   {" · "}
                   {formatCaptionCount(session.segmentCount)}
+                  {session.interrupted ? " · Interrupted" : ""}
                 </em>
                 {session.preview ? <span>{session.preview}</span> : null}
               </button>
@@ -164,6 +193,12 @@ export function HistorySection() {
           ))}
         </ul>
       )}
+      <nav className="settings-history-actions history-pagination" aria-label="History pages">
+        <button type="button" disabled={loadingList || page === 0} onClick={() => setPage(page - 1)}>Previous</button>
+        <span role="status">Page {page + 1}</span>
+        <button type="button" disabled={loadingList || !hasMore} onClick={() => setPage(page + 1)}>Next</button>
+        <button type="button" disabled={loadingList} onClick={() => { setPage(0); setRefresh((value) => value + 1); }}>Refresh</button>
+      </nav>
     </div>
   );
 }
@@ -177,6 +212,7 @@ function SessionDetail({
   onBack,
   onConfirmingDelete,
   onDelete,
+  onRename,
 }: {
   detail: HistorySessionDetail | null;
   loading: boolean;
@@ -186,7 +222,11 @@ function SessionDetail({
   onBack: () => void;
   onConfirmingDelete: (confirming: boolean) => void;
   onDelete: () => void;
+  onRename: (title: string) => Promise<void>;
 }) {
+  const [name, setName] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [feedback, setFeedback] = useState("");
   const targetLanguage = detail && isSupportedLanguage(detail.targetLanguage)
     ? detail.targetLanguage
     : "en";
@@ -202,6 +242,19 @@ function SessionDetail({
       ) : (
         <>
           <div className="settings-history-meta">
+            {detail.interrupted && <p role="status">This session was interrupted. Saved captions are available below; the ending may be incomplete.</p>}
+            <form className="history-name" onSubmit={(event) => {
+              event.preventDefault();
+              setSaving(true);
+              setFeedback("");
+              void onRename(name ?? detail.title ?? "")
+                .then(() => setFeedback("Session name saved."))
+                .catch((error: unknown) => setFeedback(historyErrorMessage(error)))
+                .finally(() => setSaving(false));
+            }}>
+              <label>Session name<input value={name ?? detail.title ?? ""} maxLength={120} placeholder="Untitled session" onChange={(event) => setName(event.target.value)} /></label>
+              <button type="submit" disabled={saving}>{saving ? "Saving…" : "Save name"}</button>
+            </form>
             <p className="settings-history-when">{formatSessionWhen(detail.startedAtMs)}</p>
             <p>
               {formatLanguagePair(detail.sourceLanguage, detail.targetLanguage)}
@@ -210,6 +263,11 @@ function SessionDetail({
             </p>
           </div>
           <div className="settings-history-actions">
+            <button type="button" onClick={() => {
+              void navigator.clipboard.writeText(formatHistoryExport(detail, "txt"))
+                .then(() => setFeedback("Transcript copied."))
+                .catch(() => setFeedback("Could not copy. Export as Text instead."));
+            }}>Copy transcript</button>
             {HISTORY_EXPORT_FORMATS.map((format) => (
               <button
                 key={format}
@@ -247,9 +305,11 @@ function SessionDetail({
               </button>
             )}
           </div>
+          <p className="settings-footnote" role="status">{feedback}</p>
           <div
             className="settings-history-transcript"
             lang={captionDocumentLang(targetLanguage)}
+            dir="auto"
           >
             {detail.segments.length === 0 ? (
               <p className="settings-footnote">This session has no saved captions.</p>

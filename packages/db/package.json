@@ -7,7 +7,8 @@
     ".": "./src/client.ts",
     "./captions": "./src/captions.ts",
     "./migrate": "./src/migrate.ts",
-    "./schema": "./src/schema.ts"
+    "./schema": "./src/schema.ts",
+    "./privacy": "./src/privacy.ts"
   },
   "scripts": {
     "db:generate": "drizzle-kit generate",

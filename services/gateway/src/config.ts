@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 try {
-  process.loadEnvFile(path.join(repoRoot, ".env"));
+  if (!process.argv.includes("--managed")) process.loadEnvFile(path.join(repoRoot, ".env"));
 } catch {
   // ponytail: optional local .env
 }
@@ -17,4 +17,5 @@ export const config = {
   port: Number(process.env.GATEWAY_PORT ?? 8787),
   sarvamApiKey: env("SARVAM_API_KEY"),
   geminiApiKey: env("GEMINI_API_KEY"),
+  authToken: env("DOOT_GATEWAY_TOKEN"),
 };

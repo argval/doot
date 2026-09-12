@@ -1,16 +1,17 @@
 import { readFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
+import { pathToFileURL } from "node:url";
 import {
   isProviderId,
   isSupportedLanguage,
   isSupportedTargetLanguage,
-  type CaptionEvent,
   type ProviderId,
   type ServerMessage,
   type SupportedLanguage,
   type SupportedTargetLanguage,
 } from "@doot/protocol";
 import WebSocket from "ws";
+import { parseReference, summarizeCaptions, type CaptionReference, type CaptionObservation } from "./benchmark-metrics.js";
 
 const FRAME_BYTES = 3_200;
 const FRAME_MS = 100;
@@ -19,16 +20,18 @@ const GEMINI_SPEECH_COST_PER_MINUTE_USD: Partial<Record<ProviderId, number>> = {
   "gemini-transcribe": 0.009,
 };
 
-interface BenchmarkOptions {
+export interface BenchmarkOptions {
   audioPath: string;
   source: SupportedLanguage;
   target: SupportedTargetLanguage;
   provider: ProviderId;
   gatewayUrl: string;
+  authToken?: string;
   qualityNotes?: string;
+  referencePath?: string;
 }
 
-interface BenchmarkResult {
+export interface BenchmarkResult extends ReturnType<typeof summarizeCaptions> {
   source: SupportedLanguage;
   target: SupportedTargetLanguage;
   providerRequested: ProviderId;
@@ -37,30 +40,35 @@ interface BenchmarkResult {
   firstTranslatedCaptionLatencyMs: number | null;
   finalCaptionLatencyMs: number | null;
   captionRevisions: number;
-  finalTranslation: string;
   providerErrors: string[];
   disconnectCount: number;
   estimatedGeminiCostUsd: number | null;
   qualityNotes?: string;
 }
 
-const options = parseOptions(process.argv.slice(2));
-const audio = await readFile(options.audioPath);
-if (audio.byteLength === 0 || audio.byteLength % 2 !== 0) {
-  throw new Error("Benchmark audio must contain complete PCM16 samples");
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const options = parseOptions(process.argv.slice(2));
+  const audio = await readFile(options.audioPath);
+  if (audio.byteLength === 0 || audio.byteLength % 2 !== 0) {
+    throw new Error("Benchmark audio must contain complete PCM16 samples");
+  }
+  const reference = options.referencePath
+    ? parseReference(JSON.parse(await readFile(options.referencePath, "utf8"))) : undefined;
+  if (reference?.boundariesMs.some((time) => time > audio.byteLength / 32)) {
+    throw new Error("Reference boundary exceeds the audio duration");
+  }
+  const result = await runBenchmark(options, audio, reference);
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  if (!result.finalTranslation || result.providerErrors.length || result.unfinishedTurns) process.exitCode = 2;
 }
 
-const result = await runBenchmark(options, audio);
-process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-if (!result.finalTranslation) process.exitCode = 2;
-
-function runBenchmark(options: BenchmarkOptions, audio: Buffer): Promise<BenchmarkResult> {
+export function runBenchmark(options: BenchmarkOptions, audio: Buffer, reference?: CaptionReference): Promise<BenchmarkResult> {
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(options.gatewayUrl);
+    const socket = new WebSocket(options.gatewayUrl, { headers: options.authToken ? { Authorization: `Bearer ${options.authToken}` } : {} });
     const sessionId = `benchmark-${Date.now()}`;
     const durationMs = Math.round(audio.byteLength / 32);
     const timeout = setTimeout(() => finishError(new Error("Benchmark timed out")), durationMs + 60_000);
-    const captions: CaptionEvent[] = [];
+    const observations: CaptionObservation[] = [];
     const providerErrors: string[] = [];
     let providerSelected: ProviderId | null = null;
     let startedAt: number | null = null;
@@ -81,8 +89,7 @@ function runBenchmark(options: BenchmarkOptions, audio: Buffer): Promise<Benchma
       finished = true;
       clearTimeout(timeout);
       socket.close();
-      const finalCaption = [...captions].reverse().find((caption) => caption.isFinal);
-      const costPerMinute = GEMINI_SPEECH_COST_PER_MINUTE_USD[options.provider];
+      const costPerMinute = providerSelected ? GEMINI_SPEECH_COST_PER_MINUTE_USD[providerSelected] : undefined;
       const estimatedCost = costPerMinute === undefined
         ? null
         : Number(((durationMs / 60_000) * costPerMinute).toFixed(6));
@@ -94,8 +101,8 @@ function runBenchmark(options: BenchmarkOptions, audio: Buffer): Promise<Benchma
         audioDurationMs: durationMs,
         firstTranslatedCaptionLatencyMs: elapsed(startedAt, firstTranslatedAt),
         finalCaptionLatencyMs: elapsed(startedAt, finalCaptionAt),
-        captionRevisions: captions.length,
-        finalTranslation: finalCaption?.translatedText ?? "",
+        captionRevisions: observations.length,
+        ...summarizeCaptions(observations, reference),
         providerErrors,
         disconnectCount,
         estimatedGeminiCostUsd: estimatedCost,
@@ -130,7 +137,7 @@ function runBenchmark(options: BenchmarkOptions, audio: Buffer): Promise<Benchma
         return;
       }
       if (message.type === "caption") {
-        captions.push(message);
+        observations.push({ caption: message, receivedAtMs: elapsed(startedAt, performance.now()) ?? 0 });
         if (message.translatedText && firstTranslatedAt === null) {
           firstTranslatedAt = performance.now();
         }
@@ -153,9 +160,15 @@ function runBenchmark(options: BenchmarkOptions, audio: Buffer): Promise<Benchma
 }
 
 async function streamAudio(socket: WebSocket, sessionId: string, audio: Buffer): Promise<void> {
+  const startedAt = performance.now();
   let sequence = 0;
   for (let offset = 0; offset < audio.byteLength; offset += FRAME_BYTES) {
     const chunk = audio.subarray(offset, Math.min(offset + FRAME_BYTES, audio.byteLength));
+    // Pace against an absolute audio clock. A frame is available at its end,
+    // matching live capture; repeated relative sleeps accumulate drift.
+    const deadline = startedAt + (offset + chunk.byteLength) / 32;
+    await new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, deadline - performance.now())));
+    if (socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify({
       type: "audio_chunk",
       sessionId,
@@ -165,7 +178,6 @@ async function streamAudio(socket: WebSocket, sessionId: string, audio: Buffer):
       dataBase64: chunk.toString("base64"),
     }));
     sequence += 1;
-    await new Promise<void>((resolve) => setTimeout(resolve, FRAME_MS));
   }
   socket.send(JSON.stringify({ type: "stop_session", sessionId }));
 }
@@ -196,6 +208,8 @@ function parseOptions(args: string[]): BenchmarkOptions {
     target,
     provider,
     gatewayUrl: values.get("gateway") ?? "ws://127.0.0.1:8787/v1/realtime",
+    ...(process.env.DOOT_GATEWAY_TOKEN ? { authToken: process.env.DOOT_GATEWAY_TOKEN } : {}),
+    ...(values.get("reference") ? { referencePath: values.get("reference") } : {}),
     ...(values.get("quality-notes")
       ? { qualityNotes: values.get("quality-notes") }
       : {}),
@@ -205,7 +219,7 @@ function parseOptions(args: string[]): BenchmarkOptions {
 function usage(): never {
   throw new Error(
     "Usage: npm run benchmark:live -- --audio sample.pcm --source es --target en "
-    + "--provider gemini-transcribe [--quality-notes \"manual assessment\"]",
+    + "--provider gemini [--reference sample.reference.json] [--quality-notes \"manual assessment\"]",
   );
 }
 

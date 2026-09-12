@@ -25,7 +25,7 @@ export class SarvamTextTranslator implements TextTranslationProvider {
     this.configured = Boolean(apiKey);
   }
 
-  supports(request: TranslationRequest): boolean {
+  supports(request: Pick<TranslationRequest, "source" | "target">): boolean {
     return this.configured
       && isSarvamTranslationSource(request.source)
       && isSarvamTranslationTarget(request.target);

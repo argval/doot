@@ -1,10 +1,13 @@
-import type { FastifyInstance, FastifyReply } from "fastify";
+import type { FastifyInstance } from "fastify";
 import type { DootDb } from "@doot/db";
+import { getHistoryPolicy, setHistoryPolicy } from "@doot/db/privacy";
 import {
   deleteCaptionSession,
   getCaptionSession,
   listCaptionSessions,
+  renameCaptionSession,
   type StoredCaptionSession,
+  type StoredCaptionSummary,
 } from "@doot/db/captions";
 import {
   LANGUAGE_LABELS,
@@ -24,24 +27,21 @@ const HISTORY_UNAVAILABLE = {
 };
 
 export function registerHistoryRoutes(app: FastifyInstance, db: DootDb | undefined): void {
-  app.register(async (scope) => {
-    scope.addHook("onRequest", async (request, reply) => {
-      const origin = request.headers.origin;
-      if (typeof origin === "string" && origin.length > 0) {
-        reply.header("Access-Control-Allow-Origin", origin);
-        reply.header("Vary", "Origin");
-      }
-      reply.header("Access-Control-Allow-Methods", "GET, DELETE, OPTIONS");
-      reply.header("Access-Control-Allow-Headers", "Content-Type");
-    });
-
-    async function allowPreflight(_request: unknown, reply: FastifyReply) {
-      return reply.code(204).send();
+  app.get("/v1/history/policy", async (_request, reply) => {
+    if (!db) return reply.code(503).send(HISTORY_UNAVAILABLE);
+    return getHistoryPolicy(db);
+  });
+  app.patch("/v1/history/policy", async (request, reply) => {
+    if (!db) return reply.code(503).send(HISTORY_UNAVAILABLE);
+    const body = request.body;
+    if (typeof body !== "object" || body === null || !("saveHistory" in body) || typeof body.saveHistory !== "boolean"
+      || !("retentionDays" in body) || typeof body.retentionDays !== "number" || ![0, 7, 30, 90].includes(body.retentionDays)) {
+      return reply.code(400).send({ message: "Choose valid history preferences." });
     }
-    scope.options("/sessions", allowPreflight);
-    scope.options("/sessions/:id", allowPreflight);
-    scope.options("/sessions/:id/export", allowPreflight);
-
+    await setHistoryPolicy(db, { saveHistory: body.saveHistory, retentionDays: body.retentionDays });
+    return reply.code(204).send();
+  });
+  app.register(async (scope) => {
     scope.get("/sessions", async (request, reply) => {
       if (!db) {
         return reply.code(503).send(HISTORY_UNAVAILABLE);
@@ -65,6 +65,19 @@ export function registerHistoryRoutes(app: FastifyInstance, db: DootDb | undefin
         return reply.code(404).send({ error: "not_found" });
       }
       return toHistoryDetail(session);
+    });
+
+    scope.patch("/sessions/:id", async (request, reply) => {
+      if (!db) return reply.code(503).send(HISTORY_UNAVAILABLE);
+      const body = request.body;
+      if (typeof body !== "object" || body === null || !("title" in body)
+        || typeof body.title !== "string" || body.title.trim().length > 120) {
+        return reply.code(400).send({ message: "Enter a session name of 120 characters or fewer." });
+      }
+      if (!await renameCaptionSession(db, readId(request.params), body.title)) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+      return reply.code(204).send();
     });
 
     scope.get("/sessions/:id/export", async (request, reply) => {
@@ -114,14 +127,16 @@ export function languageCodesMatching(query: string): string[] {
   });
 }
 
-export function toHistorySummary(session: StoredCaptionSession): HistorySessionSummary {
+export function toHistorySummary(session: StoredCaptionSummary): HistorySessionSummary {
   return {
     id: session.id,
+    title: session.title,
     sourceLanguage: session.sourceLanguage,
     targetLanguage: session.targetLanguage,
     provider: session.provider,
     startedAtMs: session.startedAt.getTime(),
     stoppedAtMs: session.stoppedAt?.getTime() ?? null,
+    interrupted: session.interrupted,
     segmentCount: session.segmentCount,
     preview: session.preview,
   };

@@ -84,6 +84,15 @@ test("history routes list, search, export, and delete finalized sessions", async
   const session = detail.json() as HistorySessionDetail;
   assert.equal(session.segments[0]?.translatedText, "Hello from Kannada");
 
+  const renamed = await app.inject({ method: "PATCH", url: `/v1/history/sessions/${sessionId}`, payload: { title: "  Morning lecture  " } });
+  assert.equal(renamed.statusCode, 204);
+  assert.equal((await app.inject({ url: `/v1/history/sessions/${sessionId}` })).json().title, "Morning lecture");
+  assert.equal((await app.inject({ url: "/v1/history/sessions?q=lecture" })).json().sessions[0].id, sessionId);
+  assert.equal((await app.inject({ url: "/v1/history/sessions?limit=1&offset=1" })).json().sessions.length, 0);
+  assert.equal((await app.inject({ method: "PATCH", url: `/v1/history/sessions/${sessionId}`, payload: { title: "x".repeat(121) } })).statusCode, 400);
+  assert.equal((await app.inject({ method: "PATCH", url: `/v1/history/sessions/${sessionId}`, headers: { origin: "https://untrusted.example" }, payload: { title: "changed" } })).statusCode, 403);
+  assert.equal((await app.inject({ method: "PATCH", url: "/v1/history/sessions/missing", payload: { title: "new" } })).statusCode, 404);
+
   const srt = await app.inject({
     method: "GET",
     url: `/v1/history/sessions/${sessionId}/export?format=srt`,

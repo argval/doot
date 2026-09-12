@@ -1,0 +1,6 @@
+{
+  "bundle": {
+    "externalBin": ["binaries/doot-node"],
+    "resources": { "resources/gateway/": "gateway/" }
+  }
+}

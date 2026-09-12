@@ -50,6 +50,13 @@ test("accepts auto-detect transcription sessions", () => {
   assert.equal(result.ok, true);
 });
 
+test("keeps the next caption sequence across reconnects and rejects invalid offsets", () => {
+  const request = { type: "start_session", sessionId: "resume", sourceLanguage: "en", targetLanguage: "en", sampleRate: 16000, channels: 1, nextCaptionSequence: 42 };
+  const parsed = parseClientMessage(JSON.stringify(request));
+  assert.deepEqual(parsed, { ok: true, message: request });
+  assert.deepEqual(parseClientMessage(JSON.stringify({ ...request, nextCaptionSequence: -1 })), { ok: false });
+});
+
 test("accepts the Gemini Transcribe provider", () => {
   const result = parseClientMessage(JSON.stringify({
     type: "start_session",
@@ -154,7 +161,7 @@ test("streams revisioned mock captions after receiving PCM", async (context) => 
     type: "caption",
     sessionId: "mock-session",
     sequence: 0,
-    utteranceId: "mock-session:1500:0",
+    utteranceId: "mock-session:0:0",
     revision: 2,
     sourceText: "Received 1500 ms of system audio.",
     translatedText: "Received 1500 ms of system audio.",
@@ -177,27 +184,32 @@ test("routes every Saaras language through Sarvam when configured", () => {
   assert.equal(router.select("kn").id, "sarvam");
 });
 
-test("falls back to mock when Sarvam is not configured", () => {
+test("never automatically selects mock when real providers are unavailable", () => {
   const router = createProviderRouter();
-  assert.equal(router.select("kn").id, "mock");
+  assert.throws(() => router.select("kn"), /No configured speech provider/);
+  assert.equal(router.select("en", "mock", 16_000, 1, "en").id, "mock");
 });
 
-test("routes international sources through Gemini Transcribe and Sarvam sources through Sarvam", () => {
+test("routes same-language international speech through Transcribe and translate pairs through Live Translate", () => {
   const router = createProviderRouter({
     sarvamApiKey: "test-sarvam-key",
     geminiApiKey: "test-gemini-key",
   });
   for (const language of ["es", "fr", "de", "it", "ja", "zh"] as const) {
-    assert.equal(router.select(language).id, "gemini-transcribe");
-    assert.equal(router.select(language, undefined, 16_000, 1, "en").id, "gemini-transcribe");
+    assert.equal(router.select(language, undefined, 16_000, 1, language).id, "gemini-transcribe");
+    assert.equal(router.select(language, undefined, 16_000, 1, "en").id, "gemini");
   }
   assert.equal(router.select("en", undefined, 16_000, 1, "es").id, "sarvam");
   assert.equal(router.select("en", undefined, 16_000, 1, "fr").id, "sarvam");
   assert.equal(router.select("kn", undefined, 16_000, 1, "es").id, "sarvam");
   assert.equal(router.select("auto", undefined, 16_000, 1, "en").id, "sarvam");
   assert.equal(router.select("auto", undefined, 16_000, 1, "auto").id, "sarvam");
-  assert.equal(router.select("auto", undefined, 16_000, 1, "es").id, "gemini-transcribe");
-  assert.equal(router.select("es", "gemini-transcribe", 16_000, 1, "en").id, "gemini-transcribe");
+  assert.equal(router.select("auto", undefined, 16_000, 1, "es").id, "gemini");
+  assert.equal(router.select("es", "gemini-transcribe", 16_000, 1, "es").id, "gemini-transcribe");
+  assert.throws(
+    () => router.select("es", "gemini-transcribe", 16_000, 1, "en"),
+    /does not support/,
+  );
   assert.equal(router.select("en", "gemini", 16_000, 1, "es").id, "gemini");
   assert.equal(router.select("en", "gemini", 16_000, 1, "hi").id, "gemini");
 });

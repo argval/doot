@@ -10,8 +10,27 @@ import {
   listCaptionSessions,
   saveCaptionSegment,
   stopCaptionSession,
+  recoverInterruptedSessions,
 } from "../src/captions.js";
 import { migrateDb } from "../src/migrate.js";
+
+test("recovers interrupted sessions without hiding saved captions or loading transcripts in lists", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "doot-recovery-"));
+  const db = await migrateDb(join(dir, "doot.db"));
+  const id = await createCaptionSession(db, { sourceLanguage: "en", targetLanguage: "en", provider: "mock" });
+  await saveCaptionSegment(db, { sessionId: id, sequence: 0, sourceText: "Saved before crash", translatedText: "Saved before crash", startMs: 0, endMs: 800 });
+  assert.equal((await listCaptionSessions(db)).length, 0);
+  await recoverInterruptedSessions(db);
+  const [summary] = await listCaptionSessions(db);
+  assert.equal(summary?.id, id);
+  assert.equal(summary?.interrupted, true);
+  assert.equal(summary?.segmentCount, 1);
+  assert.equal(summary?.preview, "Saved before crash");
+  assert.equal("segments" in summary!, false);
+  assert.equal((await getCaptionSession(db, id))?.segments.length, 1);
+  await recoverInterruptedSessions(db);
+  assert.equal((await listCaptionSessions(db)).length, 1);
+});
 
 test("lists, searches, and deletes finalized caption sessions", async () => {
   const dir = await mkdtemp(join(tmpdir(), "doot-history-"));

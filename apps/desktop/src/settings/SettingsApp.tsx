@@ -8,8 +8,10 @@ import {
 } from "lucide-react";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getName, getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 import {
   type SupportedLanguage,
+  type CaptionRoute,
 } from "@doot/protocol";
 import {
   CAPTION_FONT_SIZE_MAX,
@@ -24,13 +26,19 @@ import {
 import { isTauriRuntime } from "../lib/runtime";
 import {
   getConnectionStatus,
+  getCaptionRoute,
+  openAudioSettings,
   type ConnectionStatus,
 } from "../lib/tauri";
 import { captionScript, CaptionPanel } from "../overlay/CaptionPanel";
 import { HistorySection } from "./HistorySection";
+import { SetupSection } from "./SetupSection";
+import { PrivacySection } from "./PrivacySection";
 import type { VisibleCaptionLine } from "../captions";
+import { summarizeTiming, type CaptionTimingSample } from "../lib/timing";
+import { interactionShortcutLabel } from "../lib/shortcut";
 
-type SettingsSection = "general" | "captions" | "history" | "connection" | "about";
+type SettingsSection = "setup" | "general" | "captions" | "history" | "privacy" | "connection" | "about";
 
 const OPACITY_PRESETS = [
   { id: "ghost", label: "Ghost", value: 0.22 },
@@ -91,7 +99,12 @@ const PREVIEW_RTL: readonly VisibleCaptionLine[] = [
 ];
 
 function previewTargetLanguage(language: SupportedLanguage): SupportedLanguage {
-  return language === "auto" ? "en" : language;
+  switch (captionScript(language)) {
+    case "indic": return "kn";
+    case "cjk": return "ja";
+    case "rtl": return "ar";
+    default: return "en";
+  }
 }
 
 function previewLinesFor(language: SupportedLanguage): readonly VisibleCaptionLine[] {
@@ -117,9 +130,11 @@ const SECTIONS: ReadonlyArray<{
   label: string;
   icon: typeof Settings2;
 }> = [
+  { id: "setup", label: "Setup", icon: Settings2 },
   { id: "general", label: "General", icon: Settings2 },
   { id: "captions", label: "Captions", icon: Captions },
   { id: "history", label: "History", icon: History },
+  { id: "privacy", label: "Privacy", icon: Info },
   { id: "connection", label: "Connection", icon: Activity },
   { id: "about", label: "About", icon: Info },
 ];
@@ -130,6 +145,9 @@ export function SettingsApp() {
   const [openAtLogin, setOpenAtLoginEnabled] = useState(false);
   const [connection, setConnection] = useState<ConnectionStatus | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [route, setRoute] = useState<CaptionRoute | null>(null);
+  const [routeError, setRouteError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [appName, setAppName] = useState("Doot");
   const [appVersion, setAppVersion] = useState("0.1.0");
@@ -159,6 +177,7 @@ export function SettingsApp() {
       }
       if (!disposed) {
         setPrefs(loaded);
+        if (!loaded.onboardingComplete) setSection("setup");
         setOpenAtLoginEnabled(loginEnabled);
       }
     })();
@@ -188,7 +207,7 @@ export function SettingsApp() {
     let cancelled = false;
     const refresh = async () => {
       try {
-        const status = await getConnectionStatus();
+        const status = isTauriRuntime() ? await getConnectionStatus() : null;
         if (!cancelled) {
           setConnection(status);
           setConnectionError(null);
@@ -206,12 +225,36 @@ export function SettingsApp() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [section]);
+  }, [section, refreshKey]);
 
   const patchPrefs = useCallback(async (patch: Partial<DesktopPrefs>) => {
     setPrefs((current) => ({ ...current, ...patch }));
     await updatePrefs(patch);
   }, []);
+
+  useEffect(() => {
+    if (section !== "connection") return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const next = await getCaptionRoute(
+          prefs.translateEnabled ? prefs.sourceLanguage : prefs.targetLanguage,
+          prefs.targetLanguage,
+        );
+        if (!cancelled) { setRoute(next); setRouteError(null); }
+      } catch (error) {
+        if (!cancelled) {
+          setRoute(null);
+          setRouteError(error instanceof Error ? error.message : String(error));
+        }
+      }
+    };
+    setRoute(null);
+    setRouteError(null);
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 2000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [section, prefs.translateEnabled, prefs.sourceLanguage, prefs.targetLanguage, refreshKey]);
 
   const setOpenAtLogin = useCallback(async (enabled: boolean) => {
     setLoginError(null);
@@ -253,6 +296,8 @@ export function SettingsApp() {
       </nav>
       <main className={section === "history" ? "settings-content history" : "settings-content"}>
         <h1>{SECTIONS.find((item) => item.id === section)?.label}</h1>
+        {section === "setup" && <SetupSection prefs={prefs} onComplete={() => setSection("captions")} />}
+        {section === "privacy" && <PrivacySection />}
         {section === "general" && (
           <GeneralSection
             openAtLogin={openAtLogin}
@@ -269,6 +314,9 @@ export function SettingsApp() {
             prefs={prefs}
             connection={connection}
             error={connectionError}
+            route={route}
+            routeError={routeError}
+            onRefresh={() => setRefreshKey((value) => value + 1)}
           />
         )}
         {section === "about" && (
@@ -288,6 +336,7 @@ function GeneralSection({
   loginError: string | null;
   onOpenAtLoginChange: (enabled: boolean) => void;
 }) {
+  const [positionError, setPositionError] = useState<string | null>(null);
   return (
     <>
       <section className="settings-group" aria-label="Startup">
@@ -305,6 +354,9 @@ function GeneralSection({
         </label>
       </section>
       {loginError && <p className="settings-error">{loginError}</p>}
+      <p className="settings-footnote">Use Alt+Arrow keys while an overlay control is focused to move it. {interactionShortcutLabel()} toggles click-through. The tray also provides Unlock Overlay.</p>
+      <div className="settings-history-actions"><button disabled={!isTauriRuntime()} onClick={() => { void invoke("move_overlay", { direction: "reset" }).then(() => setPositionError(null)).catch((error: unknown) => setPositionError(String(error))); }}>Reset overlay position and unlock</button></div>
+      {positionError && <p role="alert" className="settings-error">{positionError}</p>}
     </>
   );
 }
@@ -321,7 +373,7 @@ function CaptionsSection({
 
   return (
     <>
-      <p className="settings-preview-label">Overlay preview</p>
+      <p className="settings-preview-label">Overlay preview · {previewLanguage === "kn" ? "Kannada" : previewLanguage === "ja" ? "Japanese" : previewLanguage === "ar" ? "Arabic" : "English"} script sample</p>
       <div
         className="settings-overlay-preview"
         style={{
@@ -386,35 +438,48 @@ function ConnectionSection({
   prefs,
   connection,
   error,
+  route,
+  routeError,
+  onRefresh,
 }: {
   prefs: DesktopPrefs;
   connection: ConnectionStatus | null;
   error: string | null;
+  route: CaptionRoute | null;
+  routeError: string | null;
+  onRefresh: () => void;
 }) {
-  const gatewayOk = connection?.gatewayReachable ?? false;
+  const [actionError, setActionError] = useState<string | null>(null);
+  const gatewayOk = connection?.gatewayReachable ?? Boolean(route);
   const capture = connection?.capture;
   const provider = connection?.lastProvider || prefs.lastProvider;
 
   return (
     <>
+      <p className="settings-intro">Check that Doot can hear this computer and provide captions in your chosen languages.</p>
       <section className="settings-group" aria-label="Status">
         <div className="settings-row">
           <span>
-            <strong>Gateway</strong>
-            <em>Local caption service at 127.0.0.1:8787.</em>
+            <strong>Selected languages</strong>
+            <em>{route ? "Your language selection is configured." : routeError ? "These languages need speech service setup. See connection details below." : "Checking selected languages…"}</em>
+          </span>
+          <StatusBadge ok={Boolean(route)} label={route ? "Configured" : routeError ? "Unavailable" : "Checking"} />
+        </div>
+        <div className="settings-row">
+          <span>
+            <strong>Caption service</strong>
+            <em>{gatewayOk ? "Doot can reach the caption service." : "Doot could not start its caption service. Check Setup, then try again."}</em>
           </span>
           <StatusBadge
             ok={gatewayOk}
-            label={gatewayOk ? "Reachable" : "Unreachable"}
+            label={gatewayOk ? "Connected" : "Offline"}
           />
         </div>
         <div className="settings-row">
           <span>
             <strong>System audio</strong>
             <em>
-              {capture
-                ? `${capture.backend} · ${capture.sampleRate / 1000} kHz · ${capture.channels === 1 ? "mono" : "stereo"}`
-                : "Waiting for capture status."}
+              {capture?.state === "capturing" ? "Listening to audio playing on this computer." : "Play audio, then start captions from the overlay."}
             </em>
           </span>
           <StatusBadge
@@ -425,19 +490,49 @@ function ConnectionSection({
         </div>
         <div className="settings-row">
           <span>
-            <strong>Last provider</strong>
-            <em>Resolved by the gateway after a session starts.</em>
+            <strong>Audio permission</strong>
+            <em>{connection?.audioPermission === "required" ? "Allow Doot in Screen & System Audio Recording, then restart capture." : connection?.audioPermission === "granted" ? "Doot has permission to capture system audio." : connection?.audioPermission === "not-required" ? "System audio capture needs no additional permission." : "Permission can be checked in the desktop app."}</em>
           </span>
-          <span className="settings-value">{provider ?? "—"}</span>
+          <StatusBadge ok={connection?.audioPermission === "granted" || connection?.audioPermission === "not-required"} tone={connection ? "status" : "neutral"} label={connection?.audioPermission === "required" ? "Allow access" : connection ? "Ready" : "Desktop only"} />
         </div>
       </section>
       {error && <p className="settings-error">{error}</p>}
-      <p className="settings-footnote">
-        Speech API keys still live in the gateway <code>.env</code>. Settings will
-        own them when Doot starts the gateway itself.
-      </p>
+      <div className="settings-history-actions">
+        <button type="button" onClick={onRefresh}>Check again</button>
+        {isTauriRuntime() && <button type="button" onClick={() => {
+          void openAudioSettings().catch((error: unknown) => setActionError(error instanceof Error ? error.message : "Could not open system settings."));
+        }}>Open system audio settings</button>}
+      </div>
+      {actionError && <p role="alert" className="settings-error">{actionError}</p>}
+      <details className="connection-details"><summary>Connection details</summary>
+        <p>{route?.description ?? routeError ?? "Checking configuration…"}</p>
+        <p>Last speech provider: {provider ?? "No session yet"}</p>
+        <p>Doot manages its own caption service. Add or change provider keys in Setup; stop capture before changing keys.</p>
+      </details>
+      <TimingDiagnostics />
     </>
   );
+}
+
+function TimingDiagnostics() {
+  const [samples, setSamples] = useState<CaptionTimingSample[]>([]);
+  const [notice, setNotice] = useState("");
+  return <details className="connection-details"><summary>Caption timing diagnostics</summary>
+    <p>Read the last 500 visible revisions from this app run. No audio, captions, keys, or session identifiers are included. These are estimates from provider audio intervals and a browser paint opportunity, not physical display measurements.</p>
+    {[false, true].map((final) => {
+      const group = samples.filter((sample) => sample.final === final);
+      return <div key={String(final)}><strong>{final ? "Final" : "Draft"} revisions · {group.length} samples</strong>
+        {(["pipelineMs", "desktopMs", "estimatedDisplayLagMs"] as const).map((field, index) => {
+          const { p50, p95 } = summarizeTiming(group, field);
+          return <p key={field}>{["Audio interval → native caption", "Native caption → paint opportunity", "Estimated audio → display"][index]}: p50 {p50 ?? "—"} / p95 {p95 ?? "—"} ms</p>;
+        })}</div>;
+    })}
+    <div className="settings-history-actions">
+      <button disabled={!isTauriRuntime()} onClick={() => { void invoke<CaptionTimingSample[]>("caption_timings").then(setSamples).catch((error: unknown) => setNotice(String(error))); }}>Read timings</button>
+      <button disabled={!samples.length} onClick={() => { void navigator.clipboard.writeText(JSON.stringify({ version: 1, measurement: "paint-opportunity-estimate", samples }, null, 2)).then(() => setNotice("Timing diagnostics copied.")).catch(() => setNotice("Could not copy diagnostics.")); }}>Copy diagnostics</button>
+    </div>
+    {notice && <p role="status">{notice}</p>}
+  </details>;
 }
 
 function AboutSection({ name, version }: { name: string; version: string }) {

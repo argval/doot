@@ -52,10 +52,16 @@ impl AudioCaptureBackend for ScreenCaptureKitBackend {
             .with_sample_rate(config.sample_rate as i32)
             .with_channel_count(config.channels as i32);
 
-        let mut stream = SCStream::new(&filter, &stream_config);
+        let errors = frames.clone();
+        let delegate = screencapturekit::stream::delegate_trait::ErrorHandler::new(move |error| {
+            errors.fail(format!("System audio capture stopped: {error}"));
+        });
+        let mut stream = SCStream::new_with_delegate(&filter, &stream_config, delegate);
+        let started_at = Instant::now();
+        frames.set_clock(started_at);
         let handler = SystemAudioHandler {
             frames,
-            started_at: Instant::now(),
+            started_at,
             sample_rate: config.sample_rate,
             channels: config.channels,
         };

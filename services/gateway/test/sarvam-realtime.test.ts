@@ -89,7 +89,9 @@ test("uses the Realtime API protocol and forwards partial and final transcripts"
       language: "kn-IN",
     });
     server.send(0, { event: "vad.speech_end" });
-    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    // No final has arrived yet. Resumed speech must already be available to
+    // the gateway, with its own turn identity, rather than queued behind it.
+    await waitForCondition(() => events.filter((event) => event.type === "speech_start").length === 3, 500);
 
     let flushResolved = false;
     const flush = session.flush().then(() => {
@@ -157,8 +159,8 @@ test("uses the Realtime API protocol and forwards partial and final transcripts"
     assert.equal(secondFinal.turnId, starts[1]?.turnId);
     assert.equal(thirdPartial.timestampMs, 600);
     assert.equal(thirdPartial.turnId, starts[2]?.turnId);
-    assert.ok(events.indexOf(firstFinal) < events.indexOf(starts[1]!));
-    assert.ok(events.indexOf(secondFinal) < events.indexOf(starts[2]!));
+    assert.ok(events.indexOf(starts[1]!) < events.indexOf(firstFinal));
+    assert.ok(events.indexOf(starts[2]!) < events.indexOf(secondFinal));
 
   } finally {
     await session.close();

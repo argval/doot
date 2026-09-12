@@ -21,10 +21,10 @@ jobs:
       - run: npm run build
       - run: npm audit --omit=dev --audit-level=high
       - run: docker build --file services/gateway/Dockerfile --tag doot-gateway:ci .
-      - run: docker run --detach --rm --name doot-gateway-ci --publish 8787:8787 doot-gateway:ci
+      - run: docker run --detach --rm --name doot-gateway-ci --publish 127.0.0.1:8787:8787 --env DOOT_GATEWAY_TOKEN=ci-test-token-not-a-secret doot-gateway:ci
       - run: |
           for attempt in {1..10}; do
-            curl --fail --silent --show-error http://127.0.0.1:8787/health && exit 0
+            curl --fail --silent --show-error --header 'Authorization: Bearer ci-test-token-not-a-secret' http://127.0.0.1:8787/health && exit 0
             sleep 1
           done
           docker logs doot-gateway-ci
@@ -43,6 +43,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib
+      - run: npm run bundle:gateway --workspace @doot/desktop
+      - run: node apps/desktop/scripts/check-gateway.mjs
       - run: npm run build:tauri
 
   windows-native-check:
@@ -59,4 +61,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib
+      - run: npm run bundle:gateway --workspace @doot/desktop
+      - run: node apps/desktop/scripts/check-gateway.mjs
       - run: npm run build:tauri

@@ -15,7 +15,7 @@ export interface TextTranslationProvider {
   id: string;
   configured: boolean;
   targetLanguages: readonly SupportedTargetLanguage[];
-  supports(request: TranslationRequest): boolean;
+  supports(request: Pick<TranslationRequest, "source" | "target">): boolean;
   translate(request: TranslationRequest): Promise<string>;
 }
 

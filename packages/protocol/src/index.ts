@@ -263,6 +263,7 @@ export interface StartSessionRequest {
   provider?: ProviderId;
   sampleRate: AudioSampleRate;
   channels: ChannelCount;
+  nextCaptionSequence?: number;
 }
 
 export interface AudioChunkMessage {
@@ -281,12 +282,23 @@ export interface StopSessionRequest {
 
 export type ClientMessage = StartSessionRequest | AudioChunkMessage | StopSessionRequest;
 
+/** The complete route selected before opening a provider session. */
+export interface CaptionRoute {
+  mode: "transcribe" | "translate";
+  speechProvider: ProviderId;
+  translation: "none" | "native" | "text";
+  translationProvider: string | null;
+  description: string;
+  detectionLanguages: readonly SupportedLanguage[];
+}
+
 export interface SessionStartedEvent {
   type: "session_started";
   sessionId: string;
   provider: ProviderId;
   sourceLanguage: SupportedLanguage;
   targetLanguage: SupportedLanguage;
+  route?: CaptionRoute;
 }
 
 export interface CaptionEvent {

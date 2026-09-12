@@ -1,0 +1,1 @@
+ALTER TABLE `sessions` ADD `interrupted` integer DEFAULT false NOT NULL;

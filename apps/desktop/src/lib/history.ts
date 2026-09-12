@@ -4,7 +4,7 @@ import {
   type HistorySessionSummary,
 } from "@doot/protocol";
 
-export const GATEWAY_HTTP_ORIGIN = "http://127.0.0.1:8787";
+import { gatewayFetch } from "./gateway";
 
 export class HistoryRequestError extends Error {
   constructor(message: string, readonly status: number) {
@@ -16,8 +16,12 @@ export class HistoryRequestError extends Error {
 export async function fetchHistorySessions(
   query = "",
   signal?: AbortSignal,
+  offset = 0,
+  limit = 20,
 ): Promise<HistorySessionSummary[]> {
   const params = new URLSearchParams();
+  params.set("offset", String(offset));
+  params.set("limit", String(limit));
   if (query.trim()) {
     params.set("q", query.trim());
   }
@@ -28,6 +32,12 @@ export async function fetchHistorySessions(
     { signal },
   );
   return body.sessions;
+}
+
+export async function renameHistorySession(sessionId: string, title: string): Promise<void> {
+  await historyRequest(`/v1/history/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }),
+  });
 }
 
 export async function fetchHistorySession(
@@ -55,7 +65,7 @@ async function historyJson<T>(path: string, init?: RequestInit): Promise<T> {
 async function historyRequest(path: string, init?: RequestInit): Promise<Response> {
   let response: Response;
   try {
-    response = await fetch(`${GATEWAY_HTTP_ORIGIN}${path}`, init);
+    response = await gatewayFetch(path, init);
   } catch (caught) {
     if (caught instanceof DOMException && caught.name === "AbortError") {
       throw caught;

@@ -26,7 +26,7 @@ export class GeminiTextTranslator implements TextTranslationProvider {
     this.configured = Boolean(apiKey);
   }
 
-  supports(request: TranslationRequest): boolean {
+  supports(_request: Pick<TranslationRequest, "source" | "target">): boolean {
     return this.configured;
   }
 

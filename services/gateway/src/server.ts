@@ -1,8 +1,10 @@
 import Fastify from "fastify";
 import websocket from "@fastify/websocket";
 import {
+  SUPPORTED_LANGUAGES,
   SUPPORTED_TARGET_LANGUAGES,
-  type SupportedTargetLanguage,
+  isSupportedLanguage,
+  isProviderId,
 } from "@doot/protocol";
 import { config } from "./config.js";
 import {
@@ -18,6 +20,7 @@ import { SarvamProvider } from "./speech/sarvam/provider.js";
 import { GeminiTextTranslator } from "./translation/gemini/provider.js";
 import { TranslationRouter } from "./translation/router.js";
 import { SarvamTextTranslator } from "./translation/sarvam/provider.js";
+import { protectGateway } from "./security.js";
 
 export function createProviderRouter(
   credentials: { sarvamApiKey?: string; geminiApiKey?: string } = {},
@@ -50,31 +53,53 @@ export async function buildServer(
   }),
   gatewayOptions: RealtimeGatewayOptions = {},
 ) {
-  const app = Fastify({ logger: { transport: { target: "pino-pretty" } } });
+  const app = Fastify({ logger: false, bodyLimit: 512 * 1024, requestTimeout: 10_000 });
   await app.register(websocket, { options: { maxPayload: 512 * 1024 } });
+  // The WebSocket plugin must mark upgrade requests before authentication can
+  // reject them, so its onResponse hook closes denied upgrade sockets.
+  protectGateway(app, gatewayOptions.authToken);
 
   app.get("/health", async () => {
-    const speech = router.languageCoverage();
-    const translationTargets = translation.configuredTargetLanguages();
+    // Coverage comes from working complete routes, never independent unions or mock.
+    const pairs = SUPPORTED_LANGUAGES.flatMap((sourceLanguage) => (
+      SUPPORTED_LANGUAGES.flatMap((targetLanguage) => {
+        try {
+          router.resolveRoute({ sourceLanguage, targetLanguage, sampleRate: 16_000, channels: 1 }, translation);
+          return [{ sourceLanguage, targetLanguage }];
+        } catch {
+          return [];
+        }
+      })
+    ));
     return {
       status: "ok",
       service: "doot-gateway",
       providers: router.availability(),
       translation: translation.availability(),
       languages: {
-        sources: speech.sources,
-        targets: uniqueTargets([...speech.targets, ...translationTargets]),
+        sources: SUPPORTED_LANGUAGES.filter((language) => pairs.some((pair) => pair.sourceLanguage === language)),
+        targets: SUPPORTED_TARGET_LANGUAGES.filter((language) => pairs.some((pair) => pair.targetLanguage === language)),
       },
     };
   });
+  app.get("/v1/route", async (request, reply) => {
+    const { source, target, provider } = request.query as Record<string, unknown>;
+    if (!isSupportedLanguage(source) || !isSupportedLanguage(target)
+      || (target === "auto" && source !== "auto")
+      || (provider !== undefined && !isProviderId(provider))) {
+      return reply.code(400).send({ message: "Choose valid source and target languages. Translate To cannot be Auto." });
+    }
+    try {
+      return router.resolveRoute({
+        sourceLanguage: source, targetLanguage: target,
+        ...(provider === undefined ? {} : { provider }),
+        sampleRate: 16_000, channels: 1,
+      }, translation).route;
+    } catch (error) {
+      return reply.code(422).send({ message: error instanceof Error ? error.message : "Caption route unavailable" });
+    }
+  });
   registerHistoryRoutes(app, gatewayOptions.db);
-  registerRealtimeGateway(app, router, (request) => translation.translate(request), gatewayOptions);
+  registerRealtimeGateway(app, router, translation, gatewayOptions);
   return app;
-}
-
-function uniqueTargets(
-  languages: readonly SupportedTargetLanguage[],
-): SupportedTargetLanguage[] {
-  const present = new Set(languages);
-  return SUPPORTED_TARGET_LANGUAGES.filter((language) => present.has(language));
 }

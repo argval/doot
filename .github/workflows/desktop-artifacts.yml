@@ -1,0 +1,65 @@
+name: Desktop release candidates
+
+on:
+  workflow_dispatch:
+    inputs:
+      sign_macos:
+        description: Sign and notarize macOS (requires Apple signing secrets)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macos-arm64
+          - os: windows-latest
+            platform: windows-x64-unsigned
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test
+      - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib
+      - run: npm run bundle:gateway --workspace @doot/desktop
+      - run: node apps/desktop/scripts/check-gateway.mjs
+      - name: Build unsigned candidate
+        if: runner.os != 'macOS' || !inputs.sign_macos
+        run: npm run build:tauri
+      - name: Build signed and notarized macOS candidate
+        if: runner.os == 'macOS' && inputs.sign_macos
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          node --input-type=module -e 'for (const name of ["APPLE_CERTIFICATE", "APPLE_CERTIFICATE_PASSWORD", "APPLE_SIGNING_IDENTITY", "APPLE_ID", "APPLE_PASSWORD", "APPLE_TEAM_ID"]) { if (!process.env[name]) throw new Error(`Missing signing secret: ${name}`); }'
+          npm run build:tauri
+      - name: Verify macOS bundle and nested runtime signatures
+        if: runner.os == 'macOS' && inputs.sign_macos
+        run: codesign --verify --deep --strict --verbose=2 apps/desktop/src-tauri/target/release/bundle/macos/Doot.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: doot-${{ matrix.platform }}-${{ github.sha }}
+          path: apps/desktop/src-tauri/target/release/bundle/
+          if-no-files-found: error
+          retention-days: 14

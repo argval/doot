@@ -9,7 +9,8 @@
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json && tsc -p tsconfig.scripts.json",
     "test": "tsx --test test/**/*.test.ts",
-    "benchmark:live": "tsx scripts/benchmark-live.ts"
+    "benchmark:live": "tsx scripts/benchmark-live.ts",
+    "benchmark:corpus": "tsx scripts/benchmark-corpus.ts"
   },
   "dependencies": {
     "@doot/db": "0.1.0",

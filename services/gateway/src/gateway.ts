@@ -1,6 +1,7 @@
 import "@fastify/websocket";
 import type { FastifyInstance } from "fastify";
 import type { DootDb } from "@doot/db";
+import { getHistoryPolicy } from "@doot/db/privacy";
 import {
   createCaptionSession,
   saveCaptionSegment,
@@ -12,6 +13,7 @@ import {
   isProviderId,
   isSupportedLanguage,
   type ClientMessage,
+  type CaptionRoute,
   type ProviderId,
   type ServerMessage,
   type StartSessionRequest,
@@ -30,6 +32,7 @@ import {
 } from "./translation/contract.js";
 import { isRecord } from "./util.js";
 import { mergeStreamingText } from "./merge-text.js";
+import type { TranslationRouter } from "./translation/router.js";
 
 const maxAudioChunkBytes = 256 * 1024;
 const maxBase64Length = Math.ceil(maxAudioChunkBytes / 3) * 4;
@@ -38,6 +41,7 @@ const MAX_COMPLETED_PROVIDER_TURNS = 32;
 export interface RealtimeGatewayOptions {
   db?: DootDb;
   utteranceGraceMs?: number;
+  authToken?: string;
 }
 
 interface ActiveUtterance {
@@ -62,13 +66,17 @@ interface ActiveUtterance {
 
 interface SessionState {
   request: StartSessionRequest;
+  route: CaptionRoute;
+  translate: TranslateText;
   providerId: ProviderId;
   db: DootDb | null;
   storedSessionId: string | null;
+  interrupted: boolean;
   reportPersistenceError: (error: unknown, operation: string) => void;
   nativeTranslation: boolean;
   providerSession: ProviderStreamSession | null;
   activeUtterance: ActiveUtterance | null;
+  settlingUtterances: Map<string, ActiveUtterance>;
   nextSequence: number;
   speechActive: boolean;
   pendingSpeechStartMs: number | null;
@@ -95,7 +103,7 @@ interface RequiredGatewayOptions {
 export function registerRealtimeGateway(
   app: FastifyInstance,
   router: ProviderRouter,
-  translator: TranslateText,
+  translator: TranslationRouter,
   options: RealtimeGatewayOptions = {},
 ): void {
   const gatewayOptions: RequiredGatewayOptions = {
@@ -106,21 +114,28 @@ export function registerRealtimeGateway(
     },
   };
 
+  let connections = 0;
   app.get("/v1/realtime", { websocket: true }, (socket: WebSocket, request) => {
+    if (connections >= 4) { socket.close(1013, "Too many connections"); return; }
+    connections += 1;
     const sessions = new Map<string, SessionState>();
     let messageChain = Promise.resolve();
+    let pendingBytes = 0;
     app.log.info({ ip: request.ip }, "realtime client connected");
 
     socket.on("message", (raw) => {
+      const text = raw.toString();
+      pendingBytes += Buffer.byteLength(text);
+      if (pendingBytes > 1024 * 1024) { socket.close(1008, "Audio queue exceeded its limit"); return; }
       messageChain = messageChain
-        .then(() => handleMessage(
+        .then(() => socket.readyState === WebSocket.OPEN ? handleMessage(
           router,
           translator,
           gatewayOptions,
           socket,
           sessions,
-          raw.toString(),
-        ))
+          text,
+        ) : undefined)
         .catch((error: unknown) => {
           app.log.error({ err: error }, "realtime message handler failed");
           send(socket, {
@@ -129,7 +144,7 @@ export function registerRealtimeGateway(
             message: error instanceof Error ? error.message : "Realtime handler failed",
             retryable: true,
           });
-        });
+        }).finally(() => { pendingBytes -= Buffer.byteLength(text); });
     });
 
     socket.on("error", (error) => {
@@ -137,9 +152,10 @@ export function registerRealtimeGateway(
     });
 
     socket.on("close", () => {
+      connections -= 1;
       for (const session of sessions.values()) {
         disposeSession(session);
-        void finishStoredSession(session).catch((error) => {
+        void finishStoredSession(session, true).catch((error) => {
           session.reportPersistenceError(error, "close session");
         });
       }
@@ -151,7 +167,7 @@ export function registerRealtimeGateway(
 
 async function handleMessage(
   router: ProviderRouter,
-  translator: TranslateText,
+  translator: TranslationRouter,
   options: RequiredGatewayOptions,
   socket: WebSocket,
   sessions: Map<string, SessionState>,
@@ -170,6 +186,10 @@ async function handleMessage(
   const message = parsed.message;
 
   if (message.type === "start_session") {
+    if (sessions.size > 0 && !sessions.has(message.sessionId)) {
+      send(socket, { type: "error", code: "SESSION_ACTIVE", message: "Stop the current session before starting another.", retryable: false });
+      return;
+    }
     await startSession(router, translator, options, socket, sessions, message);
     return;
   }
@@ -197,14 +217,14 @@ async function handleMessage(
     return;
   }
 
-  await stopSession(translator, socket, session);
+  await stopSession(session.translate, socket, session);
   sessions.delete(message.sessionId);
   send(socket, { type: "session_stopped", sessionId: message.sessionId });
 }
 
 async function startSession(
   router: ProviderRouter,
-  translator: TranslateText,
+  translator: TranslationRouter,
   options: RequiredGatewayOptions,
   socket: WebSocket,
   sessions: Map<string, SessionState>,
@@ -213,7 +233,7 @@ async function startSession(
   const previous = sessions.get(request.sessionId);
   if (previous) {
     disposeSession(previous);
-    void finishStoredSession(previous).catch((error) => {
+    void finishStoredSession(previous, true).catch((error) => {
       previous.reportPersistenceError(error, "replace session");
     });
     sessions.delete(request.sessionId);
@@ -221,25 +241,25 @@ async function startSession(
 
   let session: SessionState | null = null;
   try {
-    const provider = router.select(
-      request.sourceLanguage,
-      request.provider,
-      request.sampleRate,
-      request.channels,
-      request.targetLanguage,
-    );
+    const { provider, route, translate } = router.resolveRoute(request, translator);
     const openedSession: SessionState = {
       request,
+      route,
+      translate,
       providerId: provider.id,
       db: options.db,
       storedSessionId: null,
+      interrupted: false,
       reportPersistenceError: (error, operation) => {
+        openedSession.interrupted = true;
         options.onPersistenceError(error, request.sessionId, operation);
+        send(socket, { type: "error", sessionId: request.sessionId, code: "HISTORY_SAVE_FAILED", message: "Some captions could not be saved to history. Live captions can continue.", retryable: true });
       },
       nativeTranslation: provider.capabilities.nativeTranslation === true,
       providerSession: null,
       activeUtterance: null,
-      nextSequence: 0,
+      settlingUtterances: new Map(),
+      nextSequence: request.nextCaptionSequence ?? 0,
       speechActive: false,
       pendingSpeechStartMs: null,
       pendingSpeechTurnId: null,
@@ -260,7 +280,7 @@ async function startSession(
       sampleRate: request.sampleRate,
       channels: request.channels,
       onEvent: (event) => {
-        handleProviderEvent(translator, options, socket, openedSession, event);
+        handleProviderEvent(translate, options, socket, openedSession, event);
       },
     });
     if (
@@ -282,7 +302,7 @@ async function startSession(
     send(socket, {
       type: "error",
       sessionId: request.sessionId,
-      code: "PROVIDER_UNAVAILABLE",
+      code: error instanceof TranslationUnavailableError ? "TRANSLATION_UNAVAILABLE" : "PROVIDER_UNAVAILABLE",
       message: error instanceof Error ? error.message : "Requested provider is unavailable",
       retryable: false,
     });
@@ -306,7 +326,7 @@ async function startSession(
     if (sessions.get(request.sessionId) === session) {
       sessions.delete(request.sessionId);
     }
-    void finishStoredSession(session).catch((error) => {
+    void finishStoredSession(session, true).catch((error) => {
       session.reportPersistenceError(error, "close abandoned session");
     });
     return;
@@ -318,6 +338,7 @@ async function startSession(
     provider: session.providerId,
     sourceLanguage: request.sourceLanguage,
     targetLanguage: request.targetLanguage,
+    route: session.route,
   });
 }
 
@@ -333,26 +354,20 @@ function handleProviderEvent(
   switch (event.type) {
     case "speech_start": {
       if (isCompletedProviderTurn(session, event.turnId)) return;
-      if (
-        event.turnId
-        && session.pendingSpeechTurnId
-        && event.turnId !== session.pendingSpeechTurnId
-        && !session.activeUtterance
-      ) {
-        // ponytail: real adapters preserve late finals; discard a generic
-        // textless interval rather than letting it corrupt the newer turn.
-        rememberCompletedProviderTurn(session, session.pendingSpeechTurnId);
-      }
+      if (event.turnId && session.settlingUtterances.has(event.turnId)) return;
       const activeTurnId = session.activeUtterance?.providerTurnId;
       const changedTurn = Boolean(
         event.turnId && activeTurnId && event.turnId !== activeTurnId,
       );
       if (session.activeUtterance && (!session.speechActive || changedTurn)) {
-        void finalizeActiveUtterance(translator, socket, session);
+        settleActiveUtterance(translator, options, socket, session);
       }
       session.speechActive = true;
       session.pendingSpeechStartMs = event.timestampMs;
       session.pendingSpeechTurnId = event.turnId ?? null;
+      if (event.turnId && !session.activeUtterance) {
+        openActiveUtterance(session, event.timestampMs, event.turnId);
+      }
       cancelGraceTimer(session.activeUtterance);
       return;
     }
@@ -361,6 +376,11 @@ function handleProviderEvent(
         if (!session.activeUtterance && !session.pendingSpeechTurnId) {
           session.speechActive = false;
         }
+        return;
+      }
+      const settling = event.turnId ? session.settlingUtterances.get(event.turnId) : undefined;
+      if (settling) {
+        settling.endMs = Math.max(settling.endMs, event.timestampMs);
         return;
       }
       if (
@@ -374,7 +394,10 @@ function handleProviderEvent(
           session.activeUtterance.endMs,
           event.timestampMs,
         );
-        scheduleGraceFinalization(translator, options, socket, session);
+        // A provider-declared pending final may correct the partial. This
+        // deadline delays only sealing that line, never new speech or drafts.
+        scheduleGraceFinalization(translator, options, socket, session, session.activeUtterance,
+          event.finalTranscriptPending ? 2_000 : options.utteranceGraceMs);
       }
       return;
     }
@@ -386,18 +409,21 @@ function handleProviderEvent(
         session,
         event,
       );
+      const utterance = event.turnId
+        ? session.settlingUtterances.get(event.turnId) ?? session.activeUtterance
+        : session.activeUtterance;
       if (
         accepted
         && event.isFinal
         && !session.nativeTranslation
-        && session.activeUtterance
+        && utterance
       ) {
-        session.speechActive = false;
-        session.activeUtterance.endMs = Math.max(
-          session.activeUtterance.endMs,
+        if (session.activeUtterance === utterance) session.speechActive = false;
+        utterance.endMs = Math.max(
+          utterance.endMs,
           event.timestampMs,
         );
-        void finalizeActiveUtterance(translator, socket, session);
+        void finalizeActiveUtterance(translator, socket, session, utterance);
       }
       return;
     }
@@ -443,14 +469,14 @@ function updateActiveUtterance(
   if (!transcript) return false;
   if (isCompletedProviderTurn(session, event.turnId)) return false;
 
-  let utterance = session.activeUtterance;
+  let utterance = (event.turnId && session.settlingUtterances.get(event.turnId)) || session.activeUtterance;
   if (
     utterance
     && event.turnId
     && utterance.providerTurnId
     && event.turnId !== utterance.providerTurnId
   ) {
-    void finalizeActiveUtterance(translator, socket, session);
+    settleActiveUtterance(translator, options, socket, session);
     utterance = null;
   }
   if (!utterance) {
@@ -469,14 +495,23 @@ function updateActiveUtterance(
 
   utterance.sourceText = mergedText;
   utterance.revision += 1;
+  const sameLanguage = session.request.sourceLanguage === session.request.targetLanguage;
   // Keep the last good draft on-screen while a newer translation is in flight.
+  // Same-language sessions are a passthrough: publish source immediately so the
+  // translated-only overlay is not stuck on "Listening…" waiting for MT.
   const provisionalTranslated = session.nativeTranslation
     ? utterance.nativeTranslatedText ?? ""
-    : utterance.draftTranslatedText
-      && utterance.draftSourceText
-      && mergedText.startsWith(utterance.draftSourceText)
-      ? utterance.draftTranslatedText
-      : "";
+    : sameLanguage
+      ? mergedText
+      : utterance.draftTranslatedText
+        && utterance.draftSourceText
+        && mergedText.startsWith(utterance.draftSourceText)
+        ? utterance.draftTranslatedText
+        : "";
+  if (sameLanguage) {
+    utterance.draftSourceText = mergedText;
+    utterance.draftTranslatedText = mergedText;
+  }
   sendCaption(
     socket,
     session,
@@ -485,12 +520,12 @@ function updateActiveUtterance(
     false,
     utterance.revision,
   );
-  if (!session.nativeTranslation) {
+  if (!session.nativeTranslation && !sameLanguage) {
     scheduleDraftTranslation(translator, socket, session, utterance);
   }
 
-  if (!session.speechActive) {
-    scheduleGraceFinalization(translator, options, socket, session);
+  if (!session.speechActive && session.activeUtterance === utterance) {
+    scheduleGraceFinalization(translator, options, socket, session, utterance);
   }
   return true;
 }
@@ -546,14 +581,14 @@ function updateNativeTranslation(
   if (!translated) return;
   if (isCompletedProviderTurn(session, event.turnId)) return;
 
-  let utterance = session.activeUtterance;
+  let utterance = (event.turnId && session.settlingUtterances.get(event.turnId)) || session.activeUtterance;
   if (
     utterance
     && event.turnId
     && utterance.providerTurnId
     && event.turnId !== utterance.providerTurnId
   ) {
-    void finalizeActiveUtterance(translator, socket, session);
+    settleActiveUtterance(translator, options, socket, session);
     utterance = null;
   }
   if (!utterance) {
@@ -583,9 +618,9 @@ function updateNativeTranslation(
     }
   }
 
-  if (event.isFinal && session.activeUtterance === utterance) {
-    session.speechActive = false;
-    void finalizeActiveUtterance(translator, socket, session);
+  if (event.isFinal) {
+    if (session.activeUtterance === utterance) session.speechActive = false;
+    void finalizeActiveUtterance(translator, socket, session, utterance);
   }
 }
 
@@ -653,13 +688,14 @@ async function runDraftTranslation(
   if (
     translatedText === null
     || session.closed
-    || utterance.sourceText !== sourceText
+    || (utterance.sourceText !== sourceText
+      && !utterance.sourceText.startsWith(`${sourceText} `))
   ) {
     if (
       utterance.draftPending
       && !session.closed
       && !session.closing
-      && session.activeUtterance === utterance
+      && isLiveUtterance(session, utterance)
     ) {
       queueDraftTranslation(translator, socket, session, utterance);
     }
@@ -668,7 +704,7 @@ async function runDraftTranslation(
 
   utterance.draftSourceText = sourceText;
   utterance.draftTranslatedText = translatedText;
-  if (session.activeUtterance === utterance) {
+  if (isLiveUtterance(session, utterance)) {
     utterance.revision += 1;
     sendCaption(
       socket,
@@ -678,6 +714,9 @@ async function runDraftTranslation(
       false,
       utterance.revision,
     );
+    if (utterance.draftPending) {
+      queueDraftTranslation(translator, socket, session, utterance);
+    }
   }
 }
 
@@ -690,8 +729,9 @@ function queueDraftTranslation(
   if (
     session.closed
     || session.closing
-    || session.activeUtterance !== utterance
+    || !isLiveUtterance(session, utterance)
     || !utterance.sourceText
+    || utterance.draftSourceText === utterance.sourceText
   ) {
     return;
   }
@@ -707,37 +747,66 @@ function queueDraftTranslation(
   });
 }
 
-function scheduleGraceFinalization(
+function isLiveUtterance(session: SessionState, utterance: ActiveUtterance): boolean {
+  return session.activeUtterance === utterance
+    || (utterance.providerTurnId !== null
+      && session.settlingUtterances.get(utterance.providerTurnId) === utterance);
+}
+
+/** Keep late provider finals addressable without blocking the next speech interval. */
+function settleActiveUtterance(
   translator: TranslateText,
   options: RequiredGatewayOptions,
   socket: WebSocket,
   session: SessionState,
 ): void {
   const utterance = session.activeUtterance;
+  if (!utterance) return;
+  if (!utterance.providerTurnId) {
+    void finalizeActiveUtterance(translator, socket, session);
+    return;
+  }
+  session.settlingUtterances.set(utterance.providerTurnId, utterance);
+  session.activeUtterance = null;
+  if (!utterance.graceTimer) scheduleGraceFinalization(translator, options, socket, session, utterance);
+  // Bound memory even if a provider sends many starts without finalizing.
+  if (session.settlingUtterances.size > MAX_COMPLETED_PROVIDER_TURNS) {
+    const oldest = session.settlingUtterances.values().next().value;
+    if (oldest) void finalizeActiveUtterance(translator, socket, session, oldest);
+  }
+}
+
+function scheduleGraceFinalization(
+  translator: TranslateText,
+  options: RequiredGatewayOptions,
+  socket: WebSocket,
+  session: SessionState,
+  utterance = session.activeUtterance,
+  delayMs = options.utteranceGraceMs,
+): void {
   if (!utterance || session.closing) return;
   cancelGraceTimer(utterance);
   utterance.graceTimer = setTimeout(() => {
     utterance.graceTimer = null;
-    void finalizeActiveUtterance(translator, socket, session);
-  }, options.utteranceGraceMs);
+    void finalizeActiveUtterance(translator, socket, session, utterance);
+  }, delayMs);
 }
 
 function finalizeActiveUtterance(
   translator: TranslateText,
   socket: WebSocket,
   session: SessionState,
+  utterance = session.activeUtterance,
 ): Promise<void> {
-  const utterance = session.activeUtterance;
-  if (
-    !utterance
-    || (!utterance.sourceText && !utterance.nativeTranslatedText)
-  ) return session.pendingFinalizations;
+  if (!utterance) return session.pendingFinalizations;
 
-  session.activeUtterance = null;
+  if (session.activeUtterance === utterance) session.activeUtterance = null;
   if (utterance.providerTurnId) {
+    session.settlingUtterances.delete(utterance.providerTurnId);
     rememberCompletedProviderTurn(session, utterance.providerTurnId);
   }
   clearUtteranceTimers(utterance);
+  if (!utterance.sourceText && !utterance.nativeTranslatedText) return session.pendingFinalizations;
   session.providerSession?.commitAudioThrough(utterance.endMs);
   const request = session.request;
   const finalize = async () => {
@@ -807,10 +876,12 @@ async function stopSession(
   }
   session.closing = true;
   cancelGraceTimer(session.activeUtterance);
+  for (const utterance of session.settlingUtterances.values()) cancelGraceTimer(utterance);
 
   try {
     await session.providerSession?.flush();
   } catch (error) {
+    session.interrupted = true;
     send(socket, {
       type: "error",
       sessionId: session.request.sessionId,
@@ -832,6 +903,9 @@ async function stopSession(
     }
     session.providerSession = null;
   }
+  for (const utterance of session.settlingUtterances.values()) {
+    void finalizeActiveUtterance(translator, socket, session, utterance);
+  }
   await finalizeActiveUtterance(translator, socket, session);
   await session.pendingFinalizations;
   try {
@@ -846,6 +920,7 @@ async function stopSession(
 
 async function persistSession(session: SessionState): Promise<void> {
   if (!session.db) return;
+  if (!(await getHistoryPolicy(session.db)).saveHistory) { session.db = null; return; }
   session.storedSessionId = await createCaptionSession(session.db, {
     sourceLanguage: session.request.sourceLanguage,
     targetLanguage: session.request.targetLanguage,
@@ -888,10 +963,11 @@ function queueFinalizedCaption(
 
 async function stopStoredSession(session: SessionState): Promise<void> {
   if (!session.db || !session.storedSessionId) return;
-  await stopCaptionSession(session.db, session.storedSessionId);
+  await stopCaptionSession(session.db, session.storedSessionId, session.interrupted);
 }
 
-async function finishStoredSession(session: SessionState): Promise<void> {
+async function finishStoredSession(session: SessionState, interrupted = false): Promise<void> {
+  session.interrupted ||= interrupted;
   await session.pendingPersistence;
   await stopStoredSession(session);
 }
@@ -958,6 +1034,8 @@ function disposeSession(session: SessionState): void {
   session.closed = true;
   session.closing = true;
   clearUtteranceTimers(session.activeUtterance);
+  for (const utterance of session.settlingUtterances.values()) clearUtteranceTimers(utterance);
+  session.settlingUtterances.clear();
   session.activeUtterance = null;
   const providerSession = session.providerSession;
   session.providerSession = null;
@@ -981,9 +1059,11 @@ export function parseClientMessage(
       !isSessionId(value.sessionId)
       || !isSupportedLanguage(value.sourceLanguage)
       || !isSupportedLanguage(value.targetLanguage)
+      || (value.targetLanguage === "auto" && value.sourceLanguage !== "auto")
       || !isAudioSampleRate(value.sampleRate)
       || !isChannelCount(value.channels)
       || (value.provider !== undefined && !isProviderId(value.provider))
+      || (value.nextCaptionSequence !== undefined && !isNonNegativeInteger(value.nextCaptionSequence))
     ) return { ok: false };
 
     return {
@@ -996,6 +1076,7 @@ export function parseClientMessage(
         ...(value.provider === undefined ? {} : { provider: value.provider }),
         sampleRate: value.sampleRate,
         channels: value.channels,
+        ...(value.nextCaptionSequence === undefined ? {} : { nextCaptionSequence: value.nextCaptionSequence as number }),
       },
     };
   }

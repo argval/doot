@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, isNull, like, or } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, inArray, isNotNull, isNull, like, or, sql } from "drizzle-orm";
 import type { DootDb } from "./client.js";
 import { captionSegments, sessions } from "./schema.js";
 
@@ -34,10 +34,17 @@ export async function saveCaptionSegment(
 export async function stopCaptionSession(
   db: DootDb,
   sessionId: string,
+  interrupted = false,
 ): Promise<void> {
   await db.update(sessions)
-    .set({ stoppedAt: new Date() })
+    .set({ stoppedAt: new Date(), interrupted })
     .where(and(eq(sessions.id, sessionId), isNull(sessions.stoppedAt)));
+}
+
+/** Run once on gateway startup, before accepting any new sessions. */
+export async function recoverInterruptedSessions(db: DootDb): Promise<void> {
+  await db.update(sessions).set({ stoppedAt: new Date(), interrupted: true })
+    .where(isNull(sessions.stoppedAt));
 }
 
 export interface StoredCaptionSegment {
@@ -51,15 +58,19 @@ export interface StoredCaptionSegment {
 
 export interface StoredCaptionSession {
   id: string;
+  title: string;
   sourceLanguage: string;
   targetLanguage: string;
   provider: string;
   startedAt: Date;
   stoppedAt: Date | null;
+  interrupted: boolean;
   segmentCount: number;
   preview: string;
   segments: StoredCaptionSegment[];
 }
+
+export type StoredCaptionSummary = Omit<StoredCaptionSession, "segments">;
 
 export async function listCaptionSessions(
   db: DootDb,
@@ -69,21 +80,24 @@ export async function listCaptionSessions(
     limit?: number;
     offset?: number;
   } = {},
-): Promise<StoredCaptionSession[]> {
+): Promise<StoredCaptionSummary[]> {
   const limit = clampInt(options.limit ?? 100, 1, 200);
-  const offset = Math.max(0, options.offset ?? 0);
+  const offset = clampInt(options.offset ?? 0, 0, Number.MAX_SAFE_INTEGER);
   const ids = await matchingSessionIds(db, options.query ?? "", options.languageCodes ?? []);
   if (ids !== null && ids.length === 0) {
     return [];
   }
 
-  const rows = await db.select().from(sessions)
+  return db.select({
+    ...getTableColumns(sessions),
+    segmentCount: sql<number>`(select count(*) from caption_segments where session_id = sessions.id)`.mapWith(Number),
+    preview: sql<string>`coalesce((select substr(trim(translated_text), 1, 240) from caption_segments where session_id = sessions.id and trim(translated_text) != '' order by sequence limit 1), '')`,
+  }).from(sessions)
     .where(ids ? and(isNotNull(sessions.stoppedAt), inArray(sessions.id, ids)) : isNotNull(sessions.stoppedAt))
-    .orderBy(desc(sessions.startedAt))
+    .orderBy(desc(sessions.startedAt), sql`sessions.rowid desc`)
     .limit(limit)
     .offset(offset);
 
-  return attachSegments(db, rows);
 }
 
 export async function getCaptionSession(
@@ -104,9 +118,18 @@ export async function deleteCaptionSession(
     .where(eq(sessions.id, sessionId))
     .limit(1);
   if (!row) return false;
-  await db.delete(captionSegments).where(eq(captionSegments.sessionId, sessionId));
-  await db.delete(sessions).where(eq(sessions.id, sessionId));
+  await db.transaction(async (tx) => {
+    await tx.delete(captionSegments).where(eq(captionSegments.sessionId, sessionId));
+    await tx.delete(sessions).where(eq(sessions.id, sessionId));
+  });
   return true;
+}
+
+export async function renameCaptionSession(db: DootDb, sessionId: string, title: string): Promise<boolean> {
+  if (title.trim().length > 120) throw new Error("Session names must be 120 characters or fewer.");
+  const rows = await db.update(sessions).set({ title: title.trim() })
+    .where(eq(sessions.id, sessionId)).returning({ id: sessions.id });
+  return rows.length > 0;
 }
 
 async function matchingSessionIds(
@@ -123,6 +146,8 @@ async function matchingSessionIds(
   const ids = new Set<string>();
   if (needle) {
     const pattern = `%${needle}%`;
+    const titleHits = await db.select({ id: sessions.id }).from(sessions).where(like(sessions.title, pattern));
+    for (const hit of titleHits) ids.add(hit.id);
     const textHits = await db.select({ sessionId: captionSegments.sessionId })
       .from(captionSegments)
       .where(or(
@@ -187,11 +212,13 @@ async function attachSegments(
     const previewSegment = segments.find((segment) => segment.translatedText.trim().length > 0);
     return {
       id: row.id,
+      title: row.title,
       sourceLanguage: row.sourceLanguage,
       targetLanguage: row.targetLanguage,
       provider: row.provider,
       startedAt: row.startedAt,
       stoppedAt: row.stoppedAt,
+      interrupted: row.interrupted,
       segmentCount: segments.length,
       preview: previewSegment?.translatedText.trim() ?? "",
       segments,

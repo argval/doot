@@ -16,10 +16,26 @@ pub struct SessionStatusEvent {
 }
 
 impl SessionStatusEvent {
-    pub fn idle() -> Self {
+    pub fn starting(session_id: String) -> Self {
+        Self {
+            state: "starting",
+            session_id: Some(session_id),
+            message: None,
+        }
+    }
+
+    pub fn reconnecting(session_id: String) -> Self {
+        Self {
+            state: "reconnecting",
+            session_id: Some(session_id),
+            message: Some("Reconnecting… Your captions are kept here.".into()),
+        }
+    }
+
+    pub fn idle(session_id: String) -> Self {
         Self {
             state: "idle",
-            session_id: None,
+            session_id: Some(session_id),
             message: None,
         }
     }
@@ -66,6 +82,15 @@ pub struct CaptionEvent {
     pub start_ms: u64,
     pub end_ms: u64,
     pub provider: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timing: Option<CaptionTiming>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptionTiming {
+    pub native_received_at_ms: u64,
+    pub audio_lag_ms: Option<u64>,
 }
 
 pub fn emit_status(app: &AppHandle, status: SessionStatusEvent) {

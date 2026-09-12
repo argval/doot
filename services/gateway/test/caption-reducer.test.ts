@@ -32,7 +32,7 @@ test("replaces active revisions and commits only the final revision", () => {
   assert.equal(replaced.history.length, 0);
   assert.deepEqual(selectVisibleCaptions(replaced), {
     lines: [],
-  });
+  }, "empty translatedText must not leave the overlay stuck on Listening with hidden source");
 
   const stale = reduceCaptionEvent(replaced, first);
   assert.equal(stale, replaced);
@@ -269,6 +269,14 @@ test("keeps identical translated text on distinct utterance lines", () => {
       },
     ],
   });
+});
+
+test("late first text for an older interval never steals the live line or changes speech order", () => {
+  let state = reduceCaptionEvent(EMPTY_CAPTION_STATE, caption({ utteranceId: "new", sequence: 2, translatedText: "New speech" }));
+  state = reduceCaptionEvent(state, caption({ utteranceId: "old", sequence: 0, translatedText: "Late old speech" }));
+  assert.equal(state.active?.utteranceId, "new");
+  state = reduceCaptionEvent(state, caption({ utteranceId: "middle", sequence: 1, translatedText: "Middle speech", isFinal: true }));
+  assert.deepEqual(selectVisibleCaptions(state).lines.map((line) => line.translatedText), ["Late old speech", "Middle speech", "New speech"]);
 });
 
 function caption(overrides: Partial<CaptionEvent>): CaptionEvent {
