@@ -32,6 +32,7 @@ const GEMINI_MAX_TURN_MS = 5_500;
 const MAX_RECONNECT_ATTEMPTS = 6;
 const MAX_RECONNECT_DELAY_MS = 4_000;
 const MAX_QUEUED_AUDIO_BYTES = 192_000;
+const MAX_SOCKET_BUFFER_BYTES = 64_000;
 const GO_AWAY_RECONNECT_LEAD_MS = 1_000;
 
 export interface GeminiLiveRuntime {
@@ -67,6 +68,7 @@ class GeminiLiveSession implements ProviderStreamSession {
   private readonly endWaiters = new Set<Waiter>();
   private readonly queuedAudio: QueuedAudioFrame[] = [];
   private queuedAudioBytes = 0;
+  private drainTimer: NodeJS.Timeout | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private goAwayTimer: NodeJS.Timeout | null = null;
   private reconnectAttempts = 0;
@@ -192,6 +194,7 @@ class GeminiLiveSession implements ProviderStreamSession {
           this.socket = null;
           this.setupComplete = false;
           this.clearGoAwayTimer();
+          this.clearDrainTimer();
           this.queuePendingAudio();
         }
         if (this.closed || !current) return;
@@ -220,12 +223,11 @@ class GeminiLiveSession implements ProviderStreamSession {
       });
       return;
     }
-    const socket = this.socket;
-    if (!this.setupComplete || !socket || socket.readyState !== WebSocket.OPEN) {
-      this.enqueueAudio(audio, timestampMs);
-      return;
-    }
+    this.enqueueAudio(audio, timestampMs);
+    this.drainQueuedAudio();
+  }
 
+  private sendPcm(socket: WebSocket, audio: Uint8Array, timestampMs: number): void {
     if (!this.awaitingTurn) this.turnAudioStartMs = timestampMs;
     this.awaitingTurn = true;
     // Mirror Sarvam: forward live PCM as it arrives. Only coalesce undersized
@@ -267,7 +269,15 @@ class GeminiLiveSession implements ProviderStreamSession {
   async flush(): Promise<void> {
     if (this.closed) return;
     if (this.ending) return this.waitForEnd();
+    const deadline = performance.now() + (this.runtime.endTimeoutMs ?? END_TIMEOUT_MS);
+    while (this.queuedAudio.length > 0) {
+      this.drainQueuedAudio();
+      if (!this.queuedAudio.length) break;
+      if (this.closed || performance.now() >= deadline) throw new Error(`${this.displayName} audio queue did not drain before flush`);
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    }
     this.ending = true;
+    this.clearDrainTimer();
     const socket = this.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       throw new Error(`${this.displayName} flush requires an open connection`);
@@ -292,6 +302,7 @@ class GeminiLiveSession implements ProviderStreamSession {
     this.closed = true;
     this.clearReconnectTimer();
     this.clearGoAwayTimer();
+    this.clearDrainTimer();
     this.setupWaiter?.reject(new Error(`${this.displayName} closed during setup`));
     this.rejectEndWaiters(new Error(`${this.displayName} closed during flush`));
 
@@ -710,8 +721,10 @@ class GeminiLiveSession implements ProviderStreamSession {
     for (const waiter of [...this.endWaiters]) waiter.reject(error);
   }
 
-  private enqueueAudio(audio: Uint8Array, timestampMs: number): void {
-    this.queuedAudio.push({ audio: Buffer.from(audio), timestampMs });
+  private enqueueAudio(audio: Uint8Array, timestampMs: number, atFront = false): void {
+    const frame = { audio: Buffer.from(audio), timestampMs };
+    if (atFront) this.queuedAudio.unshift(frame);
+    else this.queuedAudio.push(frame);
     this.queuedAudioBytes += audio.byteLength;
     let droppedBytes = 0;
     while (this.queuedAudioBytes > MAX_QUEUED_AUDIO_BYTES && this.queuedAudio.length > 1) {
@@ -723,23 +736,34 @@ class GeminiLiveSession implements ProviderStreamSession {
     if (droppedBytes > 0) {
       this.options.onEvent({
         type: "warning",
-        message: `${this.displayName} reconnect buffer filled; oldest audio was dropped`,
+        message: `${this.displayName} audio buffer filled; oldest audio was dropped`,
       });
     }
   }
 
   private drainQueuedAudio(): void {
-    while (this.queuedAudio.length > 0 && this.setupComplete && !this.closed && !this.ending) {
+    this.clearDrainTimer();
+    const socket = this.socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN || !this.setupComplete || this.closed || this.ending) return;
+    while (this.queuedAudio.length > 0 && socket.bufferedAmount < MAX_SOCKET_BUFFER_BYTES) {
       const frame = this.queuedAudio.shift();
       if (!frame) break;
       this.queuedAudioBytes -= frame.audio.byteLength;
-      this.pushAudio(frame.audio, frame.timestampMs);
+      this.sendPcm(socket, frame.audio, frame.timestampMs);
     }
+    if (this.queuedAudio.length > 0) {
+      this.drainTimer = setTimeout(() => this.drainQueuedAudio(), 20);
+    }
+  }
+
+  private clearDrainTimer(): void {
+    if (this.drainTimer) clearTimeout(this.drainTimer);
+    this.drainTimer = null;
   }
 
   private queuePendingAudio(): void {
     if (this.pendingAudio.byteLength === 0) return;
-    this.enqueueAudio(this.pendingAudio, this.pendingAudioTimestampMs ?? this.lastAudioEndMs);
+    this.enqueueAudio(this.pendingAudio, this.pendingAudioTimestampMs ?? this.lastAudioEndMs, true);
     this.pendingAudio = Buffer.alloc(0);
     this.pendingAudioTimestampMs = null;
   }

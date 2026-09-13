@@ -38,7 +38,7 @@ export class SarvamTextTranslator implements TextTranslationProvider {
     if (!this.apiKey) throw new Error("Sarvam translation is not configured");
 
     const targetLanguageCode = toSarvamTranslationLanguageCode(request.target);
-    const startedAt = Date.now();
+    const startedAt = performance.now();
     const deadlineMs = request.deadlineMs ?? TRANSLATION_TIMEOUT_MS;
     const primary = await this.requestTranslation({
       text,
@@ -46,6 +46,7 @@ export class SarvamTextTranslator implements TextTranslationProvider {
       model: "mayura:v1",
       mode: "modern-colloquial",
       deadlineMs,
+      signal: request.signal,
     });
     if (primary.ok) return primary.text;
 
@@ -56,7 +57,8 @@ export class SarvamTextTranslator implements TextTranslationProvider {
       throw new Error(primary.message);
     }
 
-    const remainingMs = deadlineMs - (Date.now() - startedAt);
+    request.signal?.throwIfAborted();
+    const remainingMs = Math.floor(deadlineMs - (performance.now() - startedAt));
     if (remainingMs < 200) throw new Error(primary.message);
 
     const fallback = await this.requestTranslation({
@@ -65,6 +67,7 @@ export class SarvamTextTranslator implements TextTranslationProvider {
       model: "sarvam-translate:v1",
       mode: "formal",
       deadlineMs: remainingMs,
+      signal: request.signal,
     });
     if (fallback.ok) return fallback.text;
     throw new Error(fallback.message);
@@ -76,6 +79,7 @@ export class SarvamTextTranslator implements TextTranslationProvider {
     model: "mayura:v1" | "sarvam-translate:v1";
     mode: "modern-colloquial" | "formal";
     deadlineMs: number;
+    signal: AbortSignal | undefined;
   }): Promise<TranslationResult> {
     try {
       const response = await this.fetcher(SARVAM_TRANSLATE_URL, {
@@ -92,7 +96,10 @@ export class SarvamTextTranslator implements TextTranslationProvider {
           mode: options.mode,
           output_script: "fully-native",
         }),
-        signal: AbortSignal.timeout(options.deadlineMs),
+        signal: AbortSignal.any([
+          AbortSignal.timeout(options.deadlineMs),
+          ...(options.signal ? [options.signal] : []),
+        ]),
       });
 
       const body: unknown = await response.json().catch(() => null);

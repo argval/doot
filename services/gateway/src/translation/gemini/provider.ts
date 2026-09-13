@@ -52,9 +52,13 @@ export class GeminiTextTranslator implements TextTranslationProvider {
           generationConfig: {
             temperature: 0,
             maxOutputTokens: 1024,
+            thinkingConfig: { thinkingBudget: 0 },
           },
         }),
-        signal: AbortSignal.timeout(request.deadlineMs ?? TRANSLATION_TIMEOUT_MS),
+        signal: AbortSignal.any([
+          AbortSignal.timeout(request.deadlineMs ?? TRANSLATION_TIMEOUT_MS),
+          ...(request.signal ? [request.signal] : []),
+        ]),
       });
       const body: unknown = await response.json().catch(() => null);
       if (!response.ok) {

@@ -13,6 +13,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 const MAX_CHUNK_BYTES: usize = 3_200; // 100 ms @ 16 kHz mono S16LE — matches live capture pace
+const MAX_CATCHUP_BYTES: usize = 3 * MAX_CHUNK_BYTES;
 const MAX_RECONNECT_ATTEMPTS: u32 = 8;
 const STOP_FINALIZATION_TIMEOUT: Duration = Duration::from_secs(45);
 
@@ -311,6 +312,7 @@ async fn run_stream_once(
                     "level": level,
                     "silentForMs": last_sound.elapsed().as_millis() as u64,
                     "droppedAudioMs": frames.dropped_audio_ms(),
+                    "oldestAudioAgeMs": chunk.as_ref().and_then(|(_, start)| frames.audio_lag_ms(*start)),
                 }));
                 if let Some((audio, timestamp_ms)) = chunk {
                     let message = AudioChunkMessage {
@@ -443,10 +445,19 @@ where
 fn drain_audio(frames: &AudioFrameQueue) -> Option<(Vec<u8>, u64)> {
     let first = frames.pop()?;
     let timestamp_ms = first.timestamp_ms;
-    let mut bytes = Vec::with_capacity(MAX_CHUNK_BYTES);
+    // Drain faster than capture after startup or a stalled write, with bounded work.
+    let limit = if frames
+        .audio_lag_ms(timestamp_ms)
+        .is_some_and(|age| age > 250)
+    {
+        MAX_CATCHUP_BYTES
+    } else {
+        MAX_CHUNK_BYTES
+    };
+    let mut bytes = Vec::with_capacity(limit);
     append_samples(&mut bytes, &first.samples);
 
-    while bytes.len() < MAX_CHUNK_BYTES {
+    while bytes.len() < limit {
         let Some(frame) = frames.pop() else {
             break;
         };
@@ -477,6 +488,11 @@ fn handle_server_message(
     let value: Value =
         serde_json::from_str(raw).map_err(|error| format!("invalid gateway response: {error}"))?;
     match value.get("type").and_then(Value::as_str) {
+        Some("translation_timing") => {
+            app.state::<crate::diagnostics::Timings>()
+                .record_translation(value)?;
+            Ok(ServerMessageAction::Continue)
+        }
         Some("caption") => {
             let mut caption: CaptionEvent = serde_json::from_value(value)
                 .map_err(|error| format!("invalid caption event: {error}"))?;
@@ -667,5 +683,26 @@ mod tests {
             .concat()
         );
         assert!(frames.is_empty());
+    }
+
+    #[test]
+    fn catches_up_old_audio_without_an_unbounded_send() {
+        let frames = Arc::new(AudioFrames::new(10));
+        frames.set_clock(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        for index in 0..10 {
+            frames
+                .push(AudioFrame {
+                    samples: vec![index as i16; 1600],
+                    sample_rate: 16000,
+                    channels: 1,
+                    timestamp_ms: index * 100,
+                })
+                .unwrap();
+        }
+        let (bytes, start) = drain_audio(&frames).unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(bytes.len(), super::MAX_CATCHUP_BYTES);
+        assert_eq!(frames.len(), 7);
+        assert_eq!(drain_audio(&frames).unwrap().1, 300);
     }
 }

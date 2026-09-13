@@ -17,6 +17,7 @@ import {
   type ProviderId,
   type ServerMessage,
   type StartSessionRequest,
+  type TranslationTimingEvent,
 } from "@doot/protocol";
 import { WebSocket } from "ws";
 import {
@@ -48,6 +49,7 @@ const DRAFT_MAX_WAIT_MS = 160;
 const PENDING_FINAL_GRACE_MS = 800;
 const DRAFT_DEADLINE_MS = 1_400;
 const FINAL_DEADLINE_MS = 2_000;
+const MAX_FINALIZATIONS = 2;
 
 export interface RealtimeGatewayOptions {
   db?: DootDb;
@@ -61,6 +63,8 @@ interface ActiveUtterance {
   sequence: number;
   revision: number;
   sourceText: string;
+  sourceRevision: number;
+  sourceReceivedAtMs: number;
   startMs: number;
   endMs: number;
   providerTurnId: string | null;
@@ -97,7 +101,10 @@ interface SessionState {
   completedProviderTurnIds: string[];
   lastAudioTimestampMs: number;
   lastAudioSequence: number;
-  pendingFinalizations: Promise<void>;
+  pendingFinalizations: Set<Promise<void>>;
+  runningFinalizations: Set<Promise<void>>;
+  abortController: AbortController;
+  startedAt: number;
   pendingPersistence: Promise<void>;
   closing: boolean;
   closed: boolean;
@@ -282,7 +289,10 @@ async function startSession(
       completedProviderTurnIds: [],
       lastAudioTimestampMs: 0,
       lastAudioSequence: -1,
-      pendingFinalizations: Promise.resolve(),
+      pendingFinalizations: new Set(),
+      runningFinalizations: new Set(),
+      abortController: new AbortController(),
+      startedAt: performance.now(),
       pendingPersistence: Promise.resolve(),
       closing: false,
       closed: false,
@@ -528,7 +538,13 @@ function updateActiveUtterance(
   if (mergedText === utterance.sourceText) return true;
 
   utterance.sourceText = mergedText;
+  utterance.sourceRevision += 1;
+  utterance.sourceReceivedAtMs = sessionTime(session);
   utterance.revision += 1;
+  if (utterance.draftSourceText && !isSourceExtension(mergedText, utterance.draftSourceText)) {
+    utterance.draftSourceText = null;
+    utterance.draftTranslatedText = null;
+  }
   const sameLanguage = session.request.sourceLanguage === session.request.targetLanguage;
   // Keep the last good draft on-screen while a newer translation is in flight.
   // Same-language sessions are a passthrough: publish source immediately so the
@@ -539,7 +555,7 @@ function updateActiveUtterance(
       ? mergedText
       : utterance.draftTranslatedText
         && utterance.draftSourceText
-        && mergedText.startsWith(utterance.draftSourceText)
+        && isSourceExtension(mergedText, utterance.draftSourceText)
         ? utterance.draftTranslatedText
         : "";
   if (sameLanguage) {
@@ -583,6 +599,8 @@ function openActiveUtterance(
     sequence,
     revision: 0,
     sourceText: "",
+    sourceRevision: 0,
+    sourceReceivedAtMs: sessionTime(session),
     startMs: pendingStartMatches ? session.pendingSpeechStartMs! : timestampMs,
     endMs: timestampMs,
     providerTurnId: providerTurnId ?? null,
@@ -728,8 +746,10 @@ async function runDraftTranslation(
   utterance.sourceText = sourceText;
   utterance.draftInFlightSourceText = sourceText;
   let translatedText: string | null = null;
+  const timing = translationTiming(session, utterance, "draft", utterance.sourceReceivedAtMs);
+  const signal = AbortSignal.any([session.abortController.signal, AbortSignal.timeout(DRAFT_DEADLINE_MS)]);
   try {
-    translatedText = await translator(translationRequest(session, sourceText, "draft", DRAFT_DEADLINE_MS));
+    translatedText = await timedTranslation(translator, session, sourceText, timing, signal, DRAFT_DEADLINE_MS);
   } catch {
     // Draft misses are fine; the final pass still reports translation errors.
   } finally {
@@ -742,9 +762,9 @@ async function runDraftTranslation(
   if (
     translatedText === null
     || session.closed
-    || (utterance.sourceText !== sourceText
-      && !utterance.sourceText.startsWith(`${sourceText} `))
+    || !isSourceExtension(utterance.sourceText, sourceText)
   ) {
+    if (!session.closed) send(socket, timing);
     if (
       utterance.draftPending
       && !session.closed
@@ -768,10 +788,16 @@ async function runDraftTranslation(
       false,
       utterance.revision,
     );
+    timing.captionEmittedAtMs = sessionTime(session);
     if (utterance.draftPending) {
       queueDraftTranslation(translator, socket, session, utterance);
     }
   }
+  if (!session.closed) send(socket, timing);
+}
+
+function isSourceExtension(current: string, previous: string): boolean {
+  return current === previous || current.startsWith(`${previous} `);
 }
 
 function queueDraftTranslation(
@@ -857,11 +883,11 @@ function finalizeActiveUtterance(
   session: SessionState,
   utterance = session.activeUtterance,
 ): Promise<void> {
-  if (!utterance) return session.pendingFinalizations;
+  if (!utterance) return Promise.all(session.pendingFinalizations).then(() => undefined);
   // Native turns must wait for Gemini's translation. Sealing on speech_end
   // with blank translatedText hides the line and drops the late English caption.
   if (session.nativeTranslation && !normalizeTranscript(utterance.nativeTranslatedText ?? "")) {
-    return session.pendingFinalizations;
+    return Promise.all(session.pendingFinalizations).then(() => undefined);
   }
 
   if (session.activeUtterance === utterance) session.activeUtterance = null;
@@ -874,43 +900,51 @@ function finalizeActiveUtterance(
   }
   clearUtteranceTimers(utterance);
   utterance.sourceText = collapseStutter(utterance.sourceText);
-  if (!utterance.sourceText && !utterance.nativeTranslatedText) return session.pendingFinalizations;
+  if (!utterance.sourceText && !utterance.nativeTranslatedText) return Promise.all(session.pendingFinalizations).then(() => undefined);
   session.providerSession?.commitAudioThrough(utterance.endMs);
   const request = session.request;
-  const finalize = async () => {
-    if (
-      utterance.draftCompletion
-      && utterance.draftInFlightSourceText === utterance.sourceText
-    ) {
-      await utterance.draftCompletion;
-    }
+  const queuedAtMs = sessionTime(session);
+  const deadlineAt = performance.now() + FINAL_DEADLINE_MS;
+  const signal = AbortSignal.any([session.abortController.signal, AbortSignal.timeout(FINAL_DEADLINE_MS)]);
+  const timing = translationTiming(session, utterance, "final", queuedAtMs);
+  const completion: Promise<void> = Promise.resolve().then(async () => {
     let translatedText = session.nativeTranslation
       ? utterance.nativeTranslatedText ?? ""
-      : utterance.draftTranslatedText ?? "";
-    if (!session.nativeTranslation) {
-      const canReuseDraft = Boolean(
-        utterance.draftTranslatedText
-        && utterance.draftSourceText === utterance.sourceText,
-      );
-      if (canReuseDraft && utterance.draftTranslatedText) {
-        translatedText = utterance.draftTranslatedText;
-      } else {
-        try {
-          translatedText = await translator(translationRequest(session, utterance.sourceText, "final", FINAL_DEADLINE_MS));
-        } catch (error) {
-          if (!session.closed) {
-            send(socket, {
-              type: "error",
-              sessionId: request.sessionId,
-              code: error instanceof TranslationUnavailableError
-                ? "TRANSLATION_UNAVAILABLE"
-                : "TRANSLATION_ERROR",
-              message: error instanceof Error ? error.message : "Caption translation failed",
-              retryable: !(error instanceof TranslationUnavailableError),
-            });
+      : "";
+    try {
+      signal.throwIfAborted();
+      if (!session.nativeTranslation) {
+        // The deadline includes slot waiting and reusing an in-flight draft.
+        if (utterance.draftCompletion && utterance.draftInFlightSourceText === utterance.sourceText) {
+          await abortable(utterance.draftCompletion, signal);
+        }
+        if (utterance.draftTranslatedText && utterance.draftSourceText === utterance.sourceText) {
+          translatedText = utterance.draftTranslatedText;
+          timing.outcome = "reused";
+          timing.completedAtMs = sessionTime(session);
+        } else {
+          while (session.runningFinalizations.size >= MAX_FINALIZATIONS) {
+            await abortable(Promise.race(session.runningFinalizations), signal);
           }
+          signal.throwIfAborted();
+          session.runningFinalizations.add(completion);
+          translatedText = await timedTranslation(translator, session, utterance.sourceText, timing, signal,
+            Math.max(1, Math.floor(deadlineAt - performance.now())));
         }
       }
+    } catch (error) {
+      timing.outcome = translationOutcome(error, signal);
+      timing.completedAtMs = sessionTime(session);
+      if (!session.closed) {
+        send(socket, {
+          type: "error", sessionId: request.sessionId,
+          code: error instanceof TranslationUnavailableError ? "TRANSLATION_UNAVAILABLE" : "TRANSLATION_ERROR",
+          message: signal.reason?.name === "TimeoutError" ? "Caption finalization timed out" : error instanceof Error ? error.message : "Caption translation failed",
+          retryable: !(error instanceof TranslationUnavailableError),
+        });
+      }
+    } finally {
+      session.runningFinalizations.delete(completion);
     }
     if (translatedText && !session.nativeTranslation) translatedText = collapseStutter(translatedText);
     if (session.closed) return;
@@ -925,10 +959,15 @@ function finalizeActiveUtterance(
       true,
       utterance.revision + 1,
     );
-  };
+    if (session.route.translation === "text") {
+      timing.captionEmittedAtMs = sessionTime(session);
+      send(socket, timing);
+    }
+  });
 
-  session.pendingFinalizations = session.pendingFinalizations.then(finalize, finalize);
-  return session.pendingFinalizations;
+  session.pendingFinalizations.add(completion);
+  void completion.then(() => session.pendingFinalizations.delete(completion), () => session.pendingFinalizations.delete(completion));
+  return completion;
 }
 
 async function stopSession(
@@ -937,7 +976,7 @@ async function stopSession(
   session: SessionState,
 ): Promise<void> {
   if (session.closing) {
-    await session.pendingFinalizations;
+    await Promise.all(session.pendingFinalizations);
     return;
   }
   session.closing = true;
@@ -973,13 +1012,15 @@ async function stopSession(
     void finalizeActiveUtterance(translator, socket, session, utterance);
   }
   await finalizeActiveUtterance(translator, socket, session);
-  await session.pendingFinalizations;
+  await Promise.all(session.pendingFinalizations);
   try {
     await finishStoredSession(session);
   } catch (error) {
     session.reportPersistenceError(error, "stop session");
   }
   session.closed = true;
+  session.abortController.abort();
+  session.captionContext.close();
   clearUtteranceTimers(session.activeUtterance);
   session.activeUtterance = null;
 }
@@ -1043,6 +1084,7 @@ function translationRequest(
   text: string,
   urgency: "draft" | "final",
   deadlineMs: number,
+  signal: AbortSignal,
 ): TranslationRequest {
   return {
     text,
@@ -1050,8 +1092,55 @@ function translationRequest(
     target: session.request.targetLanguage,
     urgency,
     deadlineMs,
+    signal,
     ...session.captionContext.translationFields(),
   };
+}
+
+function sessionTime(session: SessionState): number {
+  return performance.now() - session.startedAt;
+}
+
+function translationTiming(session: SessionState, utterance: ActiveUtterance, urgency: "draft" | "final", queuedAtMs: number): TranslationTimingEvent {
+  return {
+    type: "translation_timing", sessionId: session.request.sessionId, utteranceId: utterance.id,
+    sourceRevision: utterance.sourceRevision, speechProvider: session.providerId,
+    translationProvider: session.route.translationProvider ?? "none",
+    sourceLanguage: session.request.sourceLanguage, targetLanguage: session.request.targetLanguage,
+    urgency, outcome: "error", sourceReceivedAtMs: utterance.sourceReceivedAtMs,
+    queuedAtMs, requestStartedAtMs: null, completedAtMs: queuedAtMs, captionEmittedAtMs: null,
+  };
+}
+
+function translationOutcome(error: unknown, signal: AbortSignal): TranslationTimingEvent["outcome"] {
+  if (signal.aborted) return signal.reason?.name === "TimeoutError" ? "timeout" : "cancelled";
+  return error instanceof Error && /timed out/i.test(error.message) ? "timeout" : "error";
+}
+
+async function timedTranslation(translator: TranslateText, session: SessionState, text: string, timing: TranslationTimingEvent, signal: AbortSignal, deadlineMs: number): Promise<string> {
+  try {
+    signal.throwIfAborted();
+    timing.requestStartedAtMs = sessionTime(session);
+    const result = await abortable(translator(translationRequest(session, text, timing.urgency, deadlineMs, signal)), signal);
+    if (!result.trim()) throw new Error("Caption translation returned empty text");
+    timing.outcome = "success";
+    return result;
+  } catch (error) {
+    timing.outcome = translationOutcome(error, signal);
+    throw error;
+  } finally {
+    timing.completedAtMs = sessionTime(session);
+  }
+}
+
+/** Enforce deadlines even when a provider or test double ignores cancellation. */
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    void promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
 }
 
 function sendCaption(
@@ -1165,6 +1254,7 @@ function clearUtteranceTimers(utterance: ActiveUtterance | null): void {
 
 function disposeSession(session: SessionState): void {
   session.closed = true;
+  session.abortController.abort();
   session.closing = true;
   session.captionContext.close();
   clearUtteranceTimers(session.activeUtterance);

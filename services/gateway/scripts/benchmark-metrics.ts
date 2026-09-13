@@ -1,4 +1,4 @@
-import type { CaptionEvent } from "@doot/protocol";
+import type { CaptionEvent, TranslationTimingEvent } from "@doot/protocol";
 
 export interface CaptionObservation { caption: CaptionEvent; receivedAtMs: number }
 export interface CaptionReference { sourceText: string; boundariesMs: number[] }
@@ -16,6 +16,8 @@ export function parseReference(value: unknown): CaptionReference {
 }
 
 export function summarizeCaptions(observations: CaptionObservation[], reference?: CaptionReference) {
+  let translationChanges = 0;
+  let erasedCharacters = 0;
   const turns = new Map<string, { caption: CaptionEvent; firstSourceMs: number | null; firstTranslationMs: number | null; finalMs: number | null }>();
   for (const { caption, receivedAtMs } of observations) {
     let turn = turns.get(caption.utteranceId);
@@ -23,6 +25,15 @@ export function summarizeCaptions(observations: CaptionObservation[], reference?
       turn = { caption, firstSourceMs: null, firstTranslationMs: null, finalMs: null };
       turns.set(caption.utteranceId, turn);
     } else if (caption.revision <= turn.caption.revision) continue;
+    const previous = turn.caption.translatedText;
+    if (previous !== caption.translatedText) {
+      translationChanges += 1;
+      const before = [...previous];
+      const after = [...caption.translatedText];
+      let shared = 0;
+      while (shared < before.length && before[shared] === after[shared]) shared += 1;
+      erasedCharacters += before.length - shared;
+    }
     turn.caption = caption;
     if (caption.sourceText.trim() && turn.firstSourceMs === null) turn.firstSourceMs = receivedAtMs;
     if (caption.translatedText.trim() && turn.firstTranslationMs === null) turn.firstTranslationMs = receivedAtMs;
@@ -38,6 +49,10 @@ export function summarizeCaptions(observations: CaptionObservation[], reference?
     finalSourceText: sourceText,
     finalizedTurns: finalized.length,
     unfinishedTurns: ordered.length - finalized.length,
+    missingTranslationTurns: ordered.filter((turn) => !turn.caption.translatedText.trim()).length,
+    // Character edits measure visible revision churn, not semantic correctness.
+    translationChanges,
+    erasedCharacters,
     sourceToFirstTranslationMs: percentiles(sourceToTranslation),
     // Provider endMs is audio-duration-aware, but not forced-aligned to words.
     // This is an estimate, not ground truth audio-to-display latency.
@@ -53,6 +68,21 @@ export function summarizeCaptions(observations: CaptionObservation[], reference?
       sourceCharacterErrorRate: errorRate([...normalize(reference.sourceText).replace(/\s/gu, "")], [...normalize(sourceText).replace(/\s/gu, "")]),
       estimatedBoundaryScore: scoreBoundaries(reference.boundariesMs, finalized.map((turn) => turn.caption.endMs)),
     } } : {}),
+  };
+}
+
+export function summarizeTranslationRequests(timings: TranslationTimingEvent[]) {
+  const successful = timings.filter((timing) => timing.outcome === "success" && timing.requestStartedAtMs !== null);
+  return {
+    attempts: timings.length,
+    requests: timings.filter((timing) => timing.requestStartedAtMs !== null).length,
+    succeeded: successful.length,
+    reused: timings.filter((timing) => timing.outcome === "reused").length,
+    timedOut: timings.filter((timing) => timing.outcome === "timeout").length,
+    failed: timings.filter((timing) => timing.outcome === "error" || timing.outcome === "cancelled").length,
+    successfulQueueMs: percentiles(successful.map((timing) => timing.requestStartedAtMs! - timing.queuedAtMs)),
+    successfulRequestMs: percentiles(successful.map((timing) => timing.completedAtMs - timing.requestStartedAtMs!)),
+    successfulSourceToResponseMs: percentiles(successful.map((timing) => timing.completedAtMs - timing.sourceReceivedAtMs)),
   };
 }
 

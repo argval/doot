@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { CaptionEvent } from "@doot/protocol";
-import { parseReference, summarizeCaptions } from "../scripts/benchmark-metrics.js";
+import type { CaptionEvent, TranslationTimingEvent } from "@doot/protocol";
+import { parseReference, summarizeCaptions, summarizeTranslationRequests } from "../scripts/benchmark-metrics.js";
 import { runBenchmark } from "../scripts/benchmark-live.js";
 import { buildServer } from "../src/server.js";
 import { MockProvider } from "../src/speech/mock/provider.js";
@@ -44,9 +44,30 @@ test("benchmark measures all turns, ignores stale revisions, and scores referenc
     parseReference({ sourceText: "hello world", boundariesMs: [1000, 2000] }));
   assert.equal(mismatch.referenceScores?.sourceWordErrorRate, 0.5);
   assert.equal(mismatch.referenceScores?.estimatedBoundaryScore.recall, 0.5);
+  assert.equal(mismatch.missingTranslationTurns, 1);
   assert.throws(() => parseReference({ sourceText: "text", boundariesMs: [2000, 1000] }));
   assert.throws(() => parseReference({ sourceText: "text", boundariesMs: [NaN] }));
   assert.throws(() => parseReference({ sourceText: "", boundariesMs: [] }));
+});
+
+test("request metrics separate queue time, provider time, reuse, and failed attempts", () => {
+  const timing: TranslationTimingEvent = {
+    type: "translation_timing", sessionId: "test", utteranceId: "first", sourceRevision: 1,
+    speechProvider: "sarvam", translationProvider: "gemini", sourceLanguage: "en", targetLanguage: "es",
+    urgency: "draft", outcome: "success", sourceReceivedAtMs: 100, queuedAtMs: 100,
+    requestStartedAtMs: 140, completedAtMs: 640, captionEmittedAtMs: 641,
+  };
+  const report = summarizeTranslationRequests([timing,
+    { ...timing, outcome: "timeout", completedAtMs: 2000, captionEmittedAtMs: null },
+    { ...timing, outcome: "timeout", requestStartedAtMs: null, captionEmittedAtMs: null },
+    { ...timing, outcome: "reused", requestStartedAtMs: null }]);
+  assert.equal(report.attempts, 4);
+  assert.equal(report.requests, 2);
+  assert.equal(report.succeeded, 1);
+  assert.equal(report.timedOut, 2);
+  assert.equal(report.reused, 1);
+  assert.deepEqual(report.successfulQueueMs, { count: 1, p50: 40, p95: 40 });
+  assert.deepEqual(report.successfulRequestMs, { count: 1, p50: 500, p95: 500 });
 });
 
 test("benchmark streams paced PCM through the gateway and returns the whole session", async () => {

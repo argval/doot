@@ -324,6 +324,28 @@ export interface SessionStoppedEvent {
   sessionId: string;
 }
 
+/** Text-MT attempt timings on a session-relative monotonic gateway clock.
+ * No audio or text. Null requestStartedAtMs means no provider request was sent.
+ * Native translation has no separate text-MT request and emits no such event.
+ */
+export interface TranslationTimingEvent {
+  type: "translation_timing";
+  sessionId: string;
+  utteranceId: string;
+  sourceRevision: number;
+  speechProvider: ProviderId;
+  translationProvider: string;
+  sourceLanguage: SupportedLanguage;
+  targetLanguage: SupportedLanguage;
+  urgency: "draft" | "final";
+  outcome: "success" | "error" | "timeout" | "cancelled" | "reused";
+  sourceReceivedAtMs: number;
+  queuedAtMs: number;
+  requestStartedAtMs: number | null;
+  completedAtMs: number;
+  captionEmittedAtMs: number | null;
+}
+
 export interface ErrorEvent {
   type: "error";
   sessionId?: string;
@@ -332,7 +354,7 @@ export interface ErrorEvent {
   retryable: boolean;
 }
 
-export type ServerMessage = SessionStartedEvent | CaptionEvent | SessionStoppedEvent | ErrorEvent;
+export type ServerMessage = SessionStartedEvent | CaptionEvent | SessionStoppedEvent | ErrorEvent | TranslationTimingEvent;
 
 export {
   HISTORY_EXPORT_FORMATS,
