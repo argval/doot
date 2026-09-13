@@ -702,6 +702,107 @@ test("waits for an in-flight draft before finalizing the same source text", asyn
   }
 });
 
+test("a failed corrected translation cannot finalize or persist an obsolete affirmative draft", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "doot-correction-db-"));
+  const db = await migrateDb(join(dir, "doot.db"));
+  const harness = await createHarness(25, false, db);
+  harness.translator.translate = async ({ text }) => {
+    if (text === "I agree") return "ನಾನು ಒಪ್ಪುತ್ತೇನೆ";
+    throw new Error("simulated translation timeout");
+  };
+  try {
+    const stream = harness.provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 0, turnId: "correction" });
+    stream.emit({ type: "transcript", text: "I agree", timestampMs: 100, turnId: "correction", isFinal: false });
+    await harness.client.waitForMessage((message) => message.type === "caption" && Boolean(message.translatedText));
+    stream.emit({ type: "transcript", text: "I do not agree", timestampMs: 200, turnId: "correction", isFinal: true });
+    const [final] = await harness.client.waitForFinalCount(1);
+    assert.equal(final?.sourceText, "I do not agree");
+    assert.equal(final?.translatedText, "");
+    harness.client.send({ type: "stop_session", sessionId: harness.sessionId });
+    await harness.client.waitForMessage((message) => message.type === "session_stopped");
+    const stored = await db.select().from(captionSegments);
+    assert.equal(stored[0]?.translatedText, "");
+    const failure = await harness.client.waitForMessage((message) => message.type === "translation_timing" && message.urgency === "final");
+    assert.equal(failure.type, "translation_timing");
+    assert.equal(failure.outcome, "error");
+    assert.equal(failure.sourceRevision, 2);
+  } finally { await harness.close(); }
+});
+
+test("two finals run concurrently, a freed slot serves the next turn, and stop waits for all", async () => {
+  const harness = await createHarness();
+  const pending = new Map<string, (text: string) => void>();
+  const finalRequests: string[] = [];
+  harness.translator.translate = async ({ text, urgency }) => {
+    if (text === "cached" && urgency === "draft") return "cached translation";
+    if (urgency === "draft") throw new Error("no draft");
+    finalRequests.push(text);
+    return new Promise<string>((resolve) => pending.set(text, resolve));
+  };
+  try {
+    const stream = harness.provider.sessions[0]!;
+    for (const [index, text] of ["first", "second", "third"].entries()) {
+      stream.emit({ type: "speech_start", timestampMs: index * 100, turnId: text });
+      stream.emit({ type: "transcript", text, timestampMs: index * 100 + 50, turnId: text, isFinal: true });
+    }
+    await waitFor(() => finalRequests.length === 2 ? true : undefined);
+    assert.deepEqual(finalRequests, ["first", "second"]);
+    stream.emit({ type: "speech_start", timestampMs: 300, turnId: "cached" });
+    stream.emit({ type: "transcript", text: "cached", timestampMs: 350, turnId: "cached", isFinal: true });
+    const [cached] = await harness.client.waitForFinalCount(1);
+    assert.equal(cached?.translatedText, "cached translation", "draft reuse needs no final request slot");
+    pending.get("second")!("second translated");
+    await waitFor(() => finalRequests.length === 3 ? true : undefined);
+    pending.get("third")!("third translated");
+    await harness.client.waitForFinalCount(3);
+    harness.client.send({ type: "stop_session", sessionId: harness.sessionId });
+    await delay(20);
+    assert.equal(harness.client.messages.some((message) => message.type === "session_stopped"), false);
+    pending.get("first")!("first translated");
+    await harness.client.waitForMessage((message) => message.type === "session_stopped");
+    const finals = await harness.client.waitForFinalCount(4);
+    assert.deepEqual(finals.map((caption) => caption.sequence), [3, 1, 2, 0]);
+    const timings = harness.client.messages.filter((message) => message.type === "translation_timing" && message.urgency === "final");
+    assert.equal(timings.length, 4);
+    for (const timing of timings) {
+      assert.equal(timing.type, "translation_timing");
+      if (timing.outcome === "reused") { assert.equal(timing.requestStartedAtMs, null); continue; }
+      assert.equal(timing.outcome, "success");
+      assert.ok(timing.requestStartedAtMs! >= timing.queuedAtMs);
+      assert.ok(timing.completedAtMs >= timing.requestStartedAtMs!);
+      assert.ok(timing.captionEmittedAtMs! >= timing.completedAtMs);
+    }
+  } finally {
+    for (const resolve of pending.values()) resolve("cleanup");
+    await harness.close();
+  }
+});
+
+test("final deadline includes the in-flight draft wait and aborts the remaining provider request", async () => {
+  const harness = await createHarness();
+  const requests: TranslationRequest[] = [];
+  harness.translator.translate = (request) => {
+    requests.push(request);
+    return new Promise<string>(() => undefined); // Intentionally ignore cancellation.
+  };
+  try {
+    const stream = harness.provider.sessions[0]!;
+    stream.emit({ type: "speech_start", timestampMs: 0, turnId: "deadline" });
+    stream.emit({ type: "transcript", text: "same text", timestampMs: 100, turnId: "deadline", isFinal: false });
+    stream.emit({ type: "transcript", text: "same text", timestampMs: 120, turnId: "deadline", isFinal: true });
+    const timing = await harness.client.waitForMessage((message) => message.type === "translation_timing" && message.urgency === "final");
+    assert.equal(timing.type, "translation_timing");
+    assert.equal(timing.outcome, "timeout");
+    assert.ok(timing.completedAtMs - timing.queuedAtMs < 2_900);
+    assert.equal(requests.length, 2);
+    assert.ok(requests[1]!.deadlineMs! <= 700, "final request receives only the unspent budget");
+    assert.equal(requests[1]!.signal?.aborted, true);
+    harness.client.send({ type: "stop_session", sessionId: harness.sessionId });
+    await harness.client.waitForMessage((message) => message.type === "session_stopped");
+  } finally { await harness.close(); }
+});
+
 test("does not let a stale draft delay the final translation", async () => {
   const provider = new ControlledProvider();
   const translator = new DeferredTranslator();

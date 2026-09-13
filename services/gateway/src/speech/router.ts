@@ -60,11 +60,10 @@ export class ProviderRouter {
       provider,
       translate: textProvider
         ? (input) => textProvider.translate({
+          ...input,
           text: input.text.trim(),
           source,
           target,
-          ...(input.deadlineMs === undefined ? {} : { deadlineMs: input.deadlineMs }),
-          ...(input.urgency === undefined ? {} : { urgency: input.urgency }),
         })
         : async (input) => input.text.trim(),
       route: {

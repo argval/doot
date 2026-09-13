@@ -60,7 +60,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const candidate = isRecord(prior) ? prior.summary : null;
     const priorScores = isRecord(candidate) && ["lagP95Ms", "wordErrorRate", "boundaryF1"].every((key) => candidate[key] === null || (typeof candidate[key] === "number" && Number.isFinite(candidate[key]))) ? candidate as unknown as Scores : null;
     cases.push({ id: entry.id, fingerprint, summary, deltaFromBaseline: priorScores ? compareRuns(summary, priorScores) : null, runs });
-    if (runs.some((run) => !run.finalTranslation || run.providerErrors.length || run.unfinishedTurns)) process.exitCode = 2;
+    if (runs.some((run) => !run.finalTranslation || run.providerErrors.length || run.unfinishedTurns || run.missingTranslationTurns)) process.exitCode = 2;
   }
   process.stdout.write(`${JSON.stringify({ version: 1, createdAt: new Date().toISOString(), aggregation: "mean of per-run metrics", cases }, null, 2)}\n`);
 }

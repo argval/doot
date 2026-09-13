@@ -9,9 +9,10 @@ import {
   type ServerMessage,
   type SupportedLanguage,
   type SupportedTargetLanguage,
+  type TranslationTimingEvent,
 } from "@doot/protocol";
 import WebSocket from "ws";
-import { parseReference, summarizeCaptions, type CaptionReference, type CaptionObservation } from "./benchmark-metrics.js";
+import { parseReference, summarizeCaptions, summarizeTranslationRequests, type CaptionReference, type CaptionObservation } from "./benchmark-metrics.js";
 
 const FRAME_BYTES = 3_200;
 const FRAME_MS = 100;
@@ -44,6 +45,8 @@ export interface BenchmarkResult extends ReturnType<typeof summarizeCaptions> {
   disconnectCount: number;
   estimatedGeminiCostUsd: number | null;
   qualityNotes?: string;
+  translationTimings: TranslationTimingEvent[];
+  translationRequests: ReturnType<typeof summarizeTranslationRequests>;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -59,7 +62,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   }
   const result = await runBenchmark(options, audio, reference);
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  if (!result.finalTranslation || result.providerErrors.length || result.unfinishedTurns) process.exitCode = 2;
+  if (!result.finalTranslation || result.providerErrors.length || result.unfinishedTurns || result.missingTranslationTurns) process.exitCode = 2;
 }
 
 export function runBenchmark(options: BenchmarkOptions, audio: Buffer, reference?: CaptionReference): Promise<BenchmarkResult> {
@@ -69,6 +72,7 @@ export function runBenchmark(options: BenchmarkOptions, audio: Buffer, reference
     const durationMs = Math.round(audio.byteLength / 32);
     const timeout = setTimeout(() => finishError(new Error("Benchmark timed out")), durationMs + 60_000);
     const observations: CaptionObservation[] = [];
+    const translationTimings: TranslationTimingEvent[] = [];
     const providerErrors: string[] = [];
     let providerSelected: ProviderId | null = null;
     let startedAt: number | null = null;
@@ -103,6 +107,8 @@ export function runBenchmark(options: BenchmarkOptions, audio: Buffer, reference
         finalCaptionLatencyMs: elapsed(startedAt, finalCaptionAt),
         captionRevisions: observations.length,
         ...summarizeCaptions(observations, reference),
+        translationTimings,
+        translationRequests: summarizeTranslationRequests(translationTimings),
         providerErrors,
         disconnectCount,
         estimatedGeminiCostUsd: estimatedCost,
@@ -130,6 +136,10 @@ export function runBenchmark(options: BenchmarkOptions, audio: Buffer, reference
     });
     socket.on("message", (raw) => {
       const message = JSON.parse(raw.toString()) as ServerMessage;
+      if (message.type === "translation_timing") {
+        translationTimings.push(message);
+        return;
+      }
       if (message.type === "session_started") {
         providerSelected = message.provider;
         startedAt = performance.now();

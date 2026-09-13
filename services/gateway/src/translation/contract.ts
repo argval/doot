@@ -9,6 +9,8 @@ export interface TranslationRequest {
   target: SupportedLanguage;
   /** Wall-clock budget for this call. Drafts are shorter than finals. */
   deadlineMs?: number;
+  /** Session cancellation and the overall finalization deadline. */
+  signal?: AbortSignal;
   /** Drafts skip slow fallbacks; finals may retry. */
   urgency?: "draft" | "final";
   /** Optional program/show/match hint from Settings. */

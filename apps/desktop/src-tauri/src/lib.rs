@@ -115,6 +115,7 @@ pub fn run() {
             commands::check_system_audio,
             commands::connection_status,
             diagnostics::caption_timings,
+            diagnostics::translation_timings,
             diagnostics::record_caption_timing,
             commands::open_audio_settings,
             commands::open_settings_window,

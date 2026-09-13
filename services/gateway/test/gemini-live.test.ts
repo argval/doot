@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import type { WebSocket } from "ws";
 import test from "node:test";
 import type { SupportedLanguage } from "@doot/protocol";
 import type { ProviderStreamEvent } from "../src/speech/contract.js";
@@ -17,6 +18,34 @@ const transcribeActivityDetection = {
     silenceDurationMs: 300,
   },
 };
+
+test("Gemini backpressure preserves audio order and drains before ending the stream", async () => {
+  const server = new FakeGeminiServer();
+  const session = new GeminiLiveTranslateSession("test", {
+    sessionId: "backpressure", source: "es", target: "en", sampleRate: 16000, channels: 1, onEvent() {},
+  }, { endpoint: await server.endpoint(), endTimeoutMs: 1000 });
+  try {
+    const opening = session.open();
+    const connection = await server.waitForConnection();
+    await server.waitForMessage(isSetupMessage);
+    server.send({ setupComplete: {} });
+    await opening;
+    const socket = (session as unknown as { socket: WebSocket }).socket;
+    let blocked = true;
+    Object.defineProperty(socket, "bufferedAmount", { configurable: true, get: () => blocked ? 64_000 : 0 });
+    for (const value of [11, 22, 33]) session.pushAudio(Buffer.alloc(3200, value), value * 100);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(connection.messages.filter(isAudioMessage).length, 0);
+    const flushing = session.flush();
+    blocked = false;
+    await server.waitForMessage((message) => JSON.stringify(message).includes("audioStreamEnd"));
+    const audio = connection.messages.filter(isAudioMessage);
+    assert.equal(audio.length, 3);
+    assert.deepEqual(audio.map((message) => Buffer.from(message.realtimeInput.audio.data, "base64")[0]), [11, 22, 33]);
+    server.send({ serverContent: { turnComplete: true } });
+    await flushing;
+  } finally { await session.close(); await server.close(); }
+});
 
 test("configures Transcribe Live and publishes interim then final transcripts", async () => {
   const server = new FakeGeminiServer();

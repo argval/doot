@@ -41,7 +41,7 @@ import { HistorySection } from "./HistorySection";
 import { SetupSection } from "./SetupSection";
 import { PrivacySection } from "./PrivacySection";
 import type { VisibleCaptionLine } from "../captions";
-import { summarizeTiming, type CaptionTimingSample } from "../lib/timing";
+import { summarizeTiming, summarizeMilliseconds, type CaptionTimingSample, type TranslationTimingSample } from "../lib/timing";
 import { interactionShortcutLabel } from "../lib/shortcut";
 import { speechProviderLabel } from "../lib/speech-labels";
 
@@ -573,7 +573,15 @@ function ConnectionSection({
 
 function TimingDiagnostics() {
   const [samples, setSamples] = useState<CaptionTimingSample[]>([]);
+  const [translations, setTranslations] = useState<TranslationTimingSample[]>([]);
   const [notice, setNotice] = useState("");
+  const groups = new Map<string, TranslationTimingSample[]>();
+  for (const sample of translations) {
+    const label = `${sample.sourceLanguage} → ${sample.targetLanguage} · ${sample.speechProvider} → ${sample.translationProvider} · ${sample.urgency}`;
+    const group = groups.get(label) ?? [];
+    group.push(sample);
+    groups.set(label, group);
+  }
   return <details className="connection-details"><summary>Caption timing diagnostics</summary>
     <p>Read the last 500 visible revisions from this app run. No audio, captions, keys, or session identifiers are included. These are estimates from provider audio intervals and a browser paint opportunity, not physical display measurements.</p>
     {[false, true].map((final) => {
@@ -584,9 +592,18 @@ function TimingDiagnostics() {
           return <p key={field}>{["Audio interval → native caption", "Native caption → paint opportunity", "Estimated audio → display"][index]}: p50 {p50 ?? "—"} / p95 {p95 ?? "—"} ms</p>;
         })}</div>;
     })}
+    <p>Text translation keeps the last 500 attempts, including failures and reused drafts. Request time includes the network round trip. Native Live Translate has no separate text request.</p>
+    {[...groups].map(([label, group]) => <div key={label}>
+      <strong>{label}</strong>
+      <p>{group.length} attempts · {group.filter((sample) => sample.outcome === "success").length} succeeded · {group.filter((sample) => sample.outcome === "reused").length} reused · {group.filter((sample) => sample.outcome === "timeout").length} timed out · {group.filter((sample) => sample.outcome === "error" || sample.outcome === "cancelled").length} failed/cancelled</p>
+      {(["queueMs", "requestMs", "sourceToCompleteMs", "completionToCaptionMs"] as const).map((field, index) => {
+        const { p50, p95 } = summarizeMilliseconds(group.filter((sample) => sample.outcome === "success").map((sample) => sample[field]));
+        return <p key={field}>{["Queue → request", "Request → response", "Source revision → response", "Response → caption event"][index]}: successful p50 {p50 ?? "—"} / p95 {p95 ?? "—"} ms</p>;
+      })}
+    </div>)}
     <div className="settings-history-actions">
-      <button disabled={!isTauriRuntime()} onClick={() => { void invoke<CaptionTimingSample[]>("caption_timings").then(setSamples).catch((error: unknown) => setNotice(String(error))); }}>Read timings</button>
-      <button disabled={!samples.length} onClick={() => { void navigator.clipboard.writeText(JSON.stringify({ version: 1, measurement: "paint-opportunity-estimate", samples }, null, 2)).then(() => setNotice("Timing diagnostics copied.")).catch(() => setNotice("Could not copy diagnostics.")); }}>Copy diagnostics</button>
+      <button disabled={!isTauriRuntime()} onClick={() => { void Promise.all([invoke<CaptionTimingSample[]>("caption_timings"), invoke<TranslationTimingSample[]>("translation_timings")]).then(([captions, requests]) => { setSamples(captions); setTranslations(requests); }).catch((error: unknown) => setNotice(String(error))); }}>Read timings</button>
+      <button disabled={!samples.length && !translations.length} onClick={() => { void navigator.clipboard.writeText(JSON.stringify({ version: 2, measurement: "paint-opportunity-estimate-and-text-request-timing", samples, translations }, null, 2)).then(() => setNotice("Timing diagnostics copied.")).catch(() => setNotice("Could not copy diagnostics.")); }}>Copy diagnostics</button>
     </div>
     {notice && <p role="status">{notice}</p>}
   </details>;

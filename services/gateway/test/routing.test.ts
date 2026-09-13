@@ -58,6 +58,25 @@ test("route preferences do not depend on provider construction order", () => {
   assert.equal(speech.resolveRoute(request("es", "es"), translation).route.speechProvider, "gemini-transcribe");
 });
 
+test("pinned routes forward context, canonical names, and cancellation to Gemini", async () => {
+  let payload = "";
+  const controller = new AbortController();
+  let requestSignal: AbortSignal | null | undefined;
+  const gemini = new GeminiTextTranslator("test", async (_url, init) => {
+    payload = String(init?.body);
+    requestSignal = init?.signal;
+    return Response.json({ candidates: [{ content: { parts: [{ text: "Yhwach llega" }] } }] });
+  });
+  const { translate } = createProviderRouter(bothKeys).resolveRoute(request("en", "es"), new TranslationRouter([gemini]));
+  assert.equal(await translate({ text: "Yohaba arrives", source: "en", target: "es", contextHint: "Bleach",
+    canonicalNames: [{ heard: "Yohaba", canonical: "Yhwach" }], signal: controller.signal }), "Yhwach llega");
+  assert.match(payload, /Bleach/);
+  assert.match(payload, /Yhwach/);
+  assert.deepEqual(JSON.parse(payload).generationConfig.thinkingConfig, { thinkingBudget: 0 });
+  controller.abort();
+  assert.equal(requestSignal?.aborted, true);
+});
+
 test("explicit providers still obey mode, format, credentials, and translation availability", () => {
   const speech = createProviderRouter(bothKeys);
   const translation = createTranslationRouter(bothKeys);
