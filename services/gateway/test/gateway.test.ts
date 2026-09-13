@@ -50,6 +50,34 @@ test("accepts auto-detect transcription sessions", () => {
   assert.equal(result.ok, true);
 });
 
+test("accepts a context hint and rejects oversized or non-string values", () => {
+  const request = {
+    type: "start_session",
+    sessionId: "session-context",
+    sourceLanguage: "ja",
+    targetLanguage: "en",
+    sampleRate: 16_000,
+    channels: 1,
+    contextHint: "Bleach",
+  };
+  assert.deepEqual(parseClientMessage(JSON.stringify(request)), { ok: true, message: request });
+  const trimmed = parseClientMessage(JSON.stringify({ ...request, contextHint: "  Bleach  " }));
+  assert.deepEqual(trimmed, { ok: true, message: request });
+  assert.deepEqual(parseClientMessage(JSON.stringify({ ...request, contextHint: "   " })), {
+    ok: true,
+    message: {
+      type: "start_session",
+      sessionId: "session-context",
+      sourceLanguage: "ja",
+      targetLanguage: "en",
+      sampleRate: 16_000,
+      channels: 1,
+    },
+  });
+  assert.deepEqual(parseClientMessage(JSON.stringify({ ...request, contextHint: "x".repeat(201) })), { ok: false });
+  assert.deepEqual(parseClientMessage(JSON.stringify({ ...request, contextHint: 12 })), { ok: false });
+});
+
 test("keeps the next caption sequence across reconnects and rejects invalid offsets", () => {
   const request = { type: "start_session", sessionId: "resume", sourceLanguage: "en", targetLanguage: "en", sampleRate: 16000, channels: 1, nextCaptionSequence: 42 };
   const parsed = parseClientMessage(JSON.stringify(request));

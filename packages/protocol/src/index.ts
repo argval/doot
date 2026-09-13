@@ -264,6 +264,8 @@ export interface StartSessionRequest {
   sampleRate: AudioSampleRate;
   channels: ChannelCount;
   nextCaptionSequence?: number;
+  /** Optional program/show/match hint for name spelling. Omitted when blank. */
+  contextHint?: string;
 }
 
 export interface AudioChunkMessage {

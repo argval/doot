@@ -29,10 +29,16 @@ import type {
 import {
   TranslationUnavailableError,
   type TranslateText,
+  type TranslationRequest,
 } from "./translation/contract.js";
 import { isRecord } from "./util.js";
 import { mergeStreamingText, collapseStutter } from "./merge-text.js";
 import type { TranslationRouter } from "./translation/router.js";
+import {
+  readOptionalContextHint,
+  SessionCaptionContext,
+  type InferCaptionContext,
+} from "./caption-context.js";
 
 const maxAudioChunkBytes = 256 * 1024;
 const maxBase64Length = Math.ceil(maxAudioChunkBytes / 3) * 4;
@@ -47,6 +53,7 @@ export interface RealtimeGatewayOptions {
   db?: DootDb;
   utteranceGraceMs?: number;
   authToken?: string;
+  inferCaptionContext?: InferCaptionContext;
 }
 
 interface ActiveUtterance {
@@ -94,11 +101,13 @@ interface SessionState {
   pendingPersistence: Promise<void>;
   closing: boolean;
   closed: boolean;
+  captionContext: SessionCaptionContext;
 }
 
 interface RequiredGatewayOptions {
   db: DootDb | null;
   utteranceGraceMs: number;
+  inferCaptionContext: InferCaptionContext | null;
   onPersistenceError: (
     error: unknown,
     sessionId: string,
@@ -115,6 +124,7 @@ export function registerRealtimeGateway(
   const gatewayOptions: RequiredGatewayOptions = {
     db: options.db ?? null,
     utteranceGraceMs: options.utteranceGraceMs ?? 350,
+    inferCaptionContext: options.inferCaptionContext ?? null,
     onPersistenceError: (error, sessionId, operation) => {
       app.log.error({ err: error, operation, sessionId }, "caption persistence failed");
     },
@@ -276,6 +286,11 @@ async function startSession(
       pendingPersistence: Promise.resolve(),
       closing: false,
       closed: false,
+      captionContext: new SessionCaptionContext(
+        request.contextHint ?? "",
+        options.inferCaptionContext,
+        request.targetLanguage,
+      ),
     };
     session = openedSession;
     sessions.set(request.sessionId, openedSession);
@@ -712,16 +727,9 @@ async function runDraftTranslation(
   const sourceText = collapseStutter(utterance.sourceText);
   utterance.sourceText = sourceText;
   utterance.draftInFlightSourceText = sourceText;
-  const request = session.request;
   let translatedText: string | null = null;
   try {
-    translatedText = await translator({
-      text: sourceText,
-      source: request.sourceLanguage,
-      target: request.targetLanguage,
-      urgency: "draft",
-      deadlineMs: DRAFT_DEADLINE_MS,
-    });
+    translatedText = await translator(translationRequest(session, sourceText, "draft", DRAFT_DEADLINE_MS));
   } catch {
     // Draft misses are fine; the final pass still reports translation errors.
   } finally {
@@ -888,13 +896,7 @@ function finalizeActiveUtterance(
         translatedText = utterance.draftTranslatedText;
       } else {
         try {
-          translatedText = await translator({
-            text: utterance.sourceText,
-            source: request.sourceLanguage,
-            target: request.targetLanguage,
-            urgency: "final",
-            deadlineMs: FINAL_DEADLINE_MS,
-          });
+          translatedText = await translator(translationRequest(session, utterance.sourceText, "final", FINAL_DEADLINE_MS));
         } catch (error) {
           if (!session.closed) {
             send(socket, {
@@ -912,7 +914,8 @@ function finalizeActiveUtterance(
     }
     if (translatedText && !session.nativeTranslation) translatedText = collapseStutter(translatedText);
     if (session.closed) return;
-    queueFinalizedCaption(session, utterance, translatedText);
+    const presented = session.captionContext.apply(translatedText);
+    queueFinalizedCaption(session, utterance, presented);
     if (session.closed) return;
     sendCaption(
       socket,
@@ -1035,6 +1038,22 @@ async function finishStoredSession(session: SessionState, interrupted = false): 
   await stopStoredSession(session);
 }
 
+function translationRequest(
+  session: SessionState,
+  text: string,
+  urgency: "draft" | "final",
+  deadlineMs: number,
+): TranslationRequest {
+  return {
+    text,
+    source: session.request.sourceLanguage,
+    target: session.request.targetLanguage,
+    urgency,
+    deadlineMs,
+    ...session.captionContext.translationFields(),
+  };
+}
+
 function sendCaption(
   socket: WebSocket,
   session: SessionState,
@@ -1043,6 +1062,7 @@ function sendCaption(
   isFinal: boolean,
   revision: number,
 ): void {
+  const presented = session.captionContext.apply(translatedText);
   send(socket, {
     type: "caption",
     sessionId: session.request.sessionId,
@@ -1050,13 +1070,14 @@ function sendCaption(
     utteranceId: utterance.id,
     revision,
     sourceText: utterance.sourceText,
-    translatedText,
+    translatedText: presented,
     isFinal,
     startMs: utterance.startMs,
     endMs: utterance.endMs,
     provider: session.providerId,
     ...(utterance.speakerId ? { speakerId: utterance.speakerId } : {}),
   });
+  if (isFinal) session.captionContext.noteFinal(translatedText);
 }
 
 function normalizeTranscript(value: string): string {
@@ -1145,6 +1166,7 @@ function clearUtteranceTimers(utterance: ActiveUtterance | null): void {
 function disposeSession(session: SessionState): void {
   session.closed = true;
   session.closing = true;
+  session.captionContext.close();
   clearUtteranceTimers(session.activeUtterance);
   for (const utterance of session.settlingUtterances.values()) clearUtteranceTimers(utterance);
   session.settlingUtterances.clear();
@@ -1178,6 +1200,9 @@ export function parseClientMessage(
       || (value.nextCaptionSequence !== undefined && !isNonNegativeInteger(value.nextCaptionSequence))
     ) return { ok: false };
 
+    const contextHint = readOptionalContextHint(value.contextHint);
+    if (contextHint === false) return { ok: false };
+
     return {
       ok: true,
       message: {
@@ -1189,6 +1214,7 @@ export function parseClientMessage(
         sampleRate: value.sampleRate,
         channels: value.channels,
         ...(value.nextCaptionSequence === undefined ? {} : { nextCaptionSequence: value.nextCaptionSequence as number }),
+        ...(contextHint === undefined ? {} : { contextHint }),
       },
     };
   }

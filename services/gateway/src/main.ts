@@ -4,6 +4,7 @@ import { migrateDb } from "@doot/db/migrate";
 import { recoverInterruptedSessions } from "@doot/db/captions";
 import { getHistoryPolicy, pruneHistory } from "@doot/db/privacy";
 import { config } from "./config.js";
+import { createGeminiCaptionContextInferrer } from "./caption-context.js";
 import { buildServer, createProviderRouter, createTranslationRouter } from "./server.js";
 
 const managed = process.argv.includes("--managed");
@@ -26,7 +27,14 @@ const db = await migrateDb(startup?.dbPath, startup?.migrationsFolder);
 await recoverInterruptedSessions(db);
 await pruneHistory(db, (await getHistoryPolicy(db)).retentionDays);
 const credentials = startup ?? config;
-const app = await buildServer(createProviderRouter(credentials), createTranslationRouter(credentials), { db, authToken });
+const inferCaptionContext = credentials.geminiApiKey
+  ? createGeminiCaptionContextInferrer(credentials.geminiApiKey)
+  : undefined;
+const app = await buildServer(createProviderRouter(credentials), createTranslationRouter(credentials), {
+  db,
+  authToken,
+  inferCaptionContext,
+});
 const retention = setInterval(() => { void getHistoryPolicy(db).then((policy) => pruneHistory(db, policy.retentionDays)).catch(() => {}); }, 3_600_000);
 retention.unref();
 let closing = false;

@@ -47,7 +47,7 @@ export class GeminiTextTranslator implements TextTranslationProvider {
             }],
           },
           contents: [{
-            parts: [{ text: translationPrompt(request.source, request.target, text) }],
+            parts: [{ text: translationPrompt(request.source, request.target, text, request) }],
           }],
           generationConfig: {
             temperature: 0,
@@ -78,12 +78,27 @@ function translationPrompt(
   source: TranslationRequest["source"],
   target: TranslationRequest["target"],
   text: string,
+  request: TranslationRequest,
 ): string {
   const targetLabel = LANGUAGE_LABELS[target];
+  const names = formatNameHints(request);
+  const extra = [
+    request.contextHint ? `The listener is watching or listening to: ${request.contextHint}.` : "",
+    names ? `Prefer these proper-name spellings: ${names}.` : "",
+  ].filter(Boolean).join(" ");
+  const suffix = extra ? `\n\n${extra}` : "";
   if (source === "auto") {
-    return `Detect the source language and translate this caption into ${targetLabel}:\n\n${text}`;
+    return `Detect the source language and translate this caption into ${targetLabel}:${suffix}\n\n${text}`;
   }
-  return `Translate this ${LANGUAGE_LABELS[source]} caption into ${targetLabel}:\n\n${text}`;
+  return `Translate this ${LANGUAGE_LABELS[source]} caption into ${targetLabel}:${suffix}\n\n${text}`;
+}
+
+function formatNameHints(request: TranslationRequest): string {
+  if (!request.canonicalNames?.length) return "";
+  return request.canonicalNames
+    .slice(0, 24)
+    .map((pair) => `${pair.heard} → ${pair.canonical}`)
+    .join("; ");
 }
 
 function unwrapTranslation(text: string): string {

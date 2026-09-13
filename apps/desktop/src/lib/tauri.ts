@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { isProviderId, isSupportedLanguage, type CaptionEvent, type CaptionRoute, type SupportedLanguage } from "@doot/protocol";
 import { gatewayFetch } from "./gateway";
+import { CONTEXT_HINT_MAX_CHARS } from "./prefs";
 
 export interface DesktopSession {
   sessionId: string;
@@ -20,9 +21,14 @@ export interface SessionStatus {
 export async function startCaptionSession(
   sourceLanguage: SupportedLanguage,
   targetLanguage: SupportedLanguage,
+  contextHint = "",
 ): Promise<DesktopSession> {
   await getCaptionRoute(sourceLanguage, targetLanguage);
-  return invoke<DesktopSession>("start_caption_session", { sourceLanguage, targetLanguage });
+  return invoke<DesktopSession>("start_caption_session", {
+    sourceLanguage,
+    targetLanguage,
+    contextHint: contextHint.replace(/\s+/g, " ").trim().slice(0, CONTEXT_HINT_MAX_CHARS),
+  });
 }
 
 export async function getCaptionRoute(
