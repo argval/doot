@@ -190,8 +190,7 @@ pub fn move_overlay(app: AppHandle, direction: String) -> Result<(), String> {
         "reset" => {
             set_overlay_click_through(app.clone(), false)?;
             window.center().map_err(|e| e.to_string())?;
-            window.show().map_err(|e| e.to_string())?;
-            window.set_focus().map_err(|e| e.to_string())?;
+            crate::overlay_chrome::show_overlay_without_activating(&window);
             return Ok(());
         }
         _ => return Err("Invalid overlay direction".into()),
@@ -199,14 +198,14 @@ pub fn move_overlay(app: AppHandle, direction: String) -> Result<(), String> {
     window.set_position(position).map_err(|e| e.to_string())
 }
 
+#[cfg(any(target_os = "macos", test))]
+const MACOS_SCREEN_RECORDING_SETTINGS: &str =
+    "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture";
+
 fn audio_permission() -> &'static str {
     #[cfg(target_os = "macos")]
     {
-        #[link(name = "CoreGraphics", kind = "framework")]
-        extern "C" {
-            fn CGPreflightScreenCaptureAccess() -> bool;
-        }
-        if unsafe { CGPreflightScreenCaptureAccess() } {
+        if screen_recording_granted() {
             "granted"
         } else {
             "required"
@@ -218,22 +217,75 @@ fn audio_permission() -> &'static str {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn screen_recording_granted() -> bool {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> bool;
+    }
+    unsafe { CGPreflightScreenCaptureAccess() }
+}
+
+#[cfg(target_os = "macos")]
+fn request_screen_capture_access() -> &'static str {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGRequestScreenCaptureAccess() -> bool;
+    }
+    if screen_recording_granted() {
+        return "granted";
+    }
+    if unsafe { CGRequestScreenCaptureAccess() } {
+        "granted"
+    } else {
+        "required"
+    }
+}
+
+#[tauri::command]
+pub fn request_screen_recording() -> Result<&'static str, String> {
+    #[cfg(target_os = "macos")]
+    {
+        Ok(request_screen_capture_access())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok("not-required")
+    }
+}
+
 #[tauri::command]
 pub fn open_audio_settings() -> Result<(), String> {
     #[cfg(target_os = "macos")]
-    let result = std::process::Command::new("open")
-        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
-        .spawn();
-    #[cfg(target_os = "windows")]
-    let result = std::process::Command::new("cmd")
-        .args(["/C", "start", "", "ms-settings:sound"])
-        .spawn();
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
-        result.map(|_| ()).map_err(|error| error.to_string())
+        if request_screen_capture_access() == "granted" {
+            return Ok(());
+        }
+        std::process::Command::new("open")
+            .arg(MACOS_SCREEN_RECORDING_SETTINGS)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", "ms-settings:sound"])
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         Err("Open your system audio settings manually.".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn macos_screen_recording_fallback_opens_privacy_pane() {
+        assert!(super::MACOS_SCREEN_RECORDING_SETTINGS.contains("Privacy_ScreenCapture"));
+        assert!(!super::MACOS_SCREEN_RECORDING_SETTINGS.contains("com.apple.preference.security"));
     }
 }

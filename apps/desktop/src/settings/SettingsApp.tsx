@@ -36,6 +36,7 @@ import {
   getConnectionStatus,
   getCaptionRoute,
   openAudioSettings,
+  requestScreenRecording,
   type ConnectionStatus,
 } from "../lib/tauri";
 import { captionScript, CaptionPanel } from "../overlay/CaptionPanel";
@@ -595,13 +596,30 @@ function ConnectionSection({
       </SettingsGroup>
       {error && <p className="settings-error">{error}</p>}
       <SettingsGroup label="Actions" aria-label="Connection actions">
-        <SettingsRow title="Check again" chevron onClick={onRefresh} />
+        <SettingsRow
+          title="Check again"
+          chevron
+          onClick={() => {
+            if (!isTauriRuntime()) {
+              onRefresh();
+              return;
+            }
+            void requestScreenRecording()
+              .then(() => onRefresh())
+              .catch((error: unknown) => {
+                setActionError(error instanceof Error ? error.message : "Could not request Screen Recording.");
+                onRefresh();
+              });
+          }}
+        />
         {isTauriRuntime() && (
           <SettingsRow
             title="Open system audio settings"
             chevron
             onClick={() => {
-              void openAudioSettings().catch((error: unknown) => setActionError(error instanceof Error ? error.message : "Could not open system settings."));
+              void openAudioSettings()
+                .then(() => onRefresh())
+                .catch((error: unknown) => setActionError(error instanceof Error ? error.message : "Could not open system settings."));
             }}
           />
         )}

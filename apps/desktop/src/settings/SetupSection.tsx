@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { isTauriRuntime } from "../lib/runtime";
-import { getCaptionRoute, getConnectionStatus, openAudioSettings } from "../lib/tauri";
+import { getCaptionRoute, getConnectionStatus, openAudioSettings, requestScreenRecording } from "../lib/tauri";
 import { updatePrefs, type DesktopPrefs } from "../lib/prefs";
 import { SettingsGroup, SettingsRow } from "./SettingsChrome";
 
@@ -66,7 +66,8 @@ export function SetupSection({ prefs, onComplete }: { prefs: DesktopPrefs; onCom
         disabled={!desktop || busy}
         onClick={() => {
           setBusy(true);
-          void Promise.all([getConnectionStatus(), getCaptionRoute(prefs.translateEnabled ? prefs.sourceLanguage : prefs.targetLanguage, prefs.targetLanguage)])
+          void requestScreenRecording()
+            .then(() => Promise.all([getConnectionStatus(), getCaptionRoute(prefs.translateEnabled ? prefs.sourceLanguage : prefs.targetLanguage, prefs.targetLanguage)]))
             .then(([status, route]) => setNotice(!status.gatewayReachable ? "Caption service is unavailable. Try Check readiness again." : status.audioPermission === "required" ? "Allow Screen & System Audio Recording, then check again." : `Ready for ${route.description}. Start captions from the overlay while a video is playing.`))
             .catch((error: unknown) => setNotice(String(error))).finally(() => setBusy(false));
         }}

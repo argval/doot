@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CaptionPanel } from "../../../apps/desktop/src/overlay/CaptionPanel.js";
@@ -88,6 +91,46 @@ test("idle opacity stays continuous while hover lands at a controlled final opac
   }
   assert.equal(normalizePrefs({ overlayIdleOpacity: 0 }).overlayIdleOpacity, 0);
   assert.equal(normalizePrefs({ overlayIdleOpacity: 1 }).overlayIdleOpacity, 0.7);
+});
+
+test("native overlay glass does not use CSS backdrop-filter; previews still do", () => {
+  const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../../apps/desktop/src/styles.css"), "utf8");
+  const nativeRule = css.match(/^\.caption-window \{[\s\S]*?^\}/m);
+  assert.ok(nativeRule);
+  assert.doesNotMatch(nativeRule[0], /backdrop-filter/);
+  assert.match(css, /html\.web-preview \.caption-window,\s*\.settings-overlay-preview \.caption-window \{[\s\S]*backdrop-filter: blur\(28px\)/);
+});
+
+test("Setup and Connection request Screen Recording instead of only opening Preferences", () => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), "../../..");
+  const commands = readFileSync(join(root, "apps/desktop/src-tauri/src/commands.rs"), "utf8");
+  const setup = readFileSync(join(root, "apps/desktop/src/settings/SetupSection.tsx"), "utf8");
+  const settings = readFileSync(join(root, "apps/desktop/src/settings/SettingsApp.tsx"), "utf8");
+  const tauri = readFileSync(join(root, "apps/desktop/src/lib/tauri.ts"), "utf8");
+  assert.match(commands, /CGRequestScreenCaptureAccess\(\)/);
+  assert.match(commands, /fn request_screen_recording/);
+  assert.doesNotMatch(commands, /com\.apple\.preference\.security\?Privacy_ScreenCapture/);
+  assert.match(tauri, /invoke\("request_screen_recording"\)/);
+  assert.match(setup, /requestScreenRecording/);
+  assert.match(setup, /openAudioSettings/);
+  assert.match(settings, /requestScreenRecording/);
+  assert.match(settings, /openAudioSettings/);
+});
+
+test("overlay window is a nonactivating HUD NSPanel on macOS and WS_EX_NOACTIVATE on Windows", () => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), "../../..");
+  const chrome = readFileSync(join(root, "apps/desktop/src-tauri/src/overlay_chrome.rs"), "utf8");
+  const lib = readFileSync(join(root, "apps/desktop/src-tauri/src/lib.rs"), "utf8");
+  const overlayShow = lib.match(/fn show_overlay\([\s\S]*?\n\}/);
+  assert.ok(overlayShow);
+  assert.match(chrome, /DootHudPanel/);
+  assert.match(chrome, /NS_WINDOW_STYLE_MASK_NONACTIVATING_PANEL/);
+  assert.match(chrome, /orderFrontRegardless/);
+  assert.match(chrome, /WS_EX_NOACTIVATE/);
+  assert.match(chrome, /SW_SHOWNOACTIVATE/);
+  assert.match(chrome, /Effect::HudWindow/);
+  assert.match(lib, /show_overlay_without_activating/);
+  assert.doesNotMatch(overlayShow[0], /set_focus/);
 });
 
 test("settled speaker turns tint the existing left bar without names", () => {

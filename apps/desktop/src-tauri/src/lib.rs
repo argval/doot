@@ -2,6 +2,7 @@ mod audio;
 mod commands;
 mod diagnostics;
 mod events;
+mod overlay_chrome;
 mod service;
 mod stream;
 
@@ -118,6 +119,7 @@ pub fn run() {
             diagnostics::translation_timings,
             diagnostics::record_caption_timing,
             commands::open_audio_settings,
+            commands::request_screen_recording,
             commands::open_settings_window,
             service::gateway_connection,
             service::credential_status,
@@ -183,10 +185,8 @@ pub fn run() {
                 let _ = state.gateway.lock().await.ensure(&handle).await;
             });
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_always_on_top(true);
                 let _ = window.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
-                #[cfg(target_os = "macos")]
-                let _ = window.set_visible_on_all_workspaces(true);
+                overlay_chrome::show_overlay_without_activating(&window);
             }
 
             let toggle_item =
@@ -324,9 +324,7 @@ pub(crate) fn open_settings(app: &AppHandle) -> Result<(), String> {
             .title_bar_style(tauri::TitleBarStyle::Overlay);
     }
 
-    let window = builder
-        .build()
-        .map_err(|error| error.to_string())?;
+    let window = builder.build().map_err(|error| error.to_string())?;
 
     #[cfg(target_os = "macos")]
     let _ = window.set_visible_on_all_workspaces(false);
@@ -353,11 +351,6 @@ fn hide_overlay(app: &AppHandle) {
 
 fn show_overlay(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.set_always_on_top(true);
-        #[cfg(target_os = "macos")]
-        let _ = window.set_visible_on_all_workspaces(true);
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
+        overlay_chrome::show_overlay_without_activating(&window);
     }
 }
