@@ -179,15 +179,18 @@ export function HistorySection() {
                 className="settings-history-item"
                 onClick={() => setSelectedId(session.id)}
               >
-                <strong>{session.title || formatSessionWhen(session.startedAtMs)}</strong>
-                <em>
-                  {session.title ? `${formatSessionWhen(session.startedAtMs)} · ` : ""}
-                  {formatLanguagePair(session.sourceLanguage, session.targetLanguage)}
-                  {" · "}
-                  {formatCaptionCount(session.segmentCount)}
-                  {session.interrupted ? " · Interrupted" : ""}
-                </em>
-                {session.preview ? <span>{session.preview}</span> : null}
+                <span className="settings-history-item-copy">
+                  <strong>{session.title || formatSessionWhen(session.startedAtMs)}</strong>
+                  <em>
+                    {session.title ? `${formatSessionWhen(session.startedAtMs)} · ` : ""}
+                    {formatLanguagePair(session.sourceLanguage, session.targetLanguage)}
+                    {" · "}
+                    {formatCaptionCount(session.segmentCount)}
+                    {session.interrupted ? " · Interrupted" : ""}
+                  </em>
+                  {session.preview ? <span>{session.preview}</span> : null}
+                </span>
+                <span className="settings-chevron" aria-hidden="true" />
               </button>
             </li>
           ))}
@@ -234,6 +237,7 @@ function SessionDetail({
   return (
     <div className="settings-history">
       <button type="button" className="settings-history-back" onClick={onBack}>
+        <span className="settings-chevron" aria-hidden="true" />
         Back to sessions
       </button>
       {error && <p className="settings-error">{error}</p>}

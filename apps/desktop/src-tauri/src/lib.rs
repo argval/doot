@@ -304,20 +304,29 @@ pub(crate) fn open_settings(app: &AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
-    let window = WebviewWindowBuilder::new(
+    let mut builder = WebviewWindowBuilder::new(
         app,
         SETTINGS_WINDOW_LABEL,
         WebviewUrl::App("index.html".into()),
     )
     .title("Settings")
-    .inner_size(720.0, 560.0)
-    .min_inner_size(600.0, 460.0)
+    .inner_size(780.0, 600.0)
+    .min_inner_size(640.0, 480.0)
     .resizable(true)
     .decorations(true)
     .always_on_top(false)
-    .visible(true)
-    .build()
-    .map_err(|error| error.to_string())?;
+    .visible(true);
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .hidden_title(true)
+            .title_bar_style(tauri::TitleBarStyle::Overlay);
+    }
+
+    let window = builder
+        .build()
+        .map_err(|error| error.to_string())?;
 
     #[cfg(target_os = "macos")]
     let _ = window.set_visible_on_all_workspaces(false);
