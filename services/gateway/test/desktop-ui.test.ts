@@ -113,6 +113,7 @@ test("Setup and Connection request Screen Recording instead of only opening Pref
   assert.match(tauri, /invoke\("request_screen_recording"\)/);
   assert.match(setup, /requestScreenRecording/);
   assert.match(setup, /openAudioSettings/);
+  assert.match(settings, /requestScreenRecording/);
   assert.match(settings, /openAudioSettings/);
 });
 
