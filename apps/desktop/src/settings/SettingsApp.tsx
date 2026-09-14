@@ -601,7 +601,9 @@ function ConnectionSection({
             title="Open system audio settings"
             chevron
             onClick={() => {
-              void openAudioSettings().catch((error: unknown) => setActionError(error instanceof Error ? error.message : "Could not open system settings."));
+              void openAudioSettings()
+                .then(() => onRefresh())
+                .catch((error: unknown) => setActionError(error instanceof Error ? error.message : "Could not open system settings."));
             }}
           />
         )}

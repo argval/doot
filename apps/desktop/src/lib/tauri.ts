@@ -83,6 +83,10 @@ export async function openAudioSettings(): Promise<void> {
   return invoke("open_audio_settings");
 }
 
+export async function requestScreenRecording(): Promise<"granted" | "required" | "not-required"> {
+  return invoke("request_screen_recording");
+}
+
 export interface AudioCaptureStatus {
   state: string;
   backend: string;

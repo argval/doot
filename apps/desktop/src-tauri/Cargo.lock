@@ -784,6 +784,7 @@ dependencies = [
  "crossbeam-queue",
  "futures-util",
  "keyring",
+ "objc2",
  "screencapturekit",
  "serde",
  "serde_json",
