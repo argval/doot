@@ -40,6 +40,7 @@ import { captionScript, CaptionPanel } from "../overlay/CaptionPanel";
 import { HistorySection } from "./HistorySection";
 import { SetupSection } from "./SetupSection";
 import { PrivacySection } from "./PrivacySection";
+import { SettingsGroup, SettingsRow, SettingsSegmented, SettingsSwitch, SettingsToolbar } from "./SettingsChrome";
 import type { VisibleCaptionLine } from "../captions";
 import { summarizeTiming, summarizeMilliseconds, type CaptionTimingSample, type TranslationTimingSample } from "../lib/timing";
 import { interactionShortcutLabel } from "../lib/shortcut";
@@ -150,6 +151,8 @@ const SECTIONS: ReadonlyArray<{
 
 export function SettingsApp() {
   const [section, setSection] = useState<SettingsSection>("general");
+  const [sectionHistory, setSectionHistory] = useState<SettingsSection[]>(["general"]);
+  const [sectionIndex, setSectionIndex] = useState(0);
   const [navQuery, setNavQuery] = useState("");
   const [prefs, setPrefs] = useState<DesktopPrefs>(DEFAULT_PREFS);
   const [openAtLogin, setOpenAtLoginEnabled] = useState(false);
@@ -187,7 +190,11 @@ export function SettingsApp() {
       }
       if (!disposed) {
         setPrefs(loaded);
-        if (!loaded.onboardingComplete) setSection("setup");
+        if (!loaded.onboardingComplete) {
+          setSection("setup");
+          setSectionHistory(["setup"]);
+          setSectionIndex(0);
+        }
         setOpenAtLoginEnabled(loginEnabled);
       }
     })();
@@ -291,9 +298,30 @@ export function SettingsApp() {
     return SECTIONS.filter((item) => `${item.label} ${item.keywords}`.toLowerCase().includes(query));
   }, [navQuery]);
 
+  const goToSection = useCallback((next: SettingsSection) => {
+    if (next === section) {
+      return;
+    }
+    setSectionHistory((history) => [...history.slice(0, sectionIndex + 1), next]);
+    setSectionIndex(sectionIndex + 1);
+    setSection(next);
+  }, [section, sectionIndex]);
+
+  const goHistory = useCallback((direction: -1 | 1) => {
+    setSectionIndex((index) => {
+      const nextIndex = index + direction;
+      const next = sectionHistory[nextIndex];
+      if (!next) {
+        return index;
+      }
+      setSection(next);
+      return nextIndex;
+    });
+  }, [sectionHistory]);
+
   return (
     <div className="settings-shell">
-      <nav className="settings-sidebar" aria-label="Settings">
+      <nav className="settings-sidebar" aria-label="Settings" data-tauri-drag-region>
         <label className="settings-search">
           <Search size={13} aria-hidden="true" />
           <input
@@ -315,44 +343,52 @@ export function SettingsApp() {
                 type="button"
                 className={selected ? "settings-nav-item selected" : "settings-nav-item"}
                 aria-current={selected ? "page" : undefined}
-                onClick={() => setSection(item.id)}
+                onClick={() => goToSection(item.id)}
               >
-                <span className="settings-nav-icon"><Icon size={13} aria-hidden="true" /></span>
+                <span className="settings-nav-icon" data-tone={item.id}><Icon size={12} aria-hidden="true" /></span>
                 <span>{item.label}</span>
               </button>
             );
           })}
         </div>
       </nav>
-      <main className={section === "history" ? "settings-content history" : "settings-content"}>
-        <h1>{SECTIONS.find((item) => item.id === section)?.label}</h1>
-        {section === "setup" && <SetupSection prefs={prefs} onComplete={() => setSection("captions")} />}
-        {section === "privacy" && <PrivacySection />}
-        {section === "general" && (
-          <GeneralSection
-            openAtLogin={openAtLogin}
-            loginError={loginError}
-            onOpenAtLoginChange={(enabled) => void setOpenAtLogin(enabled)}
-          />
-        )}
-        {section === "captions" && (
-          <CaptionsSection prefs={prefs} onPatch={(patch) => void patchPrefs(patch)} />
-        )}
-        {section === "history" && <HistorySection />}
-        {section === "connection" && (
-          <ConnectionSection
-            prefs={prefs}
-            connection={connection}
-            error={connectionError}
-            route={route}
-            routeError={routeError}
-            onRefresh={() => setRefreshKey((value) => value + 1)}
-          />
-        )}
-        {section === "about" && (
-          <AboutSection name={appName} version={appVersion} />
-        )}
-      </main>
+      <div className="settings-pane">
+        <SettingsToolbar
+          canBack={sectionIndex > 0}
+          canForward={sectionIndex < sectionHistory.length - 1}
+          onBack={() => goHistory(-1)}
+          onForward={() => goHistory(1)}
+        />
+        <main className={section === "history" ? "settings-content history" : "settings-content"}>
+          <h1 className="sr-only">{SECTIONS.find((item) => item.id === section)?.label}</h1>
+          {section === "setup" && <SetupSection prefs={prefs} onComplete={() => goToSection("captions")} />}
+          {section === "privacy" && <PrivacySection />}
+          {section === "general" && (
+            <GeneralSection
+              openAtLogin={openAtLogin}
+              loginError={loginError}
+              onOpenAtLoginChange={(enabled) => void setOpenAtLogin(enabled)}
+            />
+          )}
+          {section === "captions" && (
+            <CaptionsSection prefs={prefs} onPatch={(patch) => void patchPrefs(patch)} />
+          )}
+          {section === "history" && <HistorySection />}
+          {section === "connection" && (
+            <ConnectionSection
+              prefs={prefs}
+              connection={connection}
+              error={connectionError}
+              route={route}
+              routeError={routeError}
+              onRefresh={() => setRefreshKey((value) => value + 1)}
+            />
+          )}
+          {section === "about" && (
+            <AboutSection name={appName} version={appVersion} />
+          )}
+        </main>
+      </div>
     </div>
   );
 }
@@ -369,25 +405,29 @@ function GeneralSection({
   const [positionError, setPositionError] = useState<string | null>(null);
   return (
     <>
-      <p className="settings-section-label">Startup</p>
-      <section className="settings-group" aria-label="Startup">
+      <SettingsGroup label="Startup" aria-label="Startup">
         <label className="settings-row">
-          <span>
+          <span className="settings-row-copy">
             <strong>Open at login</strong>
             <em>Start Doot when you sign in to this computer.</em>
           </span>
-          <input
-            type="checkbox"
-            role="switch"
-            checked={openAtLogin}
-            onChange={(event) => onOpenAtLoginChange(event.target.checked)}
-          />
+          <SettingsSwitch checked={openAtLogin} onChange={onOpenAtLoginChange} />
         </label>
-      </section>
+      </SettingsGroup>
       {loginError && <p className="settings-error">{loginError}</p>}
-      <p className="settings-section-label">Overlay</p>
-      <p className="settings-footnote">Use Alt+Arrow keys while an overlay control is focused to move it. {interactionShortcutLabel()} toggles click-through. The tray also provides Unlock Overlay.</p>
-      <div className="settings-history-actions"><button disabled={!isTauriRuntime()} onClick={() => { void invoke("move_overlay", { direction: "reset" }).then(() => setPositionError(null)).catch((error: unknown) => setPositionError(String(error))); }}>Reset overlay position and unlock</button></div>
+      <SettingsGroup label="Overlay" aria-label="Overlay">
+        <SettingsRow
+          title="Reset overlay"
+          subtitle={`Alt+Arrow keys move the overlay. ${interactionShortcutLabel()} toggles click-through. The tray also provides Unlock Overlay.`}
+          chevron
+          disabled={!isTauriRuntime()}
+          onClick={() => {
+            void invoke("move_overlay", { direction: "reset" })
+              .then(() => setPositionError(null))
+              .catch((error: unknown) => setPositionError(String(error)));
+          }}
+        />
+      </SettingsGroup>
       {positionError && <p role="alert" className="settings-error">{positionError}</p>}
     </>
   );
@@ -429,28 +469,21 @@ function CaptionsSection({
           placeholder="Your live captions will appear here."
         />
       </div>
-      <p className="settings-section-label">Idle look</p>
-      <section className="settings-group" aria-label="Idle look">
-        <div className="settings-row">
-          <div className="settings-presets full" role="group" aria-label="Idle opacity presets">
-            {OPACITY_PRESETS.map((preset) => (
-              <button
-                key={preset.id}
-                type="button"
-                className={opacityPreset === preset.id ? "selected" : undefined}
-                aria-pressed={opacityPreset === preset.id}
-                onClick={() => onPatch({ overlayIdleOpacity: preset.value })}
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
-      <p className="settings-section-label">Text</p>
-      <section className="settings-group" aria-label="Caption text">
+      <SettingsGroup label="Idle look" aria-label="Idle look">
+        <SettingsSegmented
+          label="Idle opacity"
+          hint="More transparent when idle, more opaque on hover. Resizing the window does not change caption size."
+          value={opacityPreset ?? ""}
+          options={OPACITY_PRESETS.map((preset) => ({ id: preset.id, label: preset.label }))}
+          onChange={(id) => {
+            const preset = OPACITY_PRESETS.find((item) => item.id === id);
+            if (preset) onPatch({ overlayIdleOpacity: preset.value });
+          }}
+        />
+      </SettingsGroup>
+      <SettingsGroup label="Text" aria-label="Caption text">
         <label className="settings-row">
-          <span>
+          <span className="settings-row-copy">
             <strong>Text size</strong>
             <em>Caption type size. Resizing the window does not change this.</em>
           </span>
@@ -469,7 +502,7 @@ function CaptionsSection({
           </div>
         </label>
         <label className="settings-row settings-row-stack">
-          <span>
+          <span className="settings-row-copy">
             <strong>What's playing?</strong>
             <em>Optional hint for the next capture — a match, show, or stream. Leave blank to infer names from speech.</em>
           </span>
@@ -485,7 +518,7 @@ function CaptionsSection({
             }}
           />
         </label>
-      </section>
+      </SettingsGroup>
     </>
   );
 }
@@ -513,17 +546,16 @@ function ConnectionSection({
   return (
     <>
       <p className="settings-intro">Check that Doot can hear this computer and provide captions in your chosen languages.</p>
-      <p className="settings-section-label">Status</p>
-      <section className="settings-group" aria-label="Status">
+      <SettingsGroup label="Status" aria-label="Status">
         <div className="settings-row">
-          <span>
+          <span className="settings-row-copy">
             <strong>Selected languages</strong>
             <em>{route ? "Your language selection is configured." : routeError ? "These languages need speech service setup. See connection details below." : "Checking selected languages…"}</em>
           </span>
           <StatusBadge ok={Boolean(route)} label={route ? "Configured" : routeError ? "Unavailable" : "Checking"} />
         </div>
         <div className="settings-row">
-          <span>
+          <span className="settings-row-copy">
             <strong>Caption service</strong>
             <em>{gatewayOk ? "Doot can reach the caption service." : "Doot could not start its caption service. Check Setup, then try again."}</em>
           </span>
@@ -533,7 +565,7 @@ function ConnectionSection({
           />
         </div>
         <div className="settings-row">
-          <span>
+          <span className="settings-row-copy">
             <strong>System audio</strong>
             <em>
               {capture?.state === "capturing" ? "Listening to audio playing on this computer." : "Play audio, then start captions from the overlay."}
@@ -546,20 +578,26 @@ function ConnectionSection({
           />
         </div>
         <div className="settings-row">
-          <span>
+          <span className="settings-row-copy">
             <strong>Audio permission</strong>
             <em>{connection?.audioPermission === "required" ? "Allow Doot in Screen & System Audio Recording, then restart capture." : connection?.audioPermission === "granted" ? "Doot has permission to capture system audio." : connection?.audioPermission === "not-required" ? "System audio capture needs no additional permission." : "Permission can be checked in the desktop app."}</em>
           </span>
           <StatusBadge ok={connection?.audioPermission === "granted" || connection?.audioPermission === "not-required"} tone={connection ? "status" : "neutral"} label={connection?.audioPermission === "required" ? "Allow access" : connection ? "Ready" : "Desktop only"} />
         </div>
-      </section>
+      </SettingsGroup>
       {error && <p className="settings-error">{error}</p>}
-      <div className="settings-history-actions">
-        <button type="button" onClick={onRefresh}>Check again</button>
-        {isTauriRuntime() && <button type="button" onClick={() => {
-          void openAudioSettings().catch((error: unknown) => setActionError(error instanceof Error ? error.message : "Could not open system settings."));
-        }}>Open system audio settings</button>}
-      </div>
+      <SettingsGroup label="Actions" aria-label="Connection actions">
+        <SettingsRow title="Check again" chevron onClick={onRefresh} />
+        {isTauriRuntime() && (
+          <SettingsRow
+            title="Open system audio settings"
+            chevron
+            onClick={() => {
+              void openAudioSettings().catch((error: unknown) => setActionError(error instanceof Error ? error.message : "Could not open system settings."));
+            }}
+          />
+        )}
+      </SettingsGroup>
       {actionError && <p role="alert" className="settings-error">{actionError}</p>}
       <details className="connection-details"><summary>Connection details</summary>
         <p>{route?.description ?? routeError ?? "Checking configuration…"}</p>
@@ -612,9 +650,16 @@ function TimingDiagnostics() {
 function AboutSection({ name, version }: { name: string; version: string }) {
   return (
     <section className="settings-about" aria-label="About Doot">
-      <p className="settings-about-name">{name}</p>
-      <p className="settings-about-tag">Live captions for your desktop.</p>
-      <p className="settings-about-version">Version {version}</p>
+      <div className="settings-about-hero">
+        <span className="settings-about-mark" aria-hidden="true">D</span>
+        <p className="settings-about-name">{name}</p>
+        <p className="settings-about-tag">Live captions for your desktop.</p>
+      </div>
+      <SettingsGroup aria-label="Version">
+        <SettingsRow title="Version">
+          <span className="settings-value">{version}</span>
+        </SettingsRow>
+      </SettingsGroup>
     </section>
   );
 }

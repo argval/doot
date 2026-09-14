@@ -16,6 +16,13 @@ function resolveWindowLabel(): string {
 }
 
 const windowLabel = resolveWindowLabel();
+document.documentElement.dataset.runtime = isTauriRuntime() ? "tauri" : "web";
+const platform = navigator.platform.toLowerCase();
+document.documentElement.dataset.os = platform.includes("mac")
+  ? "mac"
+  : platform.includes("win")
+    ? "win"
+    : "linux";
 if (windowLabel === "settings") {
   document.documentElement.classList.add("settings-window");
   document.body.classList.add("settings-window");

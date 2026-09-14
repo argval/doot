@@ -42,11 +42,11 @@ html.web-preview .overlay-shell {
 
 html.web-preview .caption-window,
 .settings-overlay-preview .caption-window {
-  backdrop-filter: blur(36px);
-  -webkit-backdrop-filter: blur(36px);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 16%),
-    0 12px 40px rgb(0 0 0 / 28%);
+    inset 0 1px 0 rgb(255 255 255 / 14%),
+    0 8px 22px rgb(0 0 0 / 22%);
 }
 
 html.web-preview .language-picker,
@@ -88,13 +88,13 @@ button {
   flex-direction: column;
   align-items: stretch;
   justify-content: space-between;
-  padding: 16px 22px 12px;
+  padding: 14px 18px 10px;
   border: 0;
   border-radius: var(--overlay-radius);
   background-color: rgb(var(--overlay-fill) / var(--overlay-idle-alpha, 0.42));
-  backdrop-filter: blur(36px);
-  -webkit-backdrop-filter: blur(36px);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 16%);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 14%);
   cursor: grab;
   user-select: none;
   z-index: 0;
@@ -204,12 +204,12 @@ button {
   flex-wrap: wrap;
   justify-content: flex-end;
   align-items: center;
-  gap: 4px;
-  padding: 3px 5px;
+  gap: 3px;
+  padding: 2px 4px;
   border: 1px solid var(--overlay-picker-border);
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--overlay-picker-bg);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 8%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 7%);
   z-index: 4;
   opacity: 0;
   pointer-events: none;
@@ -242,27 +242,27 @@ button {
 }
 
 .language-picker .language-select :is(select, input) {
-  width: 108px;
-  min-height: 26px;
-  padding: 3px 18px 3px 4px;
+  width: 96px;
+  min-height: 24px;
+  padding: 2px 16px 2px 4px;
 }
 
 .language-picker .language-translate,
 .language-picker .capture-toggle {
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
 }
 
 .capture-toggle {
   display: grid;
   position: relative;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   flex: none;
   place-items: center;
   padding: 0;
   border: 1px solid rgb(255 255 255 / 7%);
-  border-radius: 7px;
+  border-radius: 6px;
   color: var(--overlay-ink-subtle);
   background: rgb(255 255 255 / 4%);
   cursor: pointer;
@@ -307,7 +307,7 @@ button {
   letter-spacing: var(--caption-letter-spacing);
   overflow-wrap: anywhere;
   text-wrap: pretty;
-  text-shadow: 0 1px 3px rgb(0 0 0 / 90%), 0 0 12px rgb(0 0 0 / 45%);
+  text-shadow: 0 1px 2px rgb(0 0 0 / 72%), 0 0 10px rgb(0 0 0 / 28%);
   flex: 0 0 auto;
   margin-top: auto;
 }
@@ -435,7 +435,7 @@ button {
   color: var(--overlay-ink);
   background: transparent;
   cursor: pointer;
-  min-height: 26px;
+  min-height: 24px;
 }
 
 .sr-only {
@@ -463,8 +463,8 @@ button {
 .caption-status .audio-bars { height: 12px; }
 .caption-notice .caption-error-action { flex: none; min-height: 28px; }
 .caption-notice > span { max-height: 2.6em; overflow: auto; }
-.caption-copy { padding-inline-end: 20px; padding-top: 36px; }
-.recent-pairs { position: relative; display: grid; place-items: center; width: 26px; height: 26px; color: var(--overlay-ink); flex: none; }
+.caption-copy { padding-inline-end: 18px; padding-top: 30px; }
+.recent-pairs { position: relative; display: grid; place-items: center; width: 24px; height: 24px; color: var(--overlay-ink); flex: none; }
 .recent-pairs select { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
 .recent-pairs:focus-within { outline: 2px solid var(--overlay-accent); border-radius: 6px; }
 .language-translate, .capture-toggle { position: relative; }
@@ -503,13 +503,13 @@ button {
 
 .language-translate {
   display: grid;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   flex: none;
   place-items: center;
   padding: 0;
   border: 1px solid rgb(255 255 255 / 7%);
-  border-radius: 7px;
+  border-radius: 6px;
   color: var(--overlay-ink-subtle);
   background: rgb(255 255 255 / 4%);
   cursor: pointer;
@@ -608,7 +608,7 @@ button {
   }
 
   .caption-window {
-    border-radius: 17px;
+    border-radius: 14px;
   }
 
   .language-select :is(select, input) {
