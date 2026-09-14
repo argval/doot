@@ -9,6 +9,22 @@ html.settings-window #root {
   -webkit-font-smoothing: antialiased;
 }
 
+html[data-runtime="web"].settings-window,
+html[data-runtime="web"].settings-window body,
+html[data-runtime="web"].settings-window #root {
+  display: grid;
+  place-items: center;
+  background: #0b0b0b;
+}
+
+html[data-runtime="web"].settings-window .settings-shell {
+  width: min(780px, 100vw);
+  height: min(600px, 100vh);
+  overflow: hidden;
+  border-radius: 10px;
+  box-shadow: 0 18px 48px rgb(0 0 0 / 45%);
+}
+
 .settings-shell {
   display: grid;
   grid-template-columns: 196px minmax(0, 1fr);
@@ -313,7 +329,7 @@ html[data-os="mac"].settings-window .settings-sidebar {
 .settings-presets button {
   padding: 5px 10px;
   border-radius: 6px;
-  color: var(--settings-ink-secondary);
+  color: #d1d1d6;
   background: transparent;
   font-size: 12px;
   font-weight: 560;
@@ -326,11 +342,11 @@ html[data-os="mac"].settings-window .settings-sidebar {
 }
 
 .settings-presets button.selected {
-  color: var(--settings-ink);
-  background: #3a3a3c;
+  color: #fff;
+  background: #4a4a4e;
   box-shadow:
     0 0.5px 0.5px rgb(0 0 0 / 35%),
-    0 0 0 0.5px rgb(255 255 255 / 6%);
+    0 0 0 0.5px rgb(255 255 255 / 8%);
 }
 
 .settings-presets button:focus-visible {

@@ -16,6 +16,7 @@ function resolveWindowLabel(): string {
 }
 
 const windowLabel = resolveWindowLabel();
+document.documentElement.dataset.runtime = isTauriRuntime() ? "tauri" : "web";
 const platform = navigator.platform.toLowerCase();
 document.documentElement.dataset.os = platform.includes("mac")
   ? "mac"
