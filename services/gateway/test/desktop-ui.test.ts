@@ -52,7 +52,7 @@ test("Auto transcription follows the text script without declaring an unknown la
   assert.match(render("ನಮಸ್ಕಾರ"), /data-script="indic"/);
   assert.match(render("こんにちは"), /data-script="cjk"/);
 });
-import { DEFAULT_PREFS, normalizePrefs, rememberPair, translationModePatch } from "../../../apps/desktop/src/lib/prefs.js";
+import { DEFAULT_PREFS, hoverBoostFor, normalizePrefs, rememberPair, translationModePatch } from "../../../apps/desktop/src/lib/prefs.js";
 import { speechProviderLabel } from "../../../apps/desktop/src/lib/speech-labels.js";
 
 test("language modes restore the last pair, preserve Auto→English, and bound recents", () => {
@@ -78,6 +78,16 @@ test("language modes restore the last pair, preserve Auto→English, and bound r
   assert.equal(normalizePrefs({ contextHint: "  Bleach" }).contextHint, "  Bleach");
   assert.equal(normalizePrefs({ contextHint: "x".repeat(90) }).contextHint.length, 80);
   assert.equal(DEFAULT_PREFS.contextHint, "");
+});
+
+test("idle opacity stays continuous while hover lands at a controlled final opacity", () => {
+  for (const idleOpacity of [0.18, 0.42, 0.7]) {
+    const finalOpacity = 1 - (1 - idleOpacity) * (1 - hoverBoostFor(idleOpacity));
+    assert.ok(finalOpacity > idleOpacity);
+    assert.ok(finalOpacity <= 0.78);
+  }
+  assert.equal(normalizePrefs({ overlayIdleOpacity: 0 }).overlayIdleOpacity, 0);
+  assert.equal(normalizePrefs({ overlayIdleOpacity: 1 }).overlayIdleOpacity, 0.7);
 });
 
 test("settled speaker turns tint the existing left bar without names", () => {

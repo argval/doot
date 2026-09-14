@@ -11,7 +11,7 @@ import { isTauriRuntime } from "./runtime";
 export const PREFS_CHANGED_EVENT = "prefs://changed";
 export const CAPTION_FONT_SIZE_MIN = 18;
 export const CAPTION_FONT_SIZE_MAX = 40;
-export const OVERLAY_IDLE_OPACITY_MIN = 0.18;
+export const OVERLAY_IDLE_OPACITY_MIN = 0;
 export const OVERLAY_IDLE_OPACITY_MAX = 0.7;
 export const CONTEXT_HINT_MAX_CHARS = 80;
 
@@ -66,7 +66,8 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 export function hoverBoostFor(idleOpacity: number): number {
-  return clamp(idleOpacity * 0.4 + 0.28, 0.2, 0.58);
+  const hoverOpacity = clamp(idleOpacity + 0.16, 0.34, 0.78);
+  return (hoverOpacity - idleOpacity) / (1 - idleOpacity);
 }
 
 /** Translate To cannot be Auto; fall back to English. */
@@ -159,6 +160,8 @@ export function applyOverlayAppearance(prefs: DesktopPrefs): void {
   root.style.setProperty("--caption-font-size", `${prefs.captionFontSize}px`);
   root.style.setProperty("--overlay-idle-alpha", String(prefs.overlayIdleOpacity));
   root.style.setProperty("--overlay-hover-boost", String(hoverBoostFor(prefs.overlayIdleOpacity)));
+  root.style.setProperty("--overlay-blur", `${prefs.overlayIdleOpacity / OVERLAY_IDLE_OPACITY_MAX * 36}px`);
+  root.style.setProperty("--overlay-frame-alpha", String(prefs.overlayIdleOpacity / OVERLAY_IDLE_OPACITY_MAX));
 }
 
 function getStore(): Promise<Store> {

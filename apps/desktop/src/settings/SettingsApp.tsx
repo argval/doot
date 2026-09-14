@@ -23,6 +23,8 @@ import {
   CAPTION_FONT_SIZE_MIN,
   CONTEXT_HINT_MAX_CHARS,
   DEFAULT_PREFS,
+  OVERLAY_IDLE_OPACITY_MAX,
+  OVERLAY_IDLE_OPACITY_MIN,
   hoverBoostFor,
   loadPrefs,
   subscribeToPrefs,
@@ -40,7 +42,7 @@ import { captionScript, CaptionPanel } from "../overlay/CaptionPanel";
 import { HistorySection } from "./HistorySection";
 import { SetupSection } from "./SetupSection";
 import { PrivacySection } from "./PrivacySection";
-import { SettingsGroup, SettingsRow, SettingsSegmented, SettingsSwitch, SettingsToolbar } from "./SettingsChrome";
+import { SettingsGroup, SettingsRow, SettingsSwitch, SettingsToolbar } from "./SettingsChrome";
 import type { VisibleCaptionLine } from "../captions";
 import { summarizeTiming, summarizeMilliseconds, type CaptionTimingSample, type TranslationTimingSample } from "../lib/timing";
 import { interactionShortcutLabel } from "../lib/shortcut";
@@ -48,11 +50,8 @@ import { speechProviderLabel } from "../lib/speech-labels";
 
 type SettingsSection = "setup" | "general" | "captions" | "history" | "privacy" | "connection" | "about";
 
-const OPACITY_PRESETS = [
-  { id: "ghost", label: "Ghost", value: 0.22 },
-  { id: "balanced", label: "Balanced", value: 0.42 },
-  { id: "solid", label: "Solid", value: 0.62 },
-] as const;
+const OVERLAY_TRANSPARENCY_MIN = Math.round((1 - OVERLAY_IDLE_OPACITY_MAX) * 100);
+const OVERLAY_TRANSPARENCY_MAX = Math.round((1 - OVERLAY_IDLE_OPACITY_MIN) * 100);
 
 const PREVIEW_LATIN: readonly VisibleCaptionLine[] = [
   {
@@ -129,11 +128,6 @@ function previewLinesFor(language: SupportedLanguage): readonly VisibleCaptionLi
   }
 }
 
-function selectedOpacityPreset(opacity: number): (typeof OPACITY_PRESETS)[number]["id"] | null {
-  const match = OPACITY_PRESETS.find((preset) => Math.abs(preset.value - opacity) < 0.015);
-  return match?.id ?? null;
-}
-
 const SECTIONS: ReadonlyArray<{
   id: SettingsSection;
   label: string;
@@ -142,7 +136,7 @@ const SECTIONS: ReadonlyArray<{
 }> = [
   { id: "setup", label: "Setup", icon: KeyRound, keywords: "key api sarvam gemini permission audio" },
   { id: "general", label: "General", icon: SlidersHorizontal, keywords: "login startup overlay position click-through" },
-  { id: "captions", label: "Captions", icon: Captions, keywords: "opacity ghost balanced solid text size font preview context names show match" },
+  { id: "captions", label: "Captions", icon: Captions, keywords: "opacity transparency text size font preview context names show match" },
   { id: "history", label: "History", icon: History, keywords: "sessions transcript export" },
   { id: "privacy", label: "Privacy", icon: Shield, keywords: "save retention history" },
   { id: "connection", label: "Connection", icon: Activity, keywords: "gateway audio permission route timing" },
@@ -440,7 +434,8 @@ function CaptionsSection({
   prefs: DesktopPrefs;
   onPatch: (patch: Partial<DesktopPrefs>) => void;
 }) {
-  const opacityPreset = selectedOpacityPreset(prefs.overlayIdleOpacity);
+  const transparency = Math.round((1 - prefs.overlayIdleOpacity) * 100);
+  const glassStrength = prefs.overlayIdleOpacity / OVERLAY_IDLE_OPACITY_MAX;
   const previewLanguage = previewTargetLanguage(prefs.targetLanguage);
 
   return (
@@ -452,6 +447,8 @@ function CaptionsSection({
           "--caption-font-size": `${prefs.captionFontSize}px`,
           "--overlay-idle-alpha": String(prefs.overlayIdleOpacity),
           "--overlay-hover-boost": String(hoverBoostFor(prefs.overlayIdleOpacity)),
+          "--overlay-blur": `${glassStrength * 36}px`,
+          "--overlay-frame-alpha": String(glassStrength),
         } as CSSProperties}
       >
         <div className="language-picker" aria-hidden="true">
@@ -470,16 +467,27 @@ function CaptionsSection({
         />
       </div>
       <SettingsGroup label="Idle look" aria-label="Idle look">
-        <SettingsSegmented
-          label="Idle opacity"
-          hint="More transparent when idle, more opaque on hover. Resizing the window does not change caption size."
-          value={opacityPreset ?? ""}
-          options={OPACITY_PRESETS.map((preset) => ({ id: preset.id, label: preset.label }))}
-          onChange={(id) => {
-            const preset = OPACITY_PRESETS.find((item) => item.id === id);
-            if (preset) onPatch({ overlayIdleOpacity: preset.value });
-          }}
-        />
+        <label className="settings-row">
+          <span className="settings-row-copy">
+            <strong>Transparency</strong>
+            <em>How translucent the overlay is while idle. It becomes slightly more visible on hover.</em>
+          </span>
+          <div className="settings-slider">
+            <input
+              type="range"
+              min={OVERLAY_TRANSPARENCY_MIN}
+              max={OVERLAY_TRANSPARENCY_MAX}
+              step={1}
+              value={transparency}
+              aria-label="Idle transparency"
+              aria-valuetext={`${transparency}% transparent`}
+              onChange={(event) => {
+                onPatch({ overlayIdleOpacity: 1 - Number(event.target.value) / 100 });
+              }}
+            />
+            <span className="settings-slider-value">{transparency}%</span>
+          </div>
+        </label>
       </SettingsGroup>
       <SettingsGroup label="Text" aria-label="Caption text">
         <label className="settings-row">
