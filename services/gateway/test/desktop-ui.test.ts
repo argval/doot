@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CaptionPanel } from "../../../apps/desktop/src/overlay/CaptionPanel.js";
@@ -88,6 +91,14 @@ test("idle opacity stays continuous while hover lands at a controlled final opac
   }
   assert.equal(normalizePrefs({ overlayIdleOpacity: 0 }).overlayIdleOpacity, 0);
   assert.equal(normalizePrefs({ overlayIdleOpacity: 1 }).overlayIdleOpacity, 0.7);
+});
+
+test("native overlay glass does not use CSS backdrop-filter; previews still do", () => {
+  const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../../apps/desktop/src/styles.css"), "utf8");
+  const nativeRule = css.match(/^\.caption-window \{[\s\S]*?^\}/m);
+  assert.ok(nativeRule);
+  assert.doesNotMatch(nativeRule[0], /backdrop-filter/);
+  assert.match(css, /html\.web-preview \.caption-window,\s*\.settings-overlay-preview \.caption-window \{[\s\S]*backdrop-filter: blur\(28px\)/);
 });
 
 test("settled speaker turns tint the existing left bar without names", () => {

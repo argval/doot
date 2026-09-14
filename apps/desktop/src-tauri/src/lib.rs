@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder,
+    AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -187,6 +187,7 @@ pub fn run() {
                 let _ = window.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
                 #[cfg(target_os = "macos")]
                 let _ = window.set_visible_on_all_workspaces(true);
+                apply_overlay_vibrancy(&window);
             }
 
             let toggle_item =
@@ -356,8 +357,25 @@ fn show_overlay(app: &AppHandle) {
         let _ = window.set_always_on_top(true);
         #[cfg(target_os = "macos")]
         let _ = window.set_visible_on_all_workspaces(true);
+        apply_overlay_vibrancy(&window);
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
     }
+}
+
+fn apply_overlay_vibrancy(window: &WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::window::{Effect, EffectState, EffectsBuilder};
+        let _ = window.set_effects(
+            EffectsBuilder::new()
+                .effect(Effect::HudWindow)
+                .state(EffectState::Active)
+                .radius(16.0)
+                .build(),
+        );
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = window;
 }

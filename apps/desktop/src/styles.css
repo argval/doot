@@ -40,6 +40,7 @@ html.web-preview .overlay-shell {
   min-width: 320px;
 }
 
+/* CSS blur is preview-only. The native overlay uses macOS HudWindow vibrancy. */
 html.web-preview .caption-window,
 .settings-overlay-preview .caption-window {
   backdrop-filter: blur(28px);
@@ -92,8 +93,6 @@ button {
   border: 0;
   border-radius: var(--overlay-radius);
   background-color: rgb(var(--overlay-fill) / var(--overlay-idle-alpha, 0.42));
-  backdrop-filter: blur(var(--overlay-blur, 36px));
-  -webkit-backdrop-filter: blur(var(--overlay-blur, 36px));
   cursor: grab;
   user-select: none;
   z-index: 0;
