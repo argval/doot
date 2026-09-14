@@ -1,38 +1,31 @@
 html.settings-window,
 body.settings-window,
 html.settings-window #root {
+  display: grid;
+  place-items: center;
   min-width: 0;
   overflow: hidden;
   color: var(--settings-ink);
-  background: var(--settings-bg);
+  background: #0b0b0b;
   color-scheme: dark;
   -webkit-font-smoothing: antialiased;
-}
-
-html[data-runtime="web"].settings-window,
-html[data-runtime="web"].settings-window body,
-html[data-runtime="web"].settings-window #root {
-  display: grid;
-  place-items: center;
-  background: #0b0b0b;
-}
-
-html[data-runtime="web"].settings-window .settings-shell {
-  width: min(780px, 100vw);
-  height: min(600px, 100vh);
-  overflow: hidden;
-  border-radius: 10px;
-  box-shadow: 0 18px 48px rgb(0 0 0 / 45%);
 }
 
 .settings-shell {
   display: grid;
   grid-template-columns: 196px minmax(0, 1fr);
-  height: 100%;
+  width: min(780px, 100%);
+  height: min(600px, 100%);
+  overflow: hidden;
   font-family: var(--font-sans);
   font-size: 13px;
   letter-spacing: -0.01em;
   background: var(--settings-bg);
+}
+
+html[data-runtime="web"].settings-window .settings-shell {
+  border-radius: 10px;
+  box-shadow: 0 18px 48px rgb(0 0 0 / 45%);
 }
 
 .settings-sidebar {
