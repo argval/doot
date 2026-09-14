@@ -281,7 +281,7 @@ html[data-os="mac"].settings-window .settings-sidebar {
 
 .settings-overlay-preview {
   position: relative;
-  height: 168px;
+  height: 188px;
   margin: 0 0 16px;
   overflow: hidden;
   border-radius: 10px;
