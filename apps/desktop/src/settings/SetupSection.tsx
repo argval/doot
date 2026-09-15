@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { confirmDestructive } from "../lib/native-ui";
 import { isTauriRuntime } from "../lib/runtime";
 import { getCaptionRoute, getConnectionStatus, openAudioSettings, requestScreenRecording } from "../lib/tauri";
 import { updatePrefs, type DesktopPrefs } from "../lib/prefs";
@@ -22,6 +23,7 @@ export function SetupSection({ prefs, onComplete }: { prefs: DesktopPrefs; onCom
   async function save(remove = false) {
     setBusy(true); setNotice("");
     try {
+      if (remove && !await confirmDestructive(`Remove the saved ${providerLabel} key?`, "Routes using this provider will be unavailable until you add another key.", "Remove Key")) return;
       await invoke("save_service_key", { provider, key: remove ? "" : key });
       setKey("");
       setKeys(await invoke<typeof keys>("credential_status"));

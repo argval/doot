@@ -14,8 +14,8 @@ import {
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getName, getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
-  type SupportedLanguage,
   type CaptionRoute,
 } from "@doot/protocol";
 import {
@@ -25,6 +25,8 @@ import {
   DEFAULT_PREFS,
   OVERLAY_IDLE_OPACITY_MAX,
   OVERLAY_IDLE_OPACITY_MIN,
+  overlayDimmingAlpha,
+  overlayVibrancyAlpha,
   hoverBoostFor,
   loadPrefs,
   subscribeToPrefs,
@@ -39,12 +41,12 @@ import {
   requestScreenRecording,
   type ConnectionStatus,
 } from "../lib/tauri";
-import { captionScript, CaptionPanel } from "../overlay/CaptionPanel";
+import { CaptionPanel } from "../overlay/CaptionPanel";
 import { HistorySection } from "./HistorySection";
 import { SetupSection } from "./SetupSection";
 import { PrivacySection } from "./PrivacySection";
 import { SettingsGroup, SettingsRow, SettingsSwitch, SettingsToolbar } from "./SettingsChrome";
-import type { VisibleCaptionLine } from "../captions";
+import { previewLinesFor, previewTargetLanguage } from "../overlay/preview";
 import { summarizeTiming, summarizeMilliseconds, type CaptionTimingSample, type TranslationTimingSample } from "../lib/timing";
 import { interactionShortcutLabel } from "../lib/shortcut";
 import { speechProviderLabel } from "../lib/speech-labels";
@@ -53,81 +55,6 @@ type SettingsSection = "setup" | "general" | "captions" | "history" | "privacy" 
 
 const OVERLAY_TRANSPARENCY_MIN = Math.round((1 - OVERLAY_IDLE_OPACITY_MAX) * 100);
 const OVERLAY_TRANSPARENCY_MAX = Math.round((1 - OVERLAY_IDLE_OPACITY_MIN) * 100);
-
-const PREVIEW_LATIN: readonly VisibleCaptionLine[] = [
-  {
-    utteranceId: "settings-preview-1",
-    translatedText: "Earlier turns stay on their own lines, a little quieter.",
-    isActive: false,
-    speakerTint: 2,
-  },
-  {
-    utteranceId: "settings-preview-2",
-    translatedText: "The live caption keeps updating as you speak.",
-    isActive: true,
-  },
-];
-
-const PREVIEW_INDIC: readonly VisibleCaptionLine[] = [
-  {
-    utteranceId: "settings-preview-kn-1",
-    translatedText: "ಹಿಂದಿನ ವಾಕ್ಯವು ತನ್ನ ಸಾಲಿನಲ್ಲಿಯೇ ಉಳಿಯುತ್ತದೆ.",
-    isActive: false,
-  },
-  {
-    utteranceId: "settings-preview-kn-2",
-    translatedText: "ನೇರ ಶೀರ್ಷಿಕೆ ಮಾತು ಬಂದಂತೆ ನವೀಕರಿಸುತ್ತದೆ.",
-    isActive: true,
-  },
-];
-
-const PREVIEW_CJK: readonly VisibleCaptionLine[] = [
-  {
-    utteranceId: "settings-preview-ja-1",
-    translatedText: "前の発話は少し控えめに残ります。",
-    isActive: false,
-  },
-  {
-    utteranceId: "settings-preview-ja-2",
-    translatedText: "ライブ字幕は話している最中に更新されます。",
-    isActive: true,
-  },
-];
-
-const PREVIEW_RTL: readonly VisibleCaptionLine[] = [
-  {
-    utteranceId: "settings-preview-ar-1",
-    translatedText: "تبقى الجمل السابقة في أسطرها بهدوء أكبر.",
-    isActive: false,
-  },
-  {
-    utteranceId: "settings-preview-ar-2",
-    translatedText: "يتحدّث السطر المباشر أثناء الكلام.",
-    isActive: true,
-  },
-];
-
-function previewTargetLanguage(language: SupportedLanguage): SupportedLanguage {
-  switch (captionScript(language)) {
-    case "indic": return "kn";
-    case "cjk": return "ja";
-    case "rtl": return "ar";
-    default: return "en";
-  }
-}
-
-function previewLinesFor(language: SupportedLanguage): readonly VisibleCaptionLine[] {
-  switch (captionScript(previewTargetLanguage(language))) {
-    case "indic":
-      return PREVIEW_INDIC;
-    case "cjk":
-      return PREVIEW_CJK;
-    case "rtl":
-      return PREVIEW_RTL;
-    default:
-      return PREVIEW_LATIN;
-  }
-}
 
 const SECTIONS: ReadonlyArray<{
   id: SettingsSection;
@@ -303,16 +230,29 @@ export function SettingsApp() {
   }, [section, sectionIndex]);
 
   const goHistory = useCallback((direction: -1 | 1) => {
-    setSectionIndex((index) => {
-      const nextIndex = index + direction;
-      const next = sectionHistory[nextIndex];
-      if (!next) {
-        return index;
-      }
-      setSection(next);
-      return nextIndex;
+    const nextIndex = sectionIndex + direction;
+    const next = sectionHistory[nextIndex];
+    if (!next) return;
+    setSectionIndex(nextIndex);
+    setSection(next);
+  }, [sectionHistory, sectionIndex]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<string>("settings://section", (event) => {
+      const next = SECTIONS.find((item) => item.id === event.payload)?.id;
+      if (next) goToSection(next);
+    }).then((cleanup) => {
+      if (disposed) cleanup();
+      else unlisten = cleanup;
     });
-  }, [sectionHistory]);
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [goToSection]);
 
   return (
     <div className="settings-shell">
@@ -436,7 +376,6 @@ function CaptionsSection({
   onPatch: (patch: Partial<DesktopPrefs>) => void;
 }) {
   const transparency = Math.round((1 - prefs.overlayIdleOpacity) * 100);
-  const glassStrength = prefs.overlayIdleOpacity / OVERLAY_IDLE_OPACITY_MAX;
   const previewLanguage = previewTargetLanguage(prefs.targetLanguage);
 
   return (
@@ -446,10 +385,10 @@ function CaptionsSection({
         className="settings-overlay-preview"
         style={{
           "--caption-font-size": `${prefs.captionFontSize}px`,
-          "--overlay-idle-alpha": String(prefs.overlayIdleOpacity),
+          "--overlay-idle-alpha": String(overlayDimmingAlpha(prefs.overlayIdleOpacity)),
           "--overlay-hover-boost": String(hoverBoostFor(prefs.overlayIdleOpacity)),
-          "--overlay-blur": `${glassStrength * 36}px`,
-          "--overlay-frame-alpha": String(glassStrength),
+          "--overlay-vibrancy-alpha": String(overlayVibrancyAlpha(prefs.overlayIdleOpacity)),
+          "--overlay-frame-alpha": String(overlayVibrancyAlpha(prefs.overlayIdleOpacity)),
         } as CSSProperties}
       >
         <div className="language-picker" aria-hidden="true">
@@ -471,7 +410,7 @@ function CaptionsSection({
         <label className="settings-row">
           <span className="settings-row-copy">
             <strong>Transparency</strong>
-            <em>How translucent the overlay is while idle. It becomes slightly more visible on hover.</em>
+            <em>From solid to glass to fully clear. Hover adds a little more tint.</em>
           </span>
           <div className="settings-slider">
             <input

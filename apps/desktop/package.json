@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -p tsconfig.json",
     "lint": "eslint src --max-warnings 0",
+    "check:native-ui": "node scripts/check-native-ui.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "node scripts/bundle-gateway.mjs && tauri build --config src-tauri/tauri.release.conf.json",

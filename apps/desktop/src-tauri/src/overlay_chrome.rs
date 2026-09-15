@@ -5,12 +5,55 @@ pub const NS_WINDOW_STYLE_MASK_NONACTIVATING_PANEL: usize = 1 << 7;
 /// WS_EX_NOACTIVATE — clicks do not make the overlay the foreground window.
 pub const WS_EX_NOACTIVATE: u32 = 0x0800_0000;
 
+pub const OVERLAY_DEFAULT_WIDTH: f64 = 576.0;
+pub const OVERLAY_DEFAULT_HEIGHT: f64 = 190.0;
+pub const OVERLAY_MIN_WIDTH: f64 = 360.0;
+pub const OVERLAY_MIN_HEIGHT: f64 = 160.0;
+pub const OVERLAY_MAX_WIDTH: f64 = 960.0;
+pub const OVERLAY_MAX_HEIGHT: f64 = 420.0;
+
+/// Keep a caption HUD. Saved frames that fill the display are treated as corruption, not intent.
+pub fn overlay_logical_size(width: f64, height: f64) -> (f64, f64) {
+    if !width.is_finite()
+        || !height.is_finite()
+        || width > OVERLAY_MAX_WIDTH
+        || height > OVERLAY_MAX_HEIGHT
+        || width < OVERLAY_MIN_WIDTH
+        || height < OVERLAY_MIN_HEIGHT
+    {
+        return (OVERLAY_DEFAULT_WIDTH, OVERLAY_DEFAULT_HEIGHT);
+    }
+    (width, height)
+}
+
+pub fn clamp_overlay_size(window: &WebviewWindow) {
+    let _ = window.set_min_size(Some(tauri::LogicalSize::new(
+        OVERLAY_MIN_WIDTH,
+        OVERLAY_MIN_HEIGHT,
+    )));
+    let _ = window.set_max_size(Some(tauri::LogicalSize::new(
+        OVERLAY_MAX_WIDTH,
+        OVERLAY_MAX_HEIGHT,
+    )));
+    let Ok(physical) = window.inner_size() else {
+        return;
+    };
+    let scale = window.scale_factor().unwrap_or(1.0).max(0.1);
+    let current_width = f64::from(physical.width) / scale;
+    let current_height = f64::from(physical.height) / scale;
+    let (width, height) = overlay_logical_size(current_width, current_height);
+    if (width - current_width).abs() > 1.0 || (height - current_height).abs() > 1.0 {
+        let _ = window.set_size(tauri::LogicalSize::new(width, height));
+    }
+}
+
 pub fn apply_overlay_chrome(window: &WebviewWindow) {
     apply_nonactivating_hud(window);
     apply_overlay_vibrancy(window);
 }
 
 pub fn show_overlay_without_activating(window: &WebviewWindow) {
+    clamp_overlay_size(window);
     apply_overlay_chrome(window);
     let _ = window.set_always_on_top(true);
     #[cfg(target_os = "macos")]
@@ -24,6 +67,12 @@ pub fn show_overlay_without_activating(window: &WebviewWindow) {
     let _ = window.show();
 }
 
+pub fn hide_overlay_without_activating(window: &WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    macos::order_out(window);
+    let _ = window.hide();
+}
+
 fn apply_nonactivating_hud(window: &WebviewWindow) {
     #[cfg(target_os = "macos")]
     macos::convert_to_hud_panel(window);
@@ -34,24 +83,13 @@ fn apply_nonactivating_hud(window: &WebviewWindow) {
 }
 
 fn apply_overlay_vibrancy(window: &WebviewWindow) {
-    #[cfg(target_os = "macos")]
-    {
-        use tauri::window::{Effect, EffectState, EffectsBuilder};
-        let _ = window.set_effects(
-            EffectsBuilder::new()
-                .effect(Effect::HudWindow)
-                .state(EffectState::Active)
-                .radius(16.0)
-                .build(),
-        );
-    }
-    #[cfg(not(target_os = "macos"))]
+    // macOS glass is OverlayChromeView: HUD vibrancy behind a charcoal dimming layer.
+    // The transparency slider fades both, so the clear end is actually clear.
     let _ = window;
 }
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use super::NS_WINDOW_STYLE_MASK_NONACTIVATING_PANEL;
     use objc2::runtime::{AnyClass, AnyObject, Bool, ClassBuilder, Sel};
     use objc2::{msg_send, sel};
     use std::sync::OnceLock;
@@ -75,12 +113,12 @@ mod macos {
             return;
         }
         let obj = unsafe { &*ptr };
-        let hud = hud_panel_class(obj.class());
-        if !std::ptr::eq(obj.class(), hud) {
-            // SAFETY: DootHudPanel adds no ivars. Superclass is NSPanel when
-            // instance sizes match, otherwise the live window class.
-            let _previous = unsafe { AnyObject::set_class(obj, hud) };
-        }
+        // Keep DootHudPanel registered for tests and for windows created as a
+        // panel. Do not isa-swap the live overlay: WKWebView already key-value
+        // observes the NSWindow, and object_setClass drops that observation
+        // info. setStyleMask then asks WebKit to removeObserver and SIGSEGVs
+        // in WKWindowVisibilityObserver on macOS 27.
+        let _ = hud_panel_class(obj.class());
         apply_panel_style(obj);
     }
 
@@ -96,6 +134,18 @@ mod macos {
         }
         let obj = unsafe { &*ptr };
         let _: () = unsafe { msg_send![obj, orderFrontRegardless] };
+    }
+
+    pub fn order_out(window: &WebviewWindow) {
+        let Ok(ptr) = window.ns_window() else {
+            return;
+        };
+        let ptr = ptr.cast::<AnyObject>();
+        if ptr.is_null() {
+            return;
+        }
+        let obj = unsafe { &*ptr };
+        let _: () = unsafe { msg_send![obj, orderOut: std::ptr::null::<AnyObject>()] };
     }
 
     fn hud_panel_class(current: &'static AnyClass) -> &'static AnyClass {
@@ -137,9 +187,6 @@ mod macos {
 
     fn apply_panel_style(obj: &AnyObject) {
         unsafe {
-            let style: usize = msg_send![obj, styleMask];
-            let _: () =
-                msg_send![obj, setStyleMask: style | NS_WINDOW_STYLE_MASK_NONACTIVATING_PANEL];
             let _: () = msg_send![obj, setHidesOnDeactivate: Bool::new(false)];
             let _: () = msg_send![obj, setReleasedWhenClosed: Bool::new(false)];
             if responds(obj, sel!(setFloatingPanel:)) {
@@ -147,6 +194,10 @@ mod macos {
             }
             if responds(obj, sel!(setBecomesKeyOnlyIfNeeded:)) {
                 let _: () = msg_send![obj, setBecomesKeyOnlyIfNeeded: Bool::new(true)];
+            }
+            let prevents = Sel::register(c"_setPreventsActivation:");
+            if responds(obj, prevents) {
+                let _: () = msg_send![obj, _setPreventsActivation: Bool::new(true)];
             }
         }
     }
@@ -236,5 +287,13 @@ mod tests {
     #[test]
     fn ws_ex_noactivate_matches_winuser() {
         assert_eq!(WS_EX_NOACTIVATE, 0x0800_0000);
+    }
+
+    #[test]
+    fn overlay_rejects_fullscreen_saved_frames() {
+        assert_eq!(super::overlay_logical_size(576.0, 190.0), (576.0, 190.0));
+        assert_eq!(super::overlay_logical_size(700.0, 300.0), (700.0, 300.0));
+        assert_eq!(super::overlay_logical_size(1654.0, 380.0), (576.0, 190.0));
+        assert_eq!(super::overlay_logical_size(480.0, 1024.0), (576.0, 190.0));
     }
 }

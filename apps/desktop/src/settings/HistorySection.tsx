@@ -1,3 +1,5 @@
+import { invoke } from "@tauri-apps/api/core";
+import { confirmDestructive } from "../lib/native-ui";
 import { useEffect, useMemo, useState } from "react";
 import {
   HISTORY_EXPORT_FORMATS,
@@ -32,7 +34,6 @@ export function HistorySection() {
   const [loadingList, setLoadingList] = useState(true);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -81,7 +82,6 @@ export function HistorySection() {
   useEffect(() => {
     if (!selectedId) {
       setDetail(null);
-      setConfirmingDelete(false);
       return;
     }
     const controller = new AbortController();
@@ -121,14 +121,11 @@ export function HistorySection() {
         detail={detail}
         loading={loadingDetail}
         error={error}
-        confirmingDelete={confirmingDelete}
         deleting={deleting}
         onBack={() => {
           setSelectedId(null);
-          setConfirmingDelete(false);
           setError(null);
         }}
-        onConfirmingDelete={setConfirmingDelete}
         onRename={async (title) => {
           if (!detail) return;
           await renameHistorySession(detail.id, title);
@@ -139,11 +136,11 @@ export function HistorySection() {
           if (!selectedId) return;
           setDeleting(true);
           try {
+            if (!await confirmDestructive("Delete this caption session?", "This permanently deletes the saved transcript from this computer.", "Delete Session")) return;
             await deleteHistorySession(selectedId);
             setSessions((current) => current.filter((session) => session.id !== selectedId));
             setSelectedId(null);
             setDetail(null);
-            setConfirmingDelete(false);
             setPage(0);
             setRefresh((value) => value + 1);
           } catch (caught) {
@@ -210,20 +207,16 @@ function SessionDetail({
   detail,
   loading,
   error,
-  confirmingDelete,
   deleting,
   onBack,
-  onConfirmingDelete,
   onDelete,
   onRename,
 }: {
   detail: HistorySessionDetail | null;
   loading: boolean;
   error: string | null;
-  confirmingDelete: boolean;
   deleting: boolean;
   onBack: () => void;
-  onConfirmingDelete: (confirming: boolean) => void;
   onDelete: () => void;
   onRename: (title: string) => Promise<void>;
 }) {
@@ -276,38 +269,18 @@ function SessionDetail({
               <button
                 key={format}
                 type="button"
-                onClick={() => downloadHistory(detail, format)}
+                onClick={() => {
+                  void downloadHistory(detail, format)
+                    .then((saved) => { if (saved) setFeedback("Transcript exported."); })
+                    .catch((error: unknown) => setFeedback(error instanceof Error ? error.message : String(error)));
+                }}
               >
                 {exportLabel(format)}
               </button>
             ))}
-            {confirmingDelete ? (
-              <>
-                <button
-                  type="button"
-                  className="danger"
-                  disabled={deleting}
-                  onClick={onDelete}
-                >
-                  {deleting ? "Deleting…" : "Delete session"}
-                </button>
-                <button
-                  type="button"
-                  disabled={deleting}
-                  onClick={() => onConfirmingDelete(false)}
-                >
-                  Cancel
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                className="danger"
-                onClick={() => onConfirmingDelete(true)}
-              >
-                Delete
-              </button>
-            )}
+            <button type="button" className="danger" disabled={deleting} onClick={onDelete}>
+              {deleting ? "Deleting…" : "Delete"}
+            </button>
           </div>
           <p className="settings-footnote" role="status">{feedback}</p>
           <div
@@ -342,8 +315,9 @@ function HistoryCaption({ segment }: { segment: HistorySegment }) {
   );
 }
 
-function downloadHistory(session: HistorySessionDetail, format: HistoryExportFormat): void {
+async function downloadHistory(session: HistorySessionDetail, format: HistoryExportFormat): Promise<boolean> {
   const body = formatHistoryExport(session, format);
+  if (isTauriRuntime()) return invoke<boolean>("export_document", { body, format, filename: historyExportFilename(session, format) });
   const blob = new Blob([body], { type: historyExportMime(format) });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -351,6 +325,7 @@ function downloadHistory(session: HistorySessionDetail, format: HistoryExportFor
   link.download = historyExportFilename(session, format);
   link.click();
   URL.revokeObjectURL(url);
+  return true;
 }
 
 function historyErrorMessage(caught: unknown): string {

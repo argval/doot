@@ -12,7 +12,8 @@ export const PREFS_CHANGED_EVENT = "prefs://changed";
 export const CAPTION_FONT_SIZE_MIN = 18;
 export const CAPTION_FONT_SIZE_MAX = 40;
 export const OVERLAY_IDLE_OPACITY_MIN = 0;
-export const OVERLAY_IDLE_OPACITY_MAX = 0.7;
+export const OVERLAY_IDLE_OPACITY_MAX = 1;
+export const OVERLAY_HOVER_TINT = 0.12;
 export const CONTEXT_HINT_MAX_CHARS = 80;
 
 export interface DesktopPrefs {
@@ -66,8 +67,22 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 export function hoverBoostFor(idleOpacity: number): number {
-  const hoverOpacity = clamp(idleOpacity + 0.16, 0.34, 0.78);
-  return (hoverOpacity - idleOpacity) / (1 - idleOpacity);
+  const idle = overlayDimmingAlpha(idleOpacity);
+  const hover = overlayDimmingAlpha(idleOpacity, true);
+  if (idle >= 1) return 0;
+  return (hover - idle) / (1 - idle);
+}
+
+/** Charcoal fill. 0 is clear, 1 is opaque. Matches overlayDimmingAlpha in DootOverlay.swift. */
+export function overlayDimmingAlpha(idleOpacity: number, revealed = false): number {
+  const idle = clamp(idleOpacity, OVERLAY_IDLE_OPACITY_MIN, OVERLAY_IDLE_OPACITY_MAX);
+  return revealed ? Math.min(1, idle + OVERLAY_HOVER_TINT) : idle;
+}
+
+/** HUD frost peaks in the middle and is off at both clear and opaque. */
+export function overlayVibrancyAlpha(idleOpacity: number, revealed = false): number {
+  const fill = overlayDimmingAlpha(idleOpacity, revealed);
+  return 4 * fill * (1 - fill);
 }
 
 /** Translate To cannot be Auto; fall back to English. */
@@ -157,11 +172,12 @@ export function applyOverlayAppearance(prefs: DesktopPrefs): void {
     return;
   }
   const root = document.documentElement;
+  const vibrancy = overlayVibrancyAlpha(prefs.overlayIdleOpacity);
   root.style.setProperty("--caption-font-size", `${prefs.captionFontSize}px`);
-  root.style.setProperty("--overlay-idle-alpha", String(prefs.overlayIdleOpacity));
+  root.style.setProperty("--overlay-idle-alpha", String(overlayDimmingAlpha(prefs.overlayIdleOpacity)));
   root.style.setProperty("--overlay-hover-boost", String(hoverBoostFor(prefs.overlayIdleOpacity)));
-  root.style.setProperty("--overlay-blur", `${prefs.overlayIdleOpacity / OVERLAY_IDLE_OPACITY_MAX * 36}px`);
-  root.style.setProperty("--overlay-frame-alpha", String(prefs.overlayIdleOpacity / OVERLAY_IDLE_OPACITY_MAX));
+  root.style.setProperty("--overlay-vibrancy-alpha", String(vibrancy));
+  root.style.setProperty("--overlay-frame-alpha", String(vibrancy));
 }
 
 function getStore(): Promise<Store> {
@@ -196,13 +212,19 @@ export async function savePrefs(prefs: DesktopPrefs): Promise<void> {
   await store.save();
 }
 
-export async function updatePrefs(patch: Partial<DesktopPrefs>): Promise<DesktopPrefs> {
-  const next = normalizePrefs({ ...(await loadPrefs()), ...patch });
-  await savePrefs(next);
-  if (isTauriRuntime()) {
-    await emit(PREFS_CHANGED_EVENT, next);
-  }
-  return next;
+let pendingPreferenceWrite: Promise<unknown> = Promise.resolve();
+
+export function updatePrefs(patch: Partial<DesktopPrefs>): Promise<DesktopPrefs> {
+  const write = pendingPreferenceWrite.then(async () => {
+    const next = normalizePrefs({ ...(await loadPrefs()), ...patch });
+    await savePrefs(next);
+    if (isTauriRuntime()) {
+      await emit(PREFS_CHANGED_EVENT, next);
+    }
+    return next;
+  });
+  pendingPreferenceWrite = write.catch(() => undefined);
+  return write;
 }
 
 export async function subscribeToPrefs(

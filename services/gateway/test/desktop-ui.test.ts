@@ -55,7 +55,7 @@ test("Auto transcription follows the text script without declaring an unknown la
   assert.match(render("ನಮಸ್ಕಾರ"), /data-script="indic"/);
   assert.match(render("こんにちは"), /data-script="cjk"/);
 });
-import { DEFAULT_PREFS, hoverBoostFor, normalizePrefs, rememberPair, translationModePatch } from "../../../apps/desktop/src/lib/prefs.js";
+import { DEFAULT_PREFS, hoverBoostFor, normalizePrefs, overlayDimmingAlpha, overlayVibrancyAlpha, OVERLAY_IDLE_OPACITY_MAX, rememberPair, translationModePatch } from "../../../apps/desktop/src/lib/prefs.js";
 import { speechProviderLabel } from "../../../apps/desktop/src/lib/speech-labels.js";
 
 test("language modes restore the last pair, preserve Auto→English, and bound recents", () => {
@@ -84,13 +84,35 @@ test("language modes restore the last pair, preserve Auto→English, and bound r
 });
 
 test("idle opacity stays continuous while hover lands at a controlled final opacity", () => {
-  for (const idleOpacity of [0.18, 0.42, 0.7]) {
-    const finalOpacity = 1 - (1 - idleOpacity) * (1 - hoverBoostFor(idleOpacity));
-    assert.ok(finalOpacity > idleOpacity);
-    assert.ok(finalOpacity <= 0.78);
+  assert.equal(OVERLAY_IDLE_OPACITY_MAX, 1);
+  assert.equal(overlayDimmingAlpha(0), 0, "full transparency must clear the fill, not floor at frosted glass");
+  assert.equal(overlayDimmingAlpha(1), 1, "the opaque end must be solid charcoal");
+  assert.equal(overlayVibrancyAlpha(0), 0, "HUD frost must turn off at full transparency");
+  assert.equal(overlayVibrancyAlpha(1), 0, "opaque fill must not keep a frost layer");
+  assert.ok(overlayVibrancyAlpha(0.42) > 0.9, "the default idle look stays glass");
+  assert.ok(overlayDimmingAlpha(0, true) > 0);
+  assert.equal(overlayDimmingAlpha(1, true), 1);
+  for (const idleOpacity of [0, 0.18, 0.42, 0.7, 1]) {
+    const idleFill = overlayDimmingAlpha(idleOpacity);
+    const hoverFill = overlayDimmingAlpha(idleOpacity, true);
+    assert.ok(hoverFill >= idleFill);
+    assert.ok(hoverFill <= 1);
+    const stacked = 1 - (1 - idleFill) * (1 - hoverBoostFor(idleOpacity));
+    assert.ok(Math.abs(stacked - hoverFill) < 1e-9);
   }
+  assert.ok(overlayDimmingAlpha(0) < overlayDimmingAlpha(0.7));
   assert.equal(normalizePrefs({ overlayIdleOpacity: 0 }).overlayIdleOpacity, 0);
-  assert.equal(normalizePrefs({ overlayIdleOpacity: 1 }).overlayIdleOpacity, 0.7);
+  assert.equal(normalizePrefs({ overlayIdleOpacity: 1 }).overlayIdleOpacity, 1);
+});
+
+test("new caption turns fade in from above instead of sliding into the clipped bottom edge", () => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), "../../..");
+  const css = readFileSync(join(root, "apps/desktop/src/styles.css"), "utf8");
+  const overlay = readFileSync(join(root, "apps/desktop/src-tauri/native/DootOverlay.swift"), "utf8");
+  assert.match(css, /@keyframes caption-turn-in \{[\s\S]*translateY\(-6px\)/);
+  assert.doesNotMatch(css, /caption-turn-in \{[\s\S]*translateY\(6px\)/);
+  assert.match(overlay, /offset\(y: -8\)/);
+  assert.doesNotMatch(overlay, /offset\(y: 6\)/);
 });
 
 test("native overlay glass does not use CSS backdrop-filter; previews still do", () => {
@@ -98,7 +120,7 @@ test("native overlay glass does not use CSS backdrop-filter; previews still do",
   const nativeRule = css.match(/^\.caption-window \{[\s\S]*?^\}/m);
   assert.ok(nativeRule);
   assert.doesNotMatch(nativeRule[0], /backdrop-filter/);
-  assert.match(css, /html\.web-preview \.caption-window,\s*\.settings-overlay-preview \.caption-window \{[\s\S]*backdrop-filter: blur\(28px\)/);
+  assert.match(css, /html\.web-preview \.caption-window,\s*\.settings-overlay-preview \.caption-window \{[\s\S]*backdrop-filter: blur\(calc\(28px \* var\(--overlay-vibrancy-alpha/);
 });
 
 test("Setup and Connection request Screen Recording instead of only opening Preferences", () => {
@@ -125,12 +147,103 @@ test("overlay window is a nonactivating HUD NSPanel on macOS and WS_EX_NOACTIVAT
   assert.ok(overlayShow);
   assert.match(chrome, /DootHudPanel/);
   assert.match(chrome, /NS_WINDOW_STYLE_MASK_NONACTIVATING_PANEL/);
+  assert.match(chrome, /_setPreventsActivation/);
+  assert.doesNotMatch(chrome, /AnyObject::set_class/);
   assert.match(chrome, /orderFrontRegardless/);
   assert.match(chrome, /WS_EX_NOACTIVATE/);
   assert.match(chrome, /SW_SHOWNOACTIVATE/);
-  assert.match(chrome, /Effect::HudWindow/);
+  assert.doesNotMatch(chrome, /Effect::HudWindow/);
+  const overlay = readFileSync(join(root, "apps/desktop/src-tauri/native/DootOverlay.swift"), "utf8");
+  assert.match(overlay, /NSVisualEffectView/);
+  assert.match(overlay, /blendingMode = \.behindWindow/);
+  assert.match(overlay, /state = \.active/);
+  assert.match(overlay, /underPageBackgroundColor/);
+  assert.match(overlay, /overlayDimmingAlpha/);
+  assert.match(overlay, /overlayVibrancyAlpha/);
+  assert.match(overlay, /material\.alphaValue/);
+  assert.doesNotMatch(overlay, /material\.addSubview\(hosting\)/);
+  assert.doesNotMatch(overlay, /0\.08 \+ idle \* 0\.82/);
+  assert.match(overlay, /previewAppearance/);
+  assert.match(overlay, /applyPreviewToSnapshot/);
+  assert.match(overlay, /applyGlassAppearance\(\)/);
+  assert.match(overlay, /overlayFill\.opacity\(dimming\)/);
+  assert.doesNotMatch(overlay, /offset\(y: 6\)/);
+  assert.doesNotMatch(overlay, /LazyVStack/);
+  assert.match(overlay, /disablesAnimations/);
+  assert.match(overlay, /offset\(y: -8\)/);
+  assert.doesNotMatch(overlay, /effectIsInteractive/);
+  assert.doesNotMatch(overlay, /ultraThinMaterial/);
+  assert.doesNotMatch(overlay, /value: fill/);
+  assert.doesNotMatch(overlay, /overlayFill\.opacity\(fill\)/);
+  const conf = readFileSync(join(root, "apps/desktop/src-tauri/tauri.conf.json"), "utf8");
+  assert.match(conf, /"maxWidth": 960/);
+  assert.match(conf, /"maxHeight": 420/);
+  assert.match(chrome, /overlay_logical_size/);
   assert.match(lib, /show_overlay_without_activating/);
+  assert.match(lib, /skip_initial_state\("main"\)/);
+  assert.match(lib, /restore_state\(StateFlags::POSITION \| StateFlags::SIZE\)/);
+  assert.match(lib, /WindowEvent::Resized/);
+  assert.match(lib, /native_ui::attach_overlay/);
+  const nativeUi = readFileSync(join(root, "apps/desktop/src/lib/native-ui.ts"), "utf8");
+  assert.match(nativeUi, /userAgent/);
+  assert.match(nativeUi, /isMacHost/);
+  const picker = readFileSync(join(root, "apps/desktop/src-tauri/native/DootNative.swift"), "utf8");
+  assert.match(picker, /LanguageMenuRow/);
+  assert.match(picker, /preferredEdge: \.maxY/);
+  assert.match(picker, /dootSettingsWillHide/);
+  assert.match(picker, /in: 0\.\.\.100/);
+  assert.doesNotMatch(picker, /in: 30\.\.\.100/);
+  assert.doesNotMatch(picker, /listStyle\(\.plain\)/);
+  assert.doesNotMatch(picker, /frame\(width: 245, height: 300\)/);
   assert.doesNotMatch(overlayShow[0], /set_focus/);
+});
+
+test("menu bar and tray actions are not dismissed by overlay show-on-click", () => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), "../../..");
+  const lib = readFileSync(join(root, "apps/desktop/src-tauri/src/lib.rs"), "utf8");
+  const chrome = readFileSync(join(root, "apps/desktop/src-tauri/src/overlay_chrome.rs"), "utf8");
+  const appMenu = lib.match(/\.menu\(\|app\| \{[\s\S]*?\.on_menu_event/);
+  assert.ok(appMenu);
+  assert.match(appMenu[0], /MenuItemBuilder::with_id\("toggle-capture", "Start Capturing"\)/);
+  assert.match(appMenu[0], /\.item\(&capture_item\)/);
+  assert.match(lib, /show_menu_on_left_click\(true\)/);
+  assert.doesNotMatch(lib, /TrayIconEvent::Click[\s\S]*show_overlay\(tray\.app_handle\(\)\)/);
+  assert.match(lib, /hide_overlay_without_activating/);
+  assert.match(chrome, /orderOut/);
+  const menuHandlers = lib.match(/on_menu_event\(\|app, event\| handle_menu_event/g) ?? [];
+  assert.equal(
+    menuHandlers.length,
+    1,
+    "Tauri delivers every menu click to every global handler; a second tray handler would hide then immediately show the overlay",
+  );
+  const trayMenu = lib.match(/TrayIconBuilder::with_id\("doot"\)[\s\S]*?tray\.build\(app\)\?/);
+  assert.ok(trayMenu);
+  assert.doesNotMatch(trayMenu[0], /on_menu_event/);
+  const toggle = lib.match(/fn toggle_overlay\([\s\S]*?\n\}/);
+  assert.ok(toggle);
+  assert.match(toggle[0], /overlay_hidden/);
+  assert.doesNotMatch(toggle[0], /is_visible/);
+  const nativeUi = readFileSync(join(root, "apps/desktop/src-tauri/src/native_ui.rs"), "utf8");
+  assert.match(nativeUi, /CaptureMenuItems/);
+  assert.match(nativeUi, /for item in items\.iter\(\)/);
+});
+
+test("Settings About shows version in the Settings window instead of a separate About panel", () => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), "../../..");
+  const native = readFileSync(join(root, "apps/desktop/src-tauri/native/DootNative.swift"), "utf8");
+  assert.match(native, /about = "About"/);
+  assert.match(native, /struct AboutView/);
+  assert.match(native, /model\.appVersion/);
+  assert.match(native, /navigate\(\.about\)/);
+  assert.doesNotMatch(native, /orderFrontStandardAboutPanel/);
+  const lib = readFileSync(join(root, "apps/desktop/src-tauri/src/lib.rs"), "utf8");
+  assert.match(lib, /MenuItemBuilder::with_id\("open-about", "About Doot"\)/);
+  assert.doesNotMatch(lib, /\.about\(None\)/);
+  assert.match(lib, /"open-about" =>/);
+  const settings = readFileSync(join(root, "apps/desktop/src/settings/SettingsApp.tsx"), "utf8");
+  assert.match(settings, /settings:\/\/section/);
+  const bridge = readFileSync(join(root, "apps/desktop/src/lib/native-settings.ts"), "utf8");
+  assert.match(bridge, /getVersion\(\)/);
 });
 
 test("settled speaker turns tint the existing left bar without names", () => {
