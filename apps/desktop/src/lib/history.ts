@@ -83,3 +83,14 @@ async function historyRequest(path: string, init?: RequestInit): Promise<Respons
   }
   return response;
 }
+
+export interface HistoryPolicy { saveHistory: boolean; retentionDays: number }
+export function fetchHistoryPolicy(signal?: AbortSignal): Promise<HistoryPolicy> {
+  return historyJson<HistoryPolicy>("/v1/history/policy", { signal });
+}
+export async function saveHistoryPolicy(policy: HistoryPolicy): Promise<HistoryPolicy> {
+  await historyRequest("/v1/history/policy", {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(policy),
+  });
+  return policy;
+}

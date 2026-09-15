@@ -1,0 +1,25 @@
+import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
+
+if (process.platform !== "darwin") throw new Error("Native UI smoke checks need macOS and Xcode.");
+const desktop = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const output = mkdtempSync(join(tmpdir(), "doot-native-ui-"));
+const native = join(desktop, "src-tauri/native");
+const sources = ["DootNative.swift", "DootOverlay.swift", "Smoke.swift"].map((file) => join(native, file));
+const brand = readFileSync(join(desktop, "src/tokens.css"), "utf8").match(/--brand-rgb:\s*([\d ]+);/);
+if (!brand?.[1]) throw new Error("The shared brand color is missing.");
+const rgb = brand[1].trim().split(/\s+/).map((value) => Number(value) / 255);
+writeFileSync(join(output, "Palette.swift"), `import SwiftUI\nlet dootAccent = Color(red: ${rgb[0]}, green: ${rgb[1]}, blue: ${rgb[2]})\n`);
+const compiled = spawnSync("xcrun", ["swiftc", "-parse-as-library", "-swift-version", "5", "-target", `${process.arch === "arm64" ? "arm64" : "x86_64"}-apple-macosx14.0`, "-module-cache-path", join(output, "cache"), ...sources, join(output, "Palette.swift"), "-o", join(output, "DootNativeSmoke")], { stdio: "inherit" });
+if (compiled.status !== 0) process.exit(compiled.status ?? 1);
+const kvo = spawnSync("xcrun", ["swiftc", "-parse-as-library", "-swift-version", "5", "-target", `${process.arch === "arm64" ? "arm64" : "x86_64"}-apple-macosx14.0`, "-module-cache-path", join(output, "cache"), join(native, "HudKvo.swift"), "-o", join(output, "HudKvo")], { stdio: "inherit" });
+if (kvo.status !== 0) process.exit(kvo.status ?? 1);
+const kvoRun = spawnSync(join(output, "HudKvo"), [], { stdio: "inherit", timeout: 10000 });
+if (kvoRun.status !== 0) process.exit(kvoRun.status ?? 1);
+console.log(`Native screenshots: ${output}`);
+const smoke = spawnSync(join(output, "DootNativeSmoke"), [], { stdio: "inherit", env: { ...process.env, DOOT_SMOKE_OUTPUT: output }, timeout: 60000 });
+if (smoke.error) console.error(smoke.error.message);
+process.exit(smoke.status ?? 1);

@@ -189,6 +189,11 @@ pub fn move_overlay(app: AppHandle, direction: String) -> Result<(), String> {
         "down" => position.y += step,
         "reset" => {
             set_overlay_click_through(app.clone(), false)?;
+            crate::overlay_chrome::clamp_overlay_size(&window);
+            let _ = window.set_size(tauri::LogicalSize::new(
+                crate::overlay_chrome::OVERLAY_DEFAULT_WIDTH,
+                crate::overlay_chrome::OVERLAY_DEFAULT_HEIGHT,
+            ));
             window.center().map_err(|e| e.to_string())?;
             crate::overlay_chrome::show_overlay_without_activating(&window);
             return Ok(());

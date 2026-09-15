@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { gatewayFetch } from "../lib/gateway";
+import { fetchHistoryPolicy, saveHistoryPolicy } from "../lib/history";
+import { confirmDestructive } from "../lib/native-ui";
 import { SettingsGroup, SettingsSwitch } from "./SettingsChrome";
 
 export function PrivacySection() {
@@ -9,9 +10,7 @@ export function PrivacySection() {
   const [retention, setRetention] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
-    void gatewayFetch("/v1/history/policy", { signal: controller.signal }).then(async (response) => {
-      if (!response.ok) throw new Error("History preferences are unavailable.");
-      const next = await response.json() as { saveHistory: boolean; retentionDays: number };
+    void fetchHistoryPolicy(controller.signal).then((next) => {
       if (!controller.signal.aborted) { setPolicy(next); setRetention(next.retentionDays); }
     }).catch((error: unknown) => { if (!controller.signal.aborted) setNotice(String(error)); });
     return () => controller.abort();
@@ -19,8 +18,9 @@ export function PrivacySection() {
   async function save(next: { saveHistory: boolean; retentionDays: number }) {
     setBusy(true); setNotice("");
     try {
-      const response = await gatewayFetch("/v1/history/policy", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
-      if (!response.ok) throw new Error("Could not save history preferences.");
+      if (next.retentionDays > 0 && next.retentionDays !== policy?.retentionDays
+        && !await confirmDestructive(`Delete history older than ${next.retentionDays} days?`, "This immediately and permanently removes older finished sessions. Active sessions are kept.", "Delete and Apply")) return;
+      await saveHistoryPolicy(next);
       setPolicy(next); setNotice("Preferences saved. Recording changes apply to the next caption session.");
     } catch (error) { setNotice(String(error)); } finally { setBusy(false); }
   }

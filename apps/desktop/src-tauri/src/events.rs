@@ -94,5 +94,6 @@ pub struct CaptionTiming {
 }
 
 pub fn emit_status(app: &AppHandle, status: SessionStatusEvent) {
+    crate::native_ui::update_capture_menu(app, status.state);
     let _ = app.emit(CAPTION_STATUS_EVENT, status);
 }

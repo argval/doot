@@ -40,20 +40,20 @@ html.web-preview .overlay-shell {
   min-width: 320px;
 }
 
-/* CSS blur is preview-only. The native overlay uses macOS HudWindow vibrancy. */
+/* CSS blur is preview-only. Native macOS fades NSVisualEffectView with overlayVibrancyAlpha. */
 html.web-preview .caption-window,
 .settings-overlay-preview .caption-window {
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
+  backdrop-filter: blur(calc(28px * var(--overlay-vibrancy-alpha, 1))) saturate(calc(1 + 0.4 * var(--overlay-vibrancy-alpha, 1)));
+  -webkit-backdrop-filter: blur(calc(28px * var(--overlay-vibrancy-alpha, 1))) saturate(calc(1 + 0.4 * var(--overlay-vibrancy-alpha, 1)));
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 14%),
-    0 8px 22px rgb(0 0 0 / 22%);
+    inset 0 1px 0 rgb(255 255 255 / calc(0.14 * var(--overlay-vibrancy-alpha, 1))),
+    0 8px 22px rgb(0 0 0 / calc(0.22 * var(--overlay-vibrancy-alpha, 1)));
 }
 
 html.web-preview .language-picker,
 .settings-overlay-preview .language-picker {
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(calc(20px * var(--overlay-vibrancy-alpha, 1)));
+  -webkit-backdrop-filter: blur(calc(20px * var(--overlay-vibrancy-alpha, 1)));
 }
 
 button,
@@ -71,6 +71,10 @@ button {
   height: 100%;
   align-items: stretch;
   justify-content: center;
+}
+
+.overlay-shell.native-hud {
+  pointer-events: none;
 }
 
 .caption-overlay {
@@ -171,6 +175,7 @@ button {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: none;
+  padding-bottom: 0.2em;
   mask-image: linear-gradient(to bottom, transparent 0%, #000 0.5rem);
   -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 0.5rem);
 }
@@ -241,7 +246,7 @@ button {
   display: none;
 }
 
-.language-picker .language-select :is(select, input) {
+.language-picker .language-select :is(select, input, .native-language-trigger) {
   width: 96px;
   min-height: 24px;
   padding: 2px 16px 2px 4px;
@@ -292,7 +297,7 @@ button {
 
 .capture-toggle:focus-visible,
 .language-translate:focus-visible,
-.language-select :is(select, input):focus-visible {
+.language-select :is(select, input, .native-language-trigger):focus-visible {
   outline: 2px solid var(--overlay-accent);
   outline-offset: 2px;
 }
@@ -305,8 +310,8 @@ button {
   font-weight: var(--caption-weight);
   line-height: var(--caption-line-height);
   letter-spacing: var(--caption-letter-spacing);
-  overflow-wrap: anywhere;
-  text-wrap: pretty;
+  overflow-wrap: break-word;
+  text-wrap: wrap;
   text-shadow: 0 1px 2px rgb(0 0 0 / 72%), 0 0 10px rgb(0 0 0 / 28%);
   flex: 0 0 auto;
   margin-top: auto;
@@ -426,7 +431,7 @@ button {
   color: var(--overlay-ink-label);
 }
 
-.language-select :is(select, input) {
+.language-select :is(select, input, .native-language-trigger) {
   width: 72px;
   appearance: none;
   padding: 3px 18px 3px 0;
@@ -471,7 +476,7 @@ button {
 .language-translate:active, .capture-toggle:active { transform: scale(0.96); }
 @media (max-width: 420px) {
   .language-picker { gap: 3px; right: 0; }
-  .language-picker .language-select :is(select, input) { width: 65px; }
+  .language-picker .language-select :is(select, input, .native-language-trigger) { width: 65px; }
   .language-select > span { display: none; }
 }
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
@@ -489,7 +494,7 @@ button {
   .language-translate:active, .capture-toggle:active { transform: none; }
 }
 
-.language-select :is(select, input):disabled {
+.language-select :is(select, input, .native-language-trigger):disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }
@@ -562,7 +567,7 @@ button {
 @keyframes caption-turn-in {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(-6px);
   }
 
   to {
@@ -611,7 +616,11 @@ button {
     border-radius: 14px;
   }
 
-  .language-select :is(select, input) {
+  .language-select :is(select, input, .native-language-trigger) {
     width: 54px;
   }
 }
+
+.native-language-trigger { text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+button.recent-pairs { background: transparent; padding: 0; }
+button.recent-pairs:disabled { opacity: 0.55; cursor: not-allowed; }

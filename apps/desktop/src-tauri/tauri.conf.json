@@ -19,6 +19,8 @@
         "height": 190,
         "minWidth": 360,
         "minHeight": 160,
+        "maxWidth": 960,
+        "maxHeight": 420,
         "decorations": false,
         "resizable": true,
         "alwaysOnTop": true,

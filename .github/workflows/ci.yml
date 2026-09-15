@@ -43,6 +43,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib
+      - run: npm run check:native-ui --workspace @doot/desktop
       - run: npm run bundle:gateway --workspace @doot/desktop
       - run: node apps/desktop/scripts/check-gateway.mjs
       - run: npm run build:tauri

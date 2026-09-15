@@ -1,6 +1,10 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Circle, Languages, Square, History } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { Menu } from "@tauri-apps/api/menu";
+import { LogicalPosition } from "@tauri-apps/api/dpi";
+import { isNativeMac } from "./lib/native-ui";
+import { liveOverlaySnapshot, publishOverlay, registerOverlayCapture } from "./lib/overlay-bridge";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -63,6 +67,7 @@ export function App() {
   const lastProviderRef = useRef<string | null>(DEFAULT_PREFS.lastProvider);
   const captionCopyRef = useRef<HTMLDivElement>(null);
   const measuredRevisions = useRef(new Set<string>());
+  const recentMenuRef = useRef<Menu | null>(null);
   const toggleCaptureRef = useRef<() => Promise<void>>(async () => {});
   const preview = overlayWebPreview();
   const visibleLines = preview.lines ?? selectVisibleCaptions(captions).lines;
@@ -306,6 +311,33 @@ export function App() {
     || (visibleLines.length > 0
       ? visibleLines.map((line) => line.translatedText).join("\n")
       : placeholder);
+  const overlayNotice = clickThrough ? `Click-through · ${interactionShortcutLabel()} to unlock` : persistentNotice ?? statusNotice ?? (!capturing ? routeError : null);
+  const overlaySnapshot = useMemo(() => liveOverlaySnapshot({
+    lines: visibleLines,
+    prefs,
+    capturing,
+    transitioning: isTransitioning,
+    error: overlayError ?? "",
+    notice: overlayNotice ?? "",
+    status: statusLabel ?? "",
+    placeholder,
+    announcement: captions.history.filter((caption) => caption.isFinal).at(-1)?.translatedText ?? "",
+    audioLevel: preview.audioLevel ?? (capturing && captureState === "capturing" ? audio.level : 0),
+    listening,
+    clickThrough,
+    captureHint,
+  }), [visibleLines, prefs, capturing, isTransitioning, overlayError, overlayNotice, statusLabel, placeholder, captions.history, preview.audioLevel, captureState, audio.level, listening, clickThrough, captureHint]);
+
+  useEffect(() => {
+    if (!isNativeMac()) return;
+    registerOverlayCapture(toggleCapture);
+    return () => registerOverlayCapture(null);
+  }, [toggleCapture]);
+
+  useEffect(() => {
+    if (!isNativeMac()) return;
+    void publishOverlay(overlaySnapshot).catch(() => undefined);
+  }, [overlaySnapshot]);
 
   useLayoutEffect(() => {
     const captionCopy = captionCopyRef.current;
@@ -334,6 +366,10 @@ export function App() {
     return () => cancelAnimationFrame(frame);
   }, [captions]);
 
+  if (isNativeMac()) {
+    return <main className="overlay-shell native-hud" />;
+  }
+
   return (
     <main className="overlay-shell" onKeyDown={(event) => {
       if (!event.altKey || !event.key.startsWith("Arrow") || !isTauriRuntime()) return;
@@ -343,6 +379,22 @@ export function App() {
       <div className="caption-overlay">
         <div className="language-picker" aria-label="Caption languages">
           {prefs.recentPairs.length > 0 && (
+            isTauriRuntime() ? <button
+              type="button" className="recent-pairs" title="Recent translation pairs" aria-label="Recent translation pairs"
+              aria-haspopup="menu" disabled={languagesLocked}
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                void (async () => {
+                  await recentMenuRef.current?.close();
+                  const menu = await Menu.new({ items: prefs.recentPairs.map((pair, index) => ({
+                    id: `recent-${index}`, text: `${LANGUAGE_LABELS[pair.source]} → ${LANGUAGE_LABELS[pair.target]}`,
+                    action: () => { void updatePrefs({ translateEnabled: true, sourceLanguage: pair.source, targetLanguage: pair.target, lastTranslationPair: pair })
+                      .then(applyPrefs).catch((error: unknown) => setError(String(error))); },
+                  })) });
+                  recentMenuRef.current = menu;
+                  await menu.popup(new LogicalPosition(rect.left, rect.bottom), getCurrentWindow());
+                })().catch((error: unknown) => setError(String(error)));
+              }}><History size={13} aria-hidden="true" /></button> : (
             <label className="recent-pairs" title="Recent translation pairs">
               <History size={13} aria-hidden="true" />
               <select aria-label="Recent translation pairs" value="" disabled={languagesLocked} onChange={(event) => {
@@ -355,10 +407,12 @@ export function App() {
                 {prefs.recentPairs.map((pair, index) => <option key={`${pair.source}-${pair.target}`} value={index}>{LANGUAGE_LABELS[pair.source]} → {LANGUAGE_LABELS[pair.target]}</option>)}
               </select>
             </label>
+            )
           )}
           {translating
             ? (
               <LanguageSelect
+                preferenceKey="sourceLanguage"
                 label="From"
                 value={sourceLanguage}
                 onChange={(language) => void persistLanguage("sourceLanguage", language)}
@@ -369,6 +423,7 @@ export function App() {
             )
             : (
               <LanguageSelect
+                preferenceKey="targetLanguage"
                 value={targetLanguage}
                 onChange={(language) => void persistLanguage("targetLanguage", language)}
                 languages={selectableTargetLanguages}
@@ -390,6 +445,7 @@ export function App() {
           </button>
           {translating && (
             <LanguageSelect
+              preferenceKey="targetLanguage"
               label="To"
               value={targetLanguage}
               onChange={(language) => void persistLanguage("targetLanguage", language)}
@@ -417,7 +473,7 @@ export function App() {
           lines={visibleLines}
           targetLanguage={targetLanguage}
           error={overlayError}
-          statusNotice={clickThrough ? `Click-through · ${interactionShortcutLabel()} to unlock` : persistentNotice ?? statusNotice ?? (!capturing ? routeError : null)}
+          statusNotice={overlayNotice}
           statusLabel={statusLabel}
           audioLevel={preview.audioLevel ?? (capturing && captureState === "capturing" ? audio.level : 0)}
           announcement={captions.history.filter((caption) => caption.isFinal).at(-1)?.translatedText ?? ""}
@@ -446,6 +502,7 @@ function LanguageSelect({
   allowAuto = false,
   disabled = false,
 }: {
+  preferenceKey: "sourceLanguage" | "targetLanguage";
   label?: string;
   value: SupportedLanguage;
   onChange: (value: SupportedLanguage) => void;

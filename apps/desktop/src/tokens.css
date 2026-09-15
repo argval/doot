@@ -11,7 +11,10 @@
   --brand-accent: rgb(var(--brand-rgb));
   --brand-ink: #171810;
   --brand-olive: #59652e;
-  --preview-backdrop: linear-gradient(135deg, #646660, #343630 48%, #191a17);
+  --preview-backdrop:
+    radial-gradient(120% 80% at 18% 12%, #8aa0c8 0%, transparent 42%),
+    radial-gradient(90% 70% at 88% 82%, #6b8f4e 0%, transparent 48%),
+    linear-gradient(135deg, #c9c4b8, #4a5248 55%, #1c221c);
 
   --overlay-ink: #f5f5ef;
   --overlay-ink-muted: rgb(245 245 239 / 90%);

@@ -2,6 +2,7 @@ mod audio;
 mod commands;
 mod diagnostics;
 mod events;
+mod native_ui;
 mod overlay_chrome;
 mod service;
 mod stream;
@@ -10,8 +11,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder,
+    tray::TrayIconBuilder,
+    AppHandle, Emitter, Manager,
 };
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -19,6 +20,10 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut,
 use tauri_plugin_window_state::{Builder as WindowStateBuilder, StateFlags};
 
 use crate::events::CAPTURE_TOGGLE_EVENT;
+#[cfg(not(target_os = "macos"))]
+use tauri::{WebviewUrl, WebviewWindowBuilder};
+
+pub struct CaptureMenuItems(Mutex<Vec<tauri::menu::MenuItem<tauri::Wry>>>);
 
 const SETTINGS_WINDOW_LABEL: &str = "settings";
 
@@ -27,6 +32,7 @@ pub struct AppState {
     pub last_provider: Mutex<Option<String>>,
     pub gateway: tokio::sync::Mutex<service::GatewayManager>,
     pub click_through: AtomicBool,
+    pub overlay_hidden: AtomicBool,
     pub exiting: AtomicBool,
     pub exit_ready: AtomicBool,
 }
@@ -65,8 +71,9 @@ pub fn run() {
         Code::KeyO,
     );
 
-    let mut builder =
-        tauri::Builder::default().plugin(tauri_plugin_store::Builder::default().build());
+    let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_dialog::init());
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         builder = builder
@@ -94,6 +101,7 @@ pub fn run() {
                 WindowStateBuilder::default()
                     .with_state_flags(StateFlags::POSITION | StateFlags::SIZE)
                     .with_denylist(&[SETTINGS_WINDOW_LABEL])
+                    .skip_initial_state("main")
                     .build(),
             );
     }
@@ -105,9 +113,11 @@ pub fn run() {
             last_provider: Mutex::new(None),
             gateway: tokio::sync::Mutex::new(service::GatewayManager::default()),
             click_through: AtomicBool::new(false),
+            overlay_hidden: AtomicBool::new(false),
             exiting: AtomicBool::new(false),
             exit_ready: AtomicBool::new(false),
         })
+        .manage(CaptureMenuItems(Mutex::new(Vec::new())))
         .invoke_handler(tauri::generate_handler![
             commands::start_caption_session,
             commands::stop_caption_session,
@@ -125,19 +135,31 @@ pub fn run() {
             service::credential_status,
             service::save_service_key,
             commands::set_overlay_click_through,
-            commands::move_overlay
+            commands::move_overlay,
+            native_ui::native_ui_ready,
+            native_ui::caption_session_active,
+            native_ui::native_ui_receive,
+            native_ui::show_native_language_picker,
+            native_ui::show_native_about,
+            native_ui::export_document,
+            native_ui::confirm_destructive
         ])
         .menu(|app| {
+            let about_item = MenuItemBuilder::with_id("open-about", "About Doot").build(app)?;
             let settings_item = MenuItemBuilder::with_id("open-settings", "Settings…")
                 .accelerator("CmdOrCtrl+,")
                 .build(app)?;
+            let capture_item =
+                MenuItemBuilder::with_id("toggle-capture", "Start Capturing").build(app)?;
             let overlay_item =
                 MenuItemBuilder::with_id("toggle-overlay", "Show / Hide Overlay").build(app)?;
+            remember_capture_item(app, &capture_item);
             let app_submenu = SubmenuBuilder::new(app, "Doot")
-                .about(None)
+                .item(&about_item)
                 .separator()
                 .item(&settings_item)
                 .separator()
+                .item(&capture_item)
                 .item(&overlay_item)
                 .separator()
                 .hide()
@@ -166,6 +188,17 @@ pub fn run() {
         })
         .on_menu_event(|app, event| handle_menu_event(app, event.id().as_ref()))
         .on_window_event(|window, event| {
+            if window.label() == "main"
+                && matches!(
+                    event,
+                    tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. }
+                )
+            {
+                if let Some(overlay) = window.app_handle().get_webview_window("main") {
+                    overlay_chrome::clamp_overlay_size(&overlay);
+                }
+                return;
+            }
             if window.label() != SETTINGS_WINDOW_LABEL {
                 return;
             }
@@ -175,6 +208,7 @@ pub fn run() {
             }
         })
         .setup(move |app| {
+            native_ui::init(app.handle());
             let data = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data)?;
             let instance = service::lock_instance(&data.join("instance.lock"))?;
@@ -186,11 +220,17 @@ pub fn run() {
             });
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
+                #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                {
+                    use tauri_plugin_window_state::{StateFlags, WindowExt};
+                    let _ = window.restore_state(StateFlags::POSITION | StateFlags::SIZE);
+                }
                 overlay_chrome::show_overlay_without_activating(&window);
+                native_ui::attach_overlay(&window);
             }
 
             let toggle_item =
-                MenuItemBuilder::with_id("toggle-capture", "Start / Stop Capturing").build(app)?;
+                MenuItemBuilder::with_id("toggle-capture", "Start Capturing").build(app)?;
             let overlay_item =
                 MenuItemBuilder::with_id("toggle-overlay", "Show / Hide Overlay").build(app)?;
             let settings_item = MenuItemBuilder::with_id("open-settings", "Settings").build(app)?;
@@ -209,19 +249,18 @@ pub fn run() {
                     &quit_item,
                 ])
                 .build()?;
-            let mut tray = TrayIconBuilder::new()
+            remember_capture_item(app.handle(), &toggle_item);
+            // Tray clicks already reach the app-wide on_menu_event. A second
+            // global handler would run toggle_overlay twice (hide then show).
+            let mut tray = TrayIconBuilder::with_id("doot")
+                .tooltip("Doot · Captions stopped")
                 .menu(&menu)
-                .on_menu_event(|app, event| handle_menu_event(app, event.id().as_ref()))
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        show_overlay(tray.app_handle());
-                    }
-                });
+                .show_menu_on_left_click(true);
+            #[cfg(target_os = "macos")]
+            {
+                tray = tray.icon(native_ui::menu_bar_icon()).icon_as_template(true);
+            }
+            #[cfg(not(target_os = "macos"))]
             if let Some(icon) = app.default_window_icon() {
                 tray = tray.icon(icon.clone());
             }
@@ -275,8 +314,19 @@ pub fn run() {
         });
 }
 
+fn remember_capture_item(app: &AppHandle, item: &tauri::menu::MenuItem<tauri::Wry>) {
+    if let Some(items) = app.try_state::<CaptureMenuItems>() {
+        if let Ok(mut items) = items.0.lock() {
+            items.push(item.clone());
+        }
+    }
+}
+
 fn handle_menu_event(app: &AppHandle, id: &str) {
     match id {
+        "open-about" => {
+            let _ = native_ui::show_native_about(app.clone());
+        }
         "open-settings" => {
             let _ = open_settings(app);
         }
@@ -296,6 +346,12 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
     }
 }
 
+#[cfg(target_os = "macos")]
+pub(crate) fn open_settings(app: &AppHandle) -> Result<(), String> {
+    native_ui::open(app)
+}
+
+#[cfg(not(target_os = "macos"))]
 pub(crate) fn open_settings(app: &AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
         let _ = window.unminimize();
@@ -304,7 +360,7 @@ pub(crate) fn open_settings(app: &AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
-    let mut builder = WebviewWindowBuilder::new(
+    let builder = WebviewWindowBuilder::new(
         app,
         SETTINGS_WINDOW_LABEL,
         WebviewUrl::App("index.html".into()),
@@ -317,39 +373,37 @@ pub(crate) fn open_settings(app: &AppHandle) -> Result<(), String> {
     .always_on_top(false)
     .visible(true);
 
-    #[cfg(target_os = "macos")]
-    {
-        builder = builder
-            .hidden_title(true)
-            .title_bar_style(tauri::TitleBarStyle::Overlay);
-    }
-
     let window = builder.build().map_err(|error| error.to_string())?;
 
-    #[cfg(target_os = "macos")]
-    let _ = window.set_visible_on_all_workspaces(false);
     let _ = window.set_focus();
     Ok(())
 }
 
 fn toggle_overlay(app: &AppHandle) {
-    let Some(window) = app.get_webview_window("main") else {
-        return;
-    };
-    if window.is_visible().unwrap_or(false) {
-        hide_overlay(app);
-    } else {
+    if app
+        .state::<AppState>()
+        .overlay_hidden
+        .load(Ordering::SeqCst)
+    {
         show_overlay(app);
+    } else {
+        hide_overlay(app);
     }
 }
 
 fn hide_overlay(app: &AppHandle) {
+    app.state::<AppState>()
+        .overlay_hidden
+        .store(true, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
+        overlay_chrome::hide_overlay_without_activating(&window);
     }
 }
 
 fn show_overlay(app: &AppHandle) {
+    app.state::<AppState>()
+        .overlay_hidden
+        .store(false, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window("main") {
         overlay_chrome::show_overlay_without_activating(&window);
     }
